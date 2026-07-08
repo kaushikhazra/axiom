@@ -1,0 +1,28 @@
+[project]
+name = "axiom"
+version = "0.1.0"
+description = "Axiom — an evolving agentic system (M1 PRAO walking skeleton)."
+requires-python = ">=3.11"
+dependencies = [
+    "claude-agent-sdk>=0.1.55",
+    "anyio>=4.0",
+]
+
+[project.scripts]
+axiom-cli = "axiom.interface.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/axiom"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
