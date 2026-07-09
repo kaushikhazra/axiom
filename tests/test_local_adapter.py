@@ -325,7 +325,11 @@ class TestLocalAdapterAct:
         assert MockCodeAgent.call_count == 2
 
     def test_act_passes_correct_constructor_args(self) -> None:
-        """CodeAgent is constructed with the right model, tools, add_base_tools, max_steps.
+        """CodeAgent is constructed with the right model, tools, max_steps, executor.
+
+        Tool-set fix: add_base_tools is NOT passed (explicit minimal tool list is
+        used instead). CodeAgent receives tools=[DuckDuckGoSearchTool()], max_steps,
+        executor, verbosity_level.
 
         Since smolagents 1.26.0: additional_authorized_imports is passed to a
         LocalPythonExecutor, not directly to CodeAgent. CodeAgent receives an
@@ -335,28 +339,41 @@ class TestLocalAdapterAct:
         with (
             patch("smolagents.CodeAgent") as MockCodeAgent,
             patch("smolagents.LocalPythonExecutor") as MockExecutor,
+            patch("smolagents.DuckDuckGoSearchTool") as MockDDGTool,
         ):
             mock_agent_instance = MagicMock()
             mock_agent_instance.run.return_value = "ok"
             MockCodeAgent.return_value = mock_agent_instance
             mock_executor_instance = MagicMock()
             MockExecutor.return_value = mock_executor_instance
+            mock_ddg_instance = MagicMock()
+            MockDDGTool.return_value = mock_ddg_instance
 
             adapter.act("do something")
 
-        # CodeAgent receives model, tools, add_base_tools, max_steps, executor, verbosity_level
+        # CodeAgent receives model, tools=[DuckDuckGoSearchTool()], max_steps, executor,
+        # verbosity_level. add_base_tools is NOT passed (tool-set fix).
         call_kwargs = MockCodeAgent.call_args[1]
         assert call_kwargs["model"] is adapter._model
-        assert call_kwargs["tools"] == []
-        assert call_kwargs["add_base_tools"] is True
+        assert call_kwargs["tools"] == [mock_ddg_instance]
+        assert "add_base_tools" not in call_kwargs, (
+            "add_base_tools must NOT be passed -- explicit tool list replaces it"
+        )
         assert call_kwargs["max_steps"] == 3
         assert call_kwargs["executor"] is mock_executor_instance
         # Defect-B: verbosity_level=0 must be present to suppress rich console logging
         assert call_kwargs["verbosity_level"] == 0
 
         # LocalPythonExecutor receives additional_authorized_imports with subprocess
+        # and additional_functions with 're' pre-populated (tool-set fix).
         executor_kwargs = MockExecutor.call_args[1]
         assert "subprocess" in executor_kwargs["additional_authorized_imports"]
+        assert "re" in executor_kwargs["additional_functions"], (
+            "re module must be pre-populated in executor namespace (tool-set fix)"
+        )
+        import re as _re_check
+
+        assert executor_kwargs["additional_functions"]["re"] is _re_check
 
     def test_act_verbosity_level_zero_suppresses_console_logging(self) -> None:
         """Defect-B: CodeAgent is constructed with verbosity_level=0.

@@ -79,6 +79,19 @@
 
 ---
 
+## 10. Tool-Provisioning Fix — Clear Tool Exceptions (`providers/local_adapter.py`, `tests/test_local_adapter.py`)
+
+- [x] Developer updates `LocalAdapter.act()` in `src/axiom/providers/local_adapter.py` to replace `tools=[], add_base_tools=True` with an explicit minimal tool list `tools=[DuckDuckGoSearchTool()]` and removes `add_base_tools`. Rationale: `add_base_tools=True` includes `VisitWebpageTool` (not installed deps → `ImportError`) and `PythonInterpreterTool` (confuses qwen in CodeAct context → `InterpreterError`). `DuckDuckGoSearchTool` is added to the deferred `from smolagents import ...` inside `act()`. Zero axiom-authored tool code: `DuckDuckGoSearchTool` is smolagents-provided.
+  _MLA-3_
+
+- [x] Developer updates `LocalAdapter.act()` in `src/axiom/providers/local_adapter.py` to pre-populate the `re` module in `LocalPythonExecutor`'s `additional_functions` dict: `additional_functions={"open": builtins.open, "re": _re}` (where `_re = import re`). Rationale: qwen2.5:7b generates `re.search(...)` without `import re`; `additional_authorized_imports` only permits the import statement but does not inject the module. Pre-populating via `additional_functions` ensures `re` is in the executor namespace regardless of whether the model writes the import. `_authorized_imports` list unchanged (`re` stays to allow explicit imports too).
+  _MLA-3_
+
+- [x] Developer updates `tests/test_local_adapter.py` `test_act_passes_correct_constructor_args` to reflect tool-set fix: asserts `add_base_tools` is NOT in `CodeAgent` call kwargs, asserts `tools` contains exactly one DuckDuckGoSearchTool instance, asserts `additional_functions` in `LocalPythonExecutor` kwargs contains `"re"` key mapping to the `re` module.
+  _MLA-4_
+
+---
+
 ## 11. Live E2E Tests — 3 Scenarios (`tests/test_local_e2e.py`)
 
 - [ ] Developer rewrites `tests/test_local_e2e.py` with `@pytest.mark.e2e_local` tests covering three scenarios: **(1)** "Hello" RESPOND-only — simple greeting → reason() returns RESPOND, act() NOT called, coherent text returned; **(2)** DuckDuckGo web search — "What is the current weather in Durgapur, West Bengal, India?" → reason() returns ACT, act() runs CodeAgent using DuckDuckGoSearchTool, observe() captures, loop completes with weather info; **(3)** Python file creation + execution (W3 — literal requirement) — "Create a python file in the current folder, which will print hello, execute it, and show the output" → reason() returns ACT, act() runs CodeAgent which writes a real `hello.py` to disk, executes it via `subprocess.run()`, captures stdout; observe() captures result; test assertion checks output contains "hello world". Test input MUST use Kaushik's literal phrasing (file creation + execution), NOT a rephrased "code execution only" variant. All tests: real PraoLoop + real LocalAdapter + real Ollama; pre-warm model before timing; skip gracefully if Ollama unreachable; latency logged at DEBUG.
