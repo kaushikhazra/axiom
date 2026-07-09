@@ -26,6 +26,12 @@ def main() -> None:
         help="Enable DEBUG logging to stderr (latency, intent parse, adapter errors)",
     )
     parser.add_argument(
+        "--provider",
+        choices=["claude", "local"],
+        default="claude",
+        help="Provider adapter: 'claude' (default, cloud) or 'local' (Ollama via LiteLLM)",
+    )
+    parser.add_argument(
         "input",
         nargs="?",
         help="User input (reads from stdin if omitted)",
@@ -42,7 +48,7 @@ def main() -> None:
         print("No input provided.", file=sys.stderr)
         sys.exit(1)
 
-    agent = Agent(debug=args.debug)
+    agent = Agent(debug=args.debug, provider=args.provider)
     response = agent.run(user_input)
 
     if response:

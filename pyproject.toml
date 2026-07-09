@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "claude-agent-sdk>=0.1.55",
     "anyio>=4.0",
+    "litellm",
 ]
 
 [project.scripts]
@@ -21,8 +22,12 @@ packages = ["src/axiom"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "e2e_local: marks tests requiring a running Ollama instance (deselect with '-m not e2e_local')",
+]
 
 [project.optional-dependencies]
-dev = [
+test = [
     "pytest>=7.0",
+    "httpx",
 ]

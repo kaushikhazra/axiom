@@ -4,6 +4,9 @@ Claude adapter — implements all four PRAO port Protocols via claude_agent_sdk.
 Bridges synchronous port contracts to the async SDK via anyio.run() per call.
 All port methods are synchronous (def, not async def); async is contained here.
 
+perceive() and observe() are inherited from PraoAdapterBase (providers/base.py).
+reason() and act() are Claude-specific (SDK query calls).
+
 OQ-2 confirmed:
   - query() is an async generator (NOT a coroutine) — iterate with
     'async for message in sdk_query(...)' — no 'await' before sdk_query.
@@ -17,7 +20,6 @@ OQ-2 confirmed:
 
 from __future__ import annotations
 
-import json
 import logging
 
 import anyio
@@ -33,63 +35,14 @@ from claude_agent_sdk import (
 )
 
 from axiom.interfaces import (
-    ActIntent,
     AdapterError,
-    FinishIntent,
     Intent,
-    RespondIntent,
-    RunState,
 )
+from axiom.providers.base import PraoAdapterBase, _parse_intent
 
 logger = logging.getLogger("axiom.providers")
 
 PER_QUERY_TIMEOUT_SECS: int = 120  # 2 minutes; CLI process can hang if unauthenticated
-
-# ---------------------------------------------------------------------------
-# Intent format instructions — injected verbatim into every reason() prompt
-# (§4.1 wire format)
-# ---------------------------------------------------------------------------
-_INTENT_FORMAT_INSTRUCTIONS = """\
----
-RESPONSE FORMAT INSTRUCTIONS (mandatory):
-Reply with EXACTLY ONE JSON object on a single line. No markdown. No code fences.
-No explanation before or after. Only the JSON object.
-
-Choose ONE of:
-  {"intent": "RESPOND", "text": "<your response to the user>"}
-  {"intent": "ACT", "instruction": "<one bounded instruction for the executor>"}
-  {"intent": "FINISH"}
-
-Rules:
-- "intent" must be exactly "RESPOND", "ACT", or "FINISH" (case-sensitive).
-- "RESPOND" requires a "text" field (string). Use ONLY for requests answerable from
-  the conversation context or established general knowledge — no tools needed.
-- "ACT" requires an "instruction" field (string). You MUST use ACT (never RESPOND)
-  whenever the request requires: web search, real-time or current data, file access,
-  running commands, or any side effect. Do NOT attempt to answer such requests from
-  memory or training data — you have zero tools; route to ACT so the executor can act.
-- STALENESS RULE: Your training knowledge may be months or years out of date. For ANY
-  fact that changes over time — software/library versions, prices, who currently holds
-  a role or record, news, standings, or anything phrased "latest / current / newest /
-  today / now / as of" — assume your stored answer is OUTDATED and route to ACT, even
-  if you feel certain. Do not answer time-varying questions from memory.
-- TOOL-LESS-MEANS-DELEGATE: You (the reasoning step) have NO tools by design. This does
-  not mean you cannot get live data — an executor with web search, bash, and file access
-  runs whatever instruction you return in an ACT. NEVER refuse or answer directly because
-  you "lack a tool"; instead route to ACT and the executor will use its tools.
-- "FINISH" has no additional fields. Use it only when the task is fully complete with no response needed.
-- The entire response must be parseable as a single JSON object.
-
-Examples:
-  User: "What's the capital of France?"
-  → {"intent": "RESPOND", "text": "Paris."} (stable fact, no tool needed)
-
-  User: "What's the latest stable Python version?"
-  → {"intent": "ACT", "instruction": "Search the web for the latest stable Python release version."} (time-varying; stored version is likely stale)
-
-  User: "What files are in this directory?"
-  → {"intent": "ACT", "instruction": "List the files in the current directory."} (requires a tool)
----"""
 
 
 # ---------------------------------------------------------------------------
@@ -136,33 +89,16 @@ async def _collect_query_result(prompt: str, options: ClaudeAgentOptions) -> str
 # ---------------------------------------------------------------------------
 
 
-class ClaudeAdapter:
-    """Concrete adapter implementing all four PRAO port Protocols via claude_agent_sdk."""
+class ClaudeAdapter(PraoAdapterBase):
+    """Concrete adapter implementing all four PRAO port Protocols via claude_agent_sdk.
+
+    perceive() and observe() are inherited from PraoAdapterBase.
+    reason() and act() are implemented here using the Claude SDK.
+    """
 
     def __init__(self, persona: str, allowed_tools: list[str]) -> None:
-        self._persona = persona
+        super().__init__(persona=persona)
         self._allowed_tools = allowed_tools
-
-    # ------------------------------------------------------------------
-    # PerceivePort
-    # ------------------------------------------------------------------
-
-    def perceive(self, run_state: RunState) -> str:
-        """Assemble the reasoning context prompt per §7.1."""
-        sections: list[str] = []
-
-        sections.append(f"[PERSONA]\n{self._persona}")
-
-        if run_state.history:
-            history_lines = [
-                f"Step {i + 1}: {result}" for i, result in enumerate(run_state.history)
-            ]
-            sections.append("[CONVERSATION HISTORY]\n" + "\n".join(history_lines))
-
-        sections.append(f"[CURRENT REQUEST]\n{run_state.user_input}")
-        sections.append(_INTENT_FORMAT_INSTRUCTIONS)
-
-        return "\n\n".join(sections)
 
     # ------------------------------------------------------------------
     # ReasonPort
@@ -206,6 +142,8 @@ class ClaudeAdapter:
             retry_error,
             retry_text,
         )
+        from axiom.interfaces import RespondIntent
+
         return RespondIntent(text=f"[FALLBACK_RESPOND] {raw_text}")
 
     # ------------------------------------------------------------------
@@ -229,16 +167,6 @@ class ClaudeAdapter:
         )
         options = ClaudeAgentOptions(allowed_tools=self._allowed_tools)
         return self._run_query(prompt, options)
-
-    # ------------------------------------------------------------------
-    # ObservePort
-    # ------------------------------------------------------------------
-
-    def observe(self, result: str, run_state: RunState) -> RunState:
-        """Capture act() result and update run-state (§7.4). Mutate-and-return."""
-        run_state.history.append(result)
-        run_state.cycle_count += 1
-        return run_state
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -283,46 +211,3 @@ class ClaudeAdapter:
                 raise
             logger.error("[ADAPTER_UNEXPECTED] %s", e)
             raise AdapterError(f"unexpected error: {e}") from e
-
-
-# ---------------------------------------------------------------------------
-# Intent parse helper (module-level, used by reason() and retry path)
-# ---------------------------------------------------------------------------
-
-
-def _parse_intent(raw: str) -> tuple[Intent | None, str | None]:
-    """Parse a raw model response string into an Intent dataclass.
-
-    Implements the §4.1 parse rules (JSON envelope, strict field validation).
-
-    Returns:
-        (intent, None) on success.
-        (None, error_message) on any parse or validation failure.
-    """
-    text = raw.strip()
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, ValueError) as exc:
-        return None, str(exc)
-
-    if not isinstance(data, dict):
-        return None, f"expected JSON object, got {type(data).__name__}"
-
-    intent_str = data.get("intent")
-
-    if intent_str == "RESPOND":
-        t = data.get("text")
-        if not isinstance(t, str):
-            return None, f"RESPOND missing or invalid 'text' field: {data!r}"
-        return RespondIntent(text=t), None
-
-    if intent_str == "ACT":
-        instr = data.get("instruction")
-        if not isinstance(instr, str):
-            return None, f"ACT missing or invalid 'instruction' field: {data!r}"
-        return ActIntent(instruction=instr), None
-
-    if intent_str == "FINISH":
-        return FinishIntent(), None
-
-    return None, f"unknown intent value: {intent_str!r}"

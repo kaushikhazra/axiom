@@ -45,22 +45,37 @@ def _configure_debug_logging() -> None:
 class Agent:
     """Fully assembled Axiom agent for one-turn interactions.
 
-    Composition root: loads persona, constructs ClaudeAdapter, wires PraoLoop.
+    Composition root: loads persona, constructs the chosen adapter, wires PraoLoop.
     Wraps loop execution via timing.timed_run for latency measurement.
     """
 
-    def __init__(self, debug: bool = False) -> None:
+    def __init__(self, debug: bool = False, provider: str = "claude") -> None:
         """Wire the composition root.
 
         Args:
             debug: When True, configures the 'axiom' logger to emit DEBUG records
                    to stderr. Constructor parameter — not an env-var or global mutation.
+            provider: Which adapter to use — "claude" (default, M1 behaviour) or
+                      "local" (LiteLLM + Ollama via LocalAdapter). LocalAdapter is
+                      imported lazily inside the "local" branch so that Claude-only
+                      installs never pay the litellm import cost.
         """
         if debug:
             _configure_debug_logging()
 
         persona_text = persona_pkg.load()
-        adapter = ClaudeAdapter(persona=persona_text, allowed_tools=M1_ALLOWED_TOOLS)
+
+        if provider == "local":
+            from axiom.providers.local_adapter import LocalAdapter  # noqa: PLC0415 (lazy)
+
+            adapter = LocalAdapter(persona=persona_text)
+        elif provider == "claude":
+            adapter = ClaudeAdapter(
+                persona=persona_text, allowed_tools=M1_ALLOWED_TOOLS
+            )
+        else:
+            raise ValueError(f"unknown provider: {provider!r}")
+
         self._loop = PraoLoop(
             perceive=adapter,
             reason=adapter,
