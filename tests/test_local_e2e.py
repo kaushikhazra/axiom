@@ -1,8 +1,10 @@
 """
 Live end-to-end tests for the local adapter (LocalAdapter + PraoLoop via Agent).
 
+Uses smolagents CodeAgent + Ollama qwen2.5:7b.
+
 Requires:
-  - litellm installed (real package, not the mock injected by test_local_adapter.py)
+  - smolagents installed
   - Ollama running at http://localhost:11434 with qwen2.5:7b pulled
 
 Marked @pytest.mark.e2e_local.  All tests carry skipif conditions for both
@@ -10,34 +12,33 @@ prerequisites so they are COLLECTED on every run (visible to --collect-only and
 marker queries) but SKIPPED when prerequisites are absent — no failure, no error.
 
 Invoke explicitly with:
-    pytest -m e2e_local -v tests/test_local_e2e.py
+    pytest -m e2e_local -v -s tests/test_local_e2e.py
 """
 
 from __future__ import annotations
 
 import importlib.metadata
+import os
 import socket
+import time
 
 import httpx
 import pytest
 
+from axiom import persona as persona_pkg
 from axiom.agent import Agent
+from axiom.loop import PraoLoop
+from axiom.observability import timing
+from axiom.providers.local_adapter import LocalAdapter
 
 # ---------------------------------------------------------------------------
 # Prerequisite checks — evaluated once at module load (collection) time.
 # ---------------------------------------------------------------------------
 
 
-# Check 1: litellm actually installed on disk?
-# We use importlib.metadata (not `import litellm`) because test_local_adapter.py
-# injects a MagicMock into sys.modules["litellm"] at collection time.  A bare
-# `import litellm` would resolve to that mock, masking the fact that the real
-# package is absent and causing live tests to fail with cryptic errors instead
-# of skipping cleanly.  importlib.metadata queries package metadata files on
-# disk and is not fooled by sys.modules.
-def _litellm_installed() -> bool:
+def _smolagents_installed() -> bool:
     try:
-        importlib.metadata.version("litellm")
+        importlib.metadata.version("smolagents")
         return True
     except importlib.metadata.PackageNotFoundError:
         return False
@@ -58,9 +59,9 @@ def _ollama_reachable() -> bool:
         return False
 
 
-_SKIP_NO_LITELLM = pytest.mark.skipif(
-    not _litellm_installed(),
-    reason="litellm is not installed — run 'pip install litellm' to enable e2e_local tests",
+_SKIP_NO_SMOLAGENTS = pytest.mark.skipif(
+    not _smolagents_installed(),
+    reason="smolagents is not installed — run 'pip install smolagents' to enable e2e_local tests",
 )
 _SKIP_NO_OLLAMA = pytest.mark.skipif(
     not _ollama_reachable(),
@@ -68,7 +69,7 @@ _SKIP_NO_OLLAMA = pytest.mark.skipif(
 )
 
 # Apply both skip conditions + the e2e_local marker to every test in this module.
-pytestmark = [pytest.mark.e2e_local, _SKIP_NO_LITELLM, _SKIP_NO_OLLAMA]
+pytestmark = [pytest.mark.e2e_local, _SKIP_NO_SMOLAGENTS, _SKIP_NO_OLLAMA]
 
 # ---------------------------------------------------------------------------
 # Module-scoped pre-warm fixture
@@ -84,7 +85,7 @@ def prewarm_ollama() -> None:
     Sends a trivial generate request to Ollama directly (not via the Agent) with
     a generous timeout to cover first-load from disk.  Subsequent calls are warm-fast.
 
-    Per design §8 (Performance & Cold Start / pre-warming note).
+    Per design SS8 (Latency Note / pre-warming).
     Best-effort: if pre-warm fails the tests may be slow but will not be broken.
     """
     try:
@@ -93,69 +94,189 @@ def prewarm_ollama() -> None:
             json={"model": _MODEL_NAME, "prompt": "hi", "stream": False},
             timeout=120.0,  # generous: first load from disk can take 10-30s on GPU
         )
-    except Exception:
-        pass
+        print(f"\n[prewarm] model {_MODEL_NAME} pre-warmed successfully.")
+    except Exception as exc:
+        print(f"\n[prewarm] pre-warm failed (tests may be slow): {exc}")
 
 
 # ---------------------------------------------------------------------------
-# E2E tests
+# E2E Scenario 1: hello — RESPOND path, no tool use
 # ---------------------------------------------------------------------------
 
 
-def test_trivial_respond_shortcircuit() -> None:
-    """A simple greeting should produce a RESPOND-path result without tool use.
+def test_e2e_hello_respond_path() -> None:
+    """E2E #1 — 'hello' input: expect RESPOND path, a coherent greeting, NO tool use.
 
-    Acceptance criteria (MLA-5 / §11.4 row 1):
+    Acceptance criteria (MLA-5 / design SS12.4 row 1):
     - Agent.run() returns a non-empty string.
     - No AdapterError or uncaught exception.
-    - The response must be readable natural-language text (not an error sentinel).
+    - Response is readable natural-language text (not an error sentinel).
+    - Response does not start with '[Error:' (error path).
+    - Response does not consist solely of a '[FALLBACK_RESPOND]' sentinel.
     """
-    agent = Agent(provider="local")
-    response = agent.run("Hello! How are you today?")
+    agent = Agent(provider="local", debug=True)
 
-    assert isinstance(response, str), "response must be a str"
-    assert response.strip(), "response must not be empty / whitespace-only"
-    # Must not be an error path
-    assert not response.startswith("[Error:"), (
-        f"Agent returned an error-path response: {response!r}"
-    )
-    # Must not be a bare fallback sentinel (model completely failed to parse intent)
-    assert "[FALLBACK_RESPOND]" not in response or len(response) > len(
-        "[FALLBACK_RESPOND]"
-    ), "Response appears to be an unparsed fallback — model may have returned no text"
+    t0 = time.monotonic()
+    response = agent.run("hello")
+    latency_s = time.monotonic() - t0
 
-
-def test_reason_act_observe_cycle_shell_tool() -> None:
-    """A task requiring shell tool use should complete the full PRAO cycle.
-
-    Acceptance criteria (MLA-5 / §11.4 row 2):
-    - Agent.run() returns a non-empty string.
-    - The response reflects real directory/file output — must mention at least one
-      recognisable file-system element (e.g. 'src', 'tests', 'pyproject') that
-      lives in the Axiom project root, confirming the shell tool actually ran.
-    - No AdapterError or uncaught exception.
-
-    Prompt instructs the model to list files in the current directory, which maps
-    directly to the shell tool (run_shell_command with e.g. 'ls' or 'dir').
-    """
-    agent = Agent(provider="local")
-    response = agent.run(
-        "List the files and directories in the current working directory "
-        "using the shell tool, then tell me what you see."
-    )
+    print(f"\n[E2E #1 hello] latency={latency_s:.1f}s")
+    print(f"[E2E #1 hello] response={response!r}")
 
     assert isinstance(response, str), "response must be a str"
     assert response.strip(), "response must not be empty / whitespace-only"
     assert not response.startswith("[Error:"), (
         f"Agent returned an error-path response: {response!r}"
     )
+    assert not (response.startswith("[FALLBACK_RESPOND]") and len(response) < 30), (
+        "Response appears to be a bare fallback sentinel — model failed to produce text"
+    )
 
-    # The shell tool should have returned directory contents that include at least
-    # one of these well-known Axiom project artefacts.  Robust to case differences.
+
+# ---------------------------------------------------------------------------
+# E2E Scenario 2: weather Durgapur — DuckDuckGoSearchTool
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_weather_durgapur() -> None:
+    """E2E #2 — weather search: expect CodeAgent to use DuckDuckGoSearchTool.
+
+    Acceptance criteria (MLA-5 / design SS12.4 row 2):
+    - Agent.run() returns a non-empty string.
+    - No AdapterError or uncaught exception.
+    - Response references Durgapur or West Bengal or contains weather-related
+      content (temperature, weather, forecast, humid, etc.).
+    - The CodeAgent must have used DuckDuckGoSearchTool (inferred from response content).
+
+    Note (OQ-4 — DuckDuckGo rate limits): DuckDuckGo may be rate-limited or return
+    no results. The assertion is on response content presence, not specific content.
+    A response mentioning 'search' or 'could not' is also acceptable if the agent
+    attempted the search even under rate-limiting.
+    """
+    agent = Agent(provider="local", debug=True)
+
+    t0 = time.monotonic()
+    response = agent.run("What is the current weather in Durgapur, West Bengal, India?")
+    latency_s = time.monotonic() - t0
+
+    print(f"\n[E2E #2 weather] latency={latency_s:.1f}s")
+    print(f"[E2E #2 weather] response={response!r}")
+
+    assert isinstance(response, str), "response must be a str"
+    assert response.strip(), "response must not be empty / whitespace-only"
+    assert not response.startswith("[Error:"), (
+        f"Agent returned an error-path response: {response!r}"
+    )
+
+    # Response must contain weather-related or search-attempt content.
     response_lower = response.lower()
-    known_artefacts = ["src", "tests", "pyproject", "readme", ".claude"]
-    assert any(artefact in response_lower for artefact in known_artefacts), (
-        f"Response does not mention any expected project artefact "
-        f"({known_artefacts}) — shell tool may not have executed.\n"
+    weather_signals = [
+        "durgapur",
+        "west bengal",
+        "weather",
+        "temperature",
+        "forecast",
+        "humid",
+        "rain",
+        "celsius",
+        "°c",
+        "search",
+        "could not",
+        "unable",
+        "found",
+    ]
+    assert any(sig in response_lower for sig in weather_signals), (
+        f"Response does not mention any weather/search signals {weather_signals}.\n"
         f"Response was: {response!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# E2E Scenario 3: create + run python file
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_create_and_run_python_file() -> None:
+    """E2E #3 — literal requirement: create a python file, execute it, show output.
+
+    Literal input: 'Create a python file in the current folder, which will print
+    hello, execute it, and show the output.'
+
+    Acceptance criteria (MLA-5 / design SS12.4 row 3 / W3 resolution):
+    - Agent.run() returns a non-empty string.
+    - No AdapterError or uncaught exception.
+    - Response contains 'hello' (case-insensitive) — confirming file was executed.
+    - A .py file exists on disk in the current working directory after the run
+      (confirming real file creation, not just in-memory execution).
+
+    The CodeAgent's generated Python writes a real .py file via open(..., 'w')
+    and executes it via subprocess.run(), capturing stdout. 'subprocess' is in
+    additional_authorized_imports (W3/O5 resolution).
+
+    Note: wired directly via LocalAdapter + PraoLoop (not via Agent convenience
+    class) to allow max_steps=8. qwen2.5:7b typically needs 4-6 steps for this
+    task; the default max_steps=5 is too tight for the write+execute+report flow.
+    """
+    persona_text = persona_pkg.load()
+    adapter = LocalAdapter(persona=persona_text, max_steps=8)
+    loop = PraoLoop(
+        perceive=adapter,
+        reason=adapter,
+        act=adapter,
+        observe=adapter,
+        max_cycles=10,
+    )
+
+    # Test-isolation: remove any stale hello*.py artifacts left by prior runs so
+    # the pre-scan baseline starts clean and the new-file delta is accurate.
+    cwd = os.getcwd()
+    _STALE_PATTERNS = ("hello.py", "hello_world.py", "hello_python.py")
+    for _fname in _STALE_PATTERNS:
+        _fpath = os.path.join(cwd, _fname)
+        if os.path.exists(_fpath):
+            os.remove(_fpath)
+            print(f"\n[E2E #3 create+run] removed stale artifact: {_fpath}")
+
+    # Record .py files before to detect newly created ones.
+    py_files_before = set(f for f in os.listdir(cwd) if f.endswith(".py"))
+
+    t0 = time.monotonic()
+    response, _run_state = timing.timed_run(
+        loop.run,
+        "Create a python file in the current folder, which will print hello, "
+        "execute it, and show the output.",
+    )
+    latency_s = time.monotonic() - t0
+
+    # Detect newly created .py files.
+    py_files_after = set(f for f in os.listdir(cwd) if f.endswith(".py"))
+    new_py_files = py_files_after - py_files_before
+
+    print(f"\n[E2E #3 create+run] latency={latency_s:.1f}s")
+    print(f"[E2E #3 create+run] new .py files on disk: {new_py_files}")
+    print(f"[E2E #3 create+run] response={response!r}")
+
+    assert isinstance(response, str), "response must be a str"
+    assert response.strip(), "response must not be empty / whitespace-only"
+    assert not response.startswith("[Error:"), (
+        f"Agent returned an error-path response: {response!r}"
+    )
+
+    # Primary assertion: response must contain 'hello' (the printed output).
+    assert "hello" in response.lower(), (
+        f"Response does not contain 'hello' — the Python file may not have been "
+        f"executed or output not captured.\nResponse was: {response!r}"
+    )
+
+    # Secondary assertion: at least one new .py file should exist on disk.
+    assert new_py_files, (
+        f"No new .py files were created on disk in {cwd!r}.\n"
+        f"Files before: {py_files_before}\n"
+        f"Files after: {py_files_after}\n"
+        f"Response was: {response!r}"
+    )
+
+    # Log the created file path for the report.
+    for fname in new_py_files:
+        fpath = os.path.join(cwd, fname)
+        print(f"[E2E #3 create+run] file created: {fpath}")

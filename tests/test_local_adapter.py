@@ -1,32 +1,40 @@
 """
-Unit tests for LocalAdapter (reason, act, constructor).
+Unit tests for LocalAdapter (reason, act, constructor) -- smolagents implementation.
 
 PraoAdapterBase and _parse_intent tests live in test_shared_base.py (design §8/§11.2).
 
-All tests use MagicMock to stub litellm — no live model, no network.
-litellm is injected into sys.modules at module load time, before LocalAdapter
-is ever constructed, so that the deferred `import litellm` inside
-LocalAdapter.__init__ resolves to the mock rather than a real package install.
+All tests use unittest.mock to stub smolagents components -- no live Ollama, no network.
+smolagents (CodeAgent, LiteLLMModel) is injected into sys.modules before LocalAdapter
+is imported so that the deferred `from smolagents import ...` inside LocalAdapter.__init__
+resolves to mocks rather than the real package.
 
-After construction, each test replaces adapter._litellm with its own fresh
-MagicMock so tests are fully independent.
+Key mocking strategy (design §12.1):
+  - reason() tests: mock self._model directly after construction (it's the LiteLLMModel
+    instance stored in __init__). _query_model() calls self._model(messages, stop_sequences=None),
+    which returns a ChatMessage-like object with a .content attribute.
+  - act() tests: patch 'axiom.providers.local_adapter.CodeAgent' (the name imported inside
+    act()) so the freshly-constructed CodeAgent instance returns a controlled .run() value.
+    Since act() creates a FRESH CodeAgent per call, we patch the constructor, not an instance.
 """
 
 from __future__ import annotations
 
-import json
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# Inject mock litellm into sys.modules BEFORE importing LocalAdapter so that
-# `import litellm as _litellm_mod` inside __init__ doesn't raise ModuleNotFoundError
-# (litellm may not be installed in the test environment — only in production).
+# Inject mock smolagents into sys.modules BEFORE importing LocalAdapter so that
+# `from smolagents import CodeAgent, LiteLLMModel` inside __init__ resolves to
+# mocks (smolagents may or may not be installed; we isolate from network anyway).
 # ---------------------------------------------------------------------------
-_module_level_mock_litellm = MagicMock()
-sys.modules.setdefault("litellm", _module_level_mock_litellm)
+_mock_smolagents = MagicMock()
+_mock_LiteLLMModel_instance = MagicMock()
+_mock_smolagents.LiteLLMModel.return_value = _mock_LiteLLMModel_instance
+_mock_smolagents.CodeAgent = MagicMock()
+
+sys.modules.setdefault("smolagents", _mock_smolagents)
 
 from axiom.interfaces import (  # noqa: E402
     ActIntent,
@@ -34,7 +42,7 @@ from axiom.interfaces import (  # noqa: E402
     FinishIntent,
     RespondIntent,
 )
-from axiom.providers.local_adapter import LocalAdapter, MAX_TOOL_ITERATIONS  # noqa: E402
+from axiom.providers.local_adapter import LocalAdapter  # noqa: E402
 
 
 # ============================================================
@@ -42,156 +50,30 @@ from axiom.providers.local_adapter import LocalAdapter, MAX_TOOL_ITERATIONS  # n
 # ============================================================
 
 
+def _make_model_response(content: str) -> MagicMock:
+    """Build a mock ChatMessage-like response with .content attribute."""
+    resp = MagicMock()
+    resp.content = content
+    return resp
+
+
 def _make_adapter(
-    max_tool_iterations: int = MAX_TOOL_ITERATIONS,
+    max_steps: int = 5,
+    additional_authorized_imports: list[str] | None = None,
 ) -> tuple[LocalAdapter, MagicMock]:
-    """Build a LocalAdapter and return (adapter, fresh_mock_litellm).
+    """Build a LocalAdapter with a fresh mock _model, return (adapter, mock_model).
 
-    The adapter._litellm is replaced with a fresh MagicMock so every test
-    can configure side_effects independently without cross-contamination.
+    Replaces adapter._model with a fresh MagicMock so every test configures
+    side_effects independently without cross-contamination.
     """
-    adapter = LocalAdapter(
-        persona="Test persona", max_tool_iterations=max_tool_iterations
-    )
-    mock_lt = MagicMock()
-    adapter._litellm = mock_lt
-    return adapter, mock_lt
+    kwargs: dict = {"persona": "Test persona", "max_steps": max_steps}
+    if additional_authorized_imports is not None:
+        kwargs["additional_authorized_imports"] = additional_authorized_imports
 
-
-def _text_resp(content: str) -> MagicMock:
-    """Mock litellm response: plain text content, no tool calls."""
-    msg = MagicMock()
-    msg.content = content
-    msg.tool_calls = None  # falsy → loop treats this as a final answer
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    return resp
-
-
-def _tool_call_resp(
-    tool_name: str,
-    tool_args: dict,
-    call_id: str = "call_1",
-) -> MagicMock:
-    """Mock litellm response: a single tool call with no text content."""
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = tool_name
-    tc.function.arguments = json.dumps(tool_args)
-
-    msg = MagicMock()
-    msg.content = None
-    msg.tool_calls = [tc]
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": call_id,
-                "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(tool_args),
-                },
-            }
-        ],
-    }
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    return resp
-
-
-def _tool_call_resp_with_text(
-    tool_name: str,
-    tool_args: dict,
-    text_content: str,
-    call_id: str = "call_1",
-) -> MagicMock:
-    """Mock litellm response: a tool call whose model_dump() includes text content.
-
-    Used to test the exhaustion backward-scan branch: the serialised assistant
-    message has a non-empty 'content' field, so the backward scan returns it
-    rather than the exhaustion-summary string.
-    """
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = tool_name
-    tc.function.arguments = json.dumps(tool_args)
-
-    msg = MagicMock()
-    msg.content = None  # falsy at call time — loop continues to execute tool
-    msg.tool_calls = [tc]
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": text_content,  # present in serialised form for backward scan
-        "tool_calls": [
-            {
-                "id": call_id,
-                "function": {
-                    "name": tool_name,
-                    "arguments": json.dumps(tool_args),
-                },
-            }
-        ],
-    }
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    return resp
-
-
-def _malformed_tool_call_resp(call_id: str = "call_bad") -> MagicMock:
-    """Mock litellm response: tool call with non-JSON arguments string."""
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = "run_shell_command"
-    tc.function.arguments = "NOT JSON {{{"  # will trigger json.JSONDecodeError
-
-    msg = MagicMock()
-    msg.content = None
-    msg.tool_calls = [tc]
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": call_id,
-                "function": {
-                    "name": "run_shell_command",
-                    "arguments": "NOT JSON {{{",
-                },
-            }
-        ],
-    }
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    return resp
-
-
-def _unknown_tool_call_resp(call_id: str = "call_u") -> MagicMock:
-    """Mock litellm response: tool call for a tool not in the registry."""
-    tc = MagicMock()
-    tc.id = call_id
-    tc.function.name = "nonexistent_tool"
-    tc.function.arguments = json.dumps({"x": 1})
-
-    msg = MagicMock()
-    msg.content = None
-    msg.tool_calls = [tc]
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
-            {
-                "id": call_id,
-                "function": {
-                    "name": "nonexistent_tool",
-                    "arguments": json.dumps({"x": 1}),
-                },
-            }
-        ],
-    }
-    resp = MagicMock()
-    resp.choices = [MagicMock(message=msg)]
-    return resp
+    adapter = LocalAdapter(**kwargs)
+    mock_model = MagicMock()
+    adapter._model = mock_model
+    return adapter, mock_model
 
 
 # ============================================================
@@ -200,25 +82,41 @@ def _unknown_tool_call_resp(call_id: str = "call_u") -> MagicMock:
 
 
 class TestLocalAdapterConstructor:
-    def test_default_model_name(self) -> None:
+    def test_default_model_id(self) -> None:
         adapter, _ = _make_adapter()
-        assert adapter._model_name == "ollama_chat/qwen2.5:7b"
+        assert adapter._model_id == "ollama_chat/qwen2.5:7b"
 
     def test_default_ollama_api_base(self) -> None:
         adapter, _ = _make_adapter()
         assert adapter._ollama_api_base == "http://localhost:11434"
 
-    def test_default_max_tool_iterations(self) -> None:
+    def test_default_max_steps(self) -> None:
         adapter, _ = _make_adapter()
-        assert adapter._max_tool_iterations == MAX_TOOL_ITERATIONS
+        assert adapter._max_steps == 5
 
-    def test_custom_max_tool_iterations(self) -> None:
-        adapter, _ = _make_adapter(max_tool_iterations=2)
-        assert adapter._max_tool_iterations == 2
+    def test_custom_max_steps(self) -> None:
+        adapter, _ = _make_adapter(max_steps=3)
+        assert adapter._max_steps == 3
 
-    def test_tool_registry_contains_shell_tool(self) -> None:
+    def test_default_authorized_imports_includes_subprocess(self) -> None:
         adapter, _ = _make_adapter()
-        assert "run_shell_command" in adapter._tool_executors
+        assert "subprocess" in adapter._authorized_imports
+
+    def test_custom_authorized_imports(self) -> None:
+        adapter, _ = _make_adapter(additional_authorized_imports=["math"])
+        assert adapter._authorized_imports == ["math"]
+
+    def test_no_agent_stored_on_instance(self) -> None:
+        """act() creates CodeAgent fresh per call -- no self._agent stored (W2)."""
+        adapter, _ = _make_adapter()
+        assert not hasattr(adapter, "_agent")
+
+    def test_smolagents_import_failure_raises_helpful_error(self) -> None:
+        """If smolagents is not installed, constructor raises ModuleNotFoundError with guidance."""
+        # Setting a module to None in sys.modules causes `import smolagents` to raise ImportError.
+        with patch.dict(sys.modules, {"smolagents": None}):
+            with pytest.raises((ModuleNotFoundError, ImportError), match="smolagents"):
+                LocalAdapter(persona="Test")
 
 
 # ============================================================
@@ -228,18 +126,18 @@ class TestLocalAdapterConstructor:
 
 class TestLocalAdapterReason:
     def test_valid_respond_intent(self) -> None:
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.return_value = _text_resp(
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
             '{"intent": "RESPOND", "text": "Hi"}'
         )
         result = adapter.reason("some context")
         assert isinstance(result, RespondIntent)
         assert result.text == "Hi"
-        assert mock_lt.completion.call_count == 1
+        assert mock_model.call_count == 1
 
     def test_valid_act_intent(self) -> None:
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.return_value = _text_resp(
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
             '{"intent": "ACT", "instruction": "do it"}'
         )
         result = adapter.reason("some context")
@@ -247,217 +145,306 @@ class TestLocalAdapterReason:
         assert result.instruction == "do it"
 
     def test_valid_finish_intent(self) -> None:
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.return_value = _text_resp('{"intent": "FINISH"}')
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response('{"intent": "FINISH"}')
         result = adapter.reason("context")
         assert isinstance(result, FinishIntent)
 
     def test_malformed_first_call_retry_succeeds(self) -> None:
-        """First call returns bad JSON; retry call returns valid JSON → Intent returned."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _text_resp("not json at all"),
-            _text_resp('{"intent": "RESPOND", "text": "retry worked"}'),
+        """First call returns bad JSON; retry call returns valid JSON -> Intent returned."""
+        adapter, mock_model = _make_adapter()
+        mock_model.side_effect = [
+            _make_model_response("not json at all"),
+            _make_model_response('{"intent": "RESPOND", "text": "retry worked"}'),
         ]
         result = adapter.reason("context")
         assert isinstance(result, RespondIntent)
         assert result.text == "retry worked"
-        assert mock_lt.completion.call_count == 2
+        assert mock_model.call_count == 2
 
     def test_malformed_both_attempts_returns_fallback_respond(self) -> None:
-        """Both first and retry calls return bad JSON → [FALLBACK_RESPOND] returned."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _text_resp("garbage1"),
-            _text_resp("garbage2"),
+        """Both first and retry calls return bad JSON -> [FALLBACK_RESPOND] returned."""
+        adapter, mock_model = _make_adapter()
+        mock_model.side_effect = [
+            _make_model_response("garbage1"),
+            _make_model_response("garbage2"),
         ]
         result = adapter.reason("context")
         assert isinstance(result, RespondIntent)
         assert "[FALLBACK_RESPOND]" in result.text
-        assert mock_lt.completion.call_count == 2
+        assert mock_model.call_count == 2
 
     def test_json_in_code_fence_resolved_without_retry(self) -> None:
-        """Pre-processing recovers JSON from code fence — no retry needed."""
-        adapter, mock_lt = _make_adapter()
+        """Pre-processing recovers JSON from code fence -- no retry needed."""
+        adapter, mock_model = _make_adapter()
         fenced = '```json\n{"intent": "RESPOND", "text": "From fence"}\n```'
-        mock_lt.completion.return_value = _text_resp(fenced)
+        mock_model.return_value = _make_model_response(fenced)
         result = adapter.reason("context")
         assert isinstance(result, RespondIntent)
         assert result.text == "From fence"
-        assert (
-            mock_lt.completion.call_count == 1
-        )  # pre-processing resolved it, no retry
+        assert mock_model.call_count == 1  # pre-processing resolved it, no retry
 
     def test_reason_model_error_raises_adapter_error(self) -> None:
-        """litellm.completion raises in reason() → AdapterError propagated."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = Exception("timeout")
+        """Model raises in _query_model() -> AdapterError propagated.
+
+        Uses RuntimeError so the exception class name doesn't match any
+        differentiated tag (Connection/NotFound/Timeout), hitting the
+        [LOCAL_ADAPTER_UNEXPECTED] branch with message 'local model error: ...'.
+        """
+        adapter, mock_model = _make_adapter()
+        mock_model.side_effect = RuntimeError("something crashed")
         with pytest.raises(AdapterError, match="local model error"):
             adapter.reason("context")
 
+    def test_none_content_returned_as_empty_string(self) -> None:
+        """If model response .content is None, _query_model returns '' -> fallback RESPOND."""
+        adapter, mock_model = _make_adapter()
+        # First and retry both return None content -> both parse fail -> fallback
+        mock_model.side_effect = [
+            _make_model_response(None),  # type: ignore[arg-type]
+            _make_model_response(None),  # type: ignore[arg-type]
+        ]
+        result = adapter.reason("context")
+        assert isinstance(result, RespondIntent)
+        assert "[FALLBACK_RESPOND]" in result.text
+
+    # ----------------------------------------------------------------
+    # Defect-A tests: RESPOND-forcing when history is present
+    # ----------------------------------------------------------------
+
+    def test_post_act_context_prepends_framing_block(self) -> None:
+        """Defect-A: when context contains [TOOL EXECUTION RESULTS, model is called
+        with a prepended SYSTEM INSTRUCTION framing block — not the bare context."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "RESPOND", "text": "done"}'
+        )
+        # Simulate a context that perceive() would produce after one act() cycle.
+        post_act_context = (
+            "[PERSONA]\nTest persona\n\n"
+            "[TOOL EXECUTION RESULTS — read these carefully]\n"
+            "Step 1: hello\n\n"
+            "[NOTE: The above are REAL outputs...]\n\n"
+            "[CURRENT REQUEST]\nRun the script"
+        )
+        adapter.reason(post_act_context)
+        # Verify the actual prompt sent to the model includes the framing block.
+        call_args = mock_model.call_args
+        # _query_model wraps in messages list: [{"role": "user", "content": [{...}]}]
+        sent_text = call_args[0][0][0]["content"][0]["text"]
+        assert "SYSTEM INSTRUCTION (highest priority" in sent_text
+        assert "ALREADY completed" in sent_text
+        # Original context is still present (appended after framing)
+        assert "[TOOL EXECUTION RESULTS" in sent_text
+
+    def test_no_framing_block_without_history(self) -> None:
+        """Defect-A: when context has NO [TOOL EXECUTION RESULTS, no framing is prepended."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "ACT", "instruction": "do it"}'
+        )
+        plain_context = "[PERSONA]\nTest persona\n\n[CURRENT REQUEST]\nDo something"
+        adapter.reason(plain_context)
+        call_args = mock_model.call_args
+        sent_text = call_args[0][0][0]["content"][0]["text"]
+        assert "SYSTEM INSTRUCTION (highest priority" not in sent_text
+        assert sent_text == plain_context
+
+    def test_post_act_context_returns_respond_intent(self) -> None:
+        """Defect-A integration: reason() returns RESPOND when history is present
+        and model correctly returns RESPOND intent (main scenario for loop termination)."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "RESPOND", "text": "The output was: hello"}'
+        )
+        post_act_context = (
+            "[PERSONA]\nTest persona\n\n"
+            "[TOOL EXECUTION RESULTS — read these carefully]\n"
+            "Step 1: hello\n\n"
+            "[CURRENT REQUEST]\nRun the script"
+        )
+        result = adapter.reason(post_act_context)
+        assert isinstance(result, RespondIntent)
+        assert result.text == "The output was: hello"
+
+    def test_post_act_retry_also_uses_framing(self) -> None:
+        """Defect-A: when retry is needed in a post-act context, the retry prompt
+        also contains the RESPOND-forcing framing block (not just the bare context)."""
+        adapter, mock_model = _make_adapter()
+        mock_model.side_effect = [
+            _make_model_response("not json"),
+            _make_model_response('{"intent": "RESPOND", "text": "retry worked"}'),
+        ]
+        post_act_context = (
+            "[PERSONA]\nTest persona\n\n"
+            "[TOOL EXECUTION RESULTS — read these carefully]\n"
+            "Step 1: output\n\n"
+            "[CURRENT REQUEST]\nRun script"
+        )
+        result = adapter.reason(post_act_context)
+        assert isinstance(result, RespondIntent)
+        assert result.text == "retry worked"
+        # Verify the retry call also included the framing block
+        retry_call_args = mock_model.call_args_list[1]
+        retry_text = retry_call_args[0][0][0]["content"][0]["text"]
+        assert "SYSTEM INSTRUCTION (highest priority" in retry_text
+
 
 # ============================================================
-# LocalAdapter — act() / _run_tool_loop()
+# LocalAdapter — act()
 # ============================================================
 
 
 class TestLocalAdapterAct:
-    def test_happy_path_single_tool_call(self) -> None:
-        """Model proposes run_shell_command → harness executes → final text returned."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _tool_call_resp("run_shell_command", {"command": "echo hello"}),
-            _text_resp("The output was: hello"),
-        ]
-        # Stub the executor — no subprocess spawned
-        adapter._tool_executors["run_shell_command"] = lambda args: "hello"
+    def test_happy_path_returns_result_string(self) -> None:
+        """CodeAgent.run() returns a string -> act() returns that string."""
+        adapter, _ = _make_adapter()
+        with patch("smolagents.CodeAgent") as MockCodeAgent:
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.return_value = "The answer is 42"
+            MockCodeAgent.return_value = mock_agent_instance
 
-        result = adapter.act("Echo hello and report")
-        assert result == "The output was: hello"
-        assert mock_lt.completion.call_count == 2
+            result = adapter.act("What is 6 times 7?")
 
-    def test_multi_step_tool_loop(self) -> None:
-        """G3: Model calls tools on iterations 1 and 2, then returns final text on 3.
+        assert result == "The answer is 42"
+        MockCodeAgent.assert_called_once()
+        mock_agent_instance.run.assert_called_once_with("What is 6 times 7?")
 
-        Verifies that _run_tool_loop correctly accumulates tool results across
-        multiple iterations and passes them all back before the model's final answer.
+    def test_act_creates_fresh_codeagent_per_call(self) -> None:
+        """Each act() call creates a new CodeAgent (W2 -- no cross-call state)."""
+        adapter, _ = _make_adapter()
+        with patch("smolagents.CodeAgent") as MockCodeAgent:
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.return_value = "result"
+            MockCodeAgent.return_value = mock_agent_instance
+
+            adapter.act("first call")
+            adapter.act("second call")
+
+        # Constructor called twice -> two fresh instances
+        assert MockCodeAgent.call_count == 2
+
+    def test_act_passes_correct_constructor_args(self) -> None:
+        """CodeAgent is constructed with the right model, tools, max_steps, executor.
+
+        Tool-set fix: add_base_tools is NOT passed (explicit minimal tool list is
+        used instead). CodeAgent receives tools=[DuckDuckGoSearchTool()], max_steps,
+        executor, verbosity_level.
+
+        Since smolagents 1.26.0: additional_authorized_imports is passed to a
+        LocalPythonExecutor, not directly to CodeAgent. CodeAgent receives an
+        executor= kwarg instead.
         """
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _tool_call_resp("run_shell_command", {"command": "ls"}, call_id="c1"),
-            _tool_call_resp("run_shell_command", {"command": "pwd"}, call_id="c2"),
-            _text_resp("Done: ls and pwd both ran"),
-        ]
-        execution_log: list[str] = []
+        adapter, _ = _make_adapter(max_steps=3)
+        with (
+            patch("smolagents.CodeAgent") as MockCodeAgent,
+            patch("smolagents.LocalPythonExecutor") as MockExecutor,
+            patch("smolagents.DuckDuckGoSearchTool") as MockDDGTool,
+        ):
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.return_value = "ok"
+            MockCodeAgent.return_value = mock_agent_instance
+            mock_executor_instance = MagicMock()
+            MockExecutor.return_value = mock_executor_instance
+            mock_ddg_instance = MagicMock()
+            MockDDGTool.return_value = mock_ddg_instance
 
-        def recording_executor(args: dict) -> str:
-            execution_log.append(args["command"])
-            return f"output of {args['command']}"
+            adapter.act("do something")
 
-        adapter._tool_executors["run_shell_command"] = recording_executor
+        # CodeAgent receives model, tools=[DuckDuckGoSearchTool()], max_steps, executor,
+        # verbosity_level. add_base_tools is NOT passed (tool-set fix).
+        call_kwargs = MockCodeAgent.call_args[1]
+        assert call_kwargs["model"] is adapter._model
+        assert call_kwargs["tools"] == [mock_ddg_instance]
+        assert "add_base_tools" not in call_kwargs, (
+            "add_base_tools must NOT be passed -- explicit tool list replaces it"
+        )
+        assert call_kwargs["max_steps"] == 3
+        assert call_kwargs["executor"] is mock_executor_instance
+        # Defect-B: verbosity_level=0 must be present to suppress rich console logging
+        assert call_kwargs["verbosity_level"] == 0
 
-        result = adapter.act("List files and current dir")
+        # LocalPythonExecutor receives additional_authorized_imports with subprocess
+        # and additional_functions with 're' pre-populated (tool-set fix).
+        executor_kwargs = MockExecutor.call_args[1]
+        assert "subprocess" in executor_kwargs["additional_authorized_imports"]
+        assert "re" in executor_kwargs["additional_functions"], (
+            "re module must be pre-populated in executor namespace (tool-set fix)"
+        )
+        import re as _re_check
 
-        assert result == "Done: ls and pwd both ran"
-        assert mock_lt.completion.call_count == 3
-        assert execution_log == ["ls", "pwd"], (
-            f"Tools should have run in order [ls, pwd]; got {execution_log}"
+        assert executor_kwargs["additional_functions"]["re"] is _re_check
+
+    def test_act_verbosity_level_zero_suppresses_console_logging(self) -> None:
+        """Defect-B: CodeAgent is constructed with verbosity_level=0.
+
+        Prevents UnicodeEncodeError on Windows (cp1252) when smolagents/rich
+        tries to print emoji-containing content (e.g. DuckDuckGo search results).
+        verbosity_level=0 suppresses all rich console output from the CodeAgent.
+        """
+        adapter, _ = _make_adapter()
+        with (
+            patch("smolagents.CodeAgent") as MockCodeAgent,
+            patch("smolagents.LocalPythonExecutor"),
+        ):
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.return_value = "result"
+            MockCodeAgent.return_value = mock_agent_instance
+
+            adapter.act("do something")
+
+        call_kwargs = MockCodeAgent.call_args[1]
+        assert "verbosity_level" in call_kwargs, (
+            "CodeAgent must be constructed with verbosity_level kwarg (Defect-B fix)"
+        )
+        assert call_kwargs["verbosity_level"] == 0, (
+            "verbosity_level must be 0 to suppress rich console logging on Windows"
         )
 
-    def test_malformed_tool_args_feeds_error_back_does_not_crash(self) -> None:
-        """Malformed tool arguments → error string fed back to model; no exception raised."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _malformed_tool_call_resp(),
-            _text_resp("Got an error but recovered"),
-        ]
-        result = adapter.act("do something")
-        assert result == "Got an error but recovered"
-        # Verify error was fed back in the tool message of the second call
-        second_call_msgs = mock_lt.completion.call_args_list[1][1]["messages"]
-        tool_msgs = [
-            m
-            for m in second_call_msgs
-            if isinstance(m, dict) and m.get("role") == "tool"
-        ]
-        assert len(tool_msgs) == 1
-        assert "[error]" in tool_msgs[0]["content"]
+    def test_act_result_non_string_converted_to_str(self) -> None:
+        """If CodeAgent.run() returns a non-string (e.g. int), str() is applied."""
+        adapter, _ = _make_adapter()
+        with patch("smolagents.CodeAgent") as MockCodeAgent:
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.return_value = 42  # int, not str
+            MockCodeAgent.return_value = mock_agent_instance
 
-    def test_tool_execution_error_fed_back_as_string(self) -> None:
-        """Executor raises → error string fed back to model; exception never re-raised."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _tool_call_resp("run_shell_command", {"command": "bad cmd"}),
-            _text_resp("Error handled gracefully"),
-        ]
+            result = adapter.act("what is 6*7")
 
-        def raising_executor(args: dict) -> str:
-            raise RuntimeError("disk full")
+        assert result == "42"
+        assert isinstance(result, str)
 
-        adapter._tool_executors["run_shell_command"] = raising_executor
+    def test_act_codeagent_error_raises_adapter_error(self) -> None:
+        """CodeAgent.run() raises -> AdapterError propagated."""
+        adapter, _ = _make_adapter()
+        with patch("smolagents.CodeAgent") as MockCodeAgent:
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.side_effect = RuntimeError("model refused")
+            MockCodeAgent.return_value = mock_agent_instance
 
-        result = adapter.act("run bad cmd")
-        assert result == "Error handled gracefully"
-        # The second completion call must have received the error as a tool message
-        second_call_msgs = mock_lt.completion.call_args_list[1][1]["messages"]
-        tool_msgs = [
-            m
-            for m in second_call_msgs
-            if isinstance(m, dict) and m.get("role") == "tool"
-        ]
-        assert len(tool_msgs) == 1
-        assert "[error]" in tool_msgs[0]["content"]
-        assert "disk full" in tool_msgs[0]["content"]
+            with pytest.raises(AdapterError, match="CodeAgent execution error"):
+                adapter.act("do something")
 
-    def test_unknown_tool_feeds_error_back_does_not_crash(self) -> None:
-        """Model proposes unknown tool → error string fed back; no crash."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = [
-            _unknown_tool_call_resp(),
-            _text_resp("Unknown tool noted"),
-        ]
-        result = adapter.act("use unknown tool")
-        assert result == "Unknown tool noted"
-        # Verify error was fed back
-        second_call_msgs = mock_lt.completion.call_args_list[1][1]["messages"]
-        tool_msgs = [
-            m
-            for m in second_call_msgs
-            if isinstance(m, dict) and m.get("role") == "tool"
-        ]
-        assert len(tool_msgs) == 1
-        assert "unknown tool" in tool_msgs[0]["content"]
+    def test_act_error_message_contains_original_exception(self) -> None:
+        """AdapterError message wraps the original exception text."""
+        adapter, _ = _make_adapter()
+        with patch("smolagents.CodeAgent") as MockCodeAgent:
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.run.side_effect = ValueError("quota exceeded")
+            MockCodeAgent.return_value = mock_agent_instance
 
-    def test_max_tool_iterations_exhaustion_returns_summary_string(self) -> None:
-        """Loop exhausts MAX_TOOL_ITERATIONS → returns explicit summary; never raises."""
-        adapter, mock_lt = _make_adapter(max_tool_iterations=2)
-        # Both responses are tool-calls → loop never gets a final text answer
-        mock_lt.completion.side_effect = [
-            _tool_call_resp("run_shell_command", {"command": "ls"}, call_id="c1"),
-            _tool_call_resp("run_shell_command", {"command": "ls"}, call_id="c2"),
-        ]
-        # Stub executor to avoid subprocess
-        adapter._tool_executors["run_shell_command"] = lambda args: "ls output"
+            with pytest.raises(AdapterError, match="quota exceeded"):
+                adapter.act("do something")
 
-        result = adapter.act("keep looping")
-        # Must not raise; must return a non-empty string
-        assert isinstance(result, str) and len(result) > 0
-        # No assistant text was produced → exhaustion summary is returned
-        assert "exhausted" in result or "iterations" in result
-        assert mock_lt.completion.call_count == 2
+    def test_act_codeagent_constructor_failure_raises_adapter_error(self) -> None:
+        """CodeAgent constructor raises -> AdapterError propagated (G2 fix).
 
-    def test_exhaustion_backward_scan_returns_assistant_text(self) -> None:
-        """G4: Exhaustion scan finds earlier assistant text and returns it (not raw tool result).
-
-        Design §5.4 / dryrun-code-1 G4: when the loop exhausts MAX_TOOL_ITERATIONS
-        and an earlier assistant message has non-empty 'content' in its model_dump(),
-        the backward scan must return that text rather than the generic exhaustion string.
+        Before G2, the constructor was outside the try/except so raw exceptions
+        escaped the adapter boundary. Now the whole block is guarded.
         """
-        adapter, mock_lt = _make_adapter(max_tool_iterations=2)
-        # Iteration 1: tool call whose model_dump() includes text content
-        # Iteration 2: tool call with no text content — loop exhausts after this
-        mock_lt.completion.side_effect = [
-            _tool_call_resp_with_text(
-                "run_shell_command",
-                {"command": "ls"},
-                text_content="Partial result: I found the files",
-                call_id="c1",
-            ),
-            _tool_call_resp("run_shell_command", {"command": "pwd"}, call_id="c2"),
-        ]
-        adapter._tool_executors["run_shell_command"] = lambda args: "some output"
+        adapter, _ = _make_adapter()
+        with patch("smolagents.CodeAgent") as MockCodeAgent:
+            MockCodeAgent.side_effect = RuntimeError("model config invalid")
 
-        result = adapter.act("find files")
-
-        # The backward scan should find the text from the first assistant message
-        assert result == "Partial result: I found the files", (
-            f"Expected assistant text from backward scan; got {result!r}"
-        )
-        assert mock_lt.completion.call_count == 2
-
-    def test_act_model_error_raises_adapter_error(self) -> None:
-        """litellm.completion raises inside _run_tool_loop → AdapterError raised."""
-        adapter, mock_lt = _make_adapter()
-        mock_lt.completion.side_effect = Exception("connection refused")
-        with pytest.raises(AdapterError, match="local model error"):
-            adapter.act("anything")
+            with pytest.raises(AdapterError, match="CodeAgent execution error"):
+                adapter.act("do something")
