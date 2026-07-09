@@ -110,10 +110,15 @@ def _extract_json_from_text(text: str) -> str | None:
     if brace_m:
         candidates.append(brace_m.group(0).strip())
 
-    # Return the first candidate that successfully parses as a JSON dict
+    # Return the first candidate that successfully parses as a JSON dict.
+    # strict=False: weak local models embed literal newlines inside JSON string
+    # values (e.g. RESPOND text with "\n"). Standard json.loads rejects these as
+    # invalid control characters; strict=False accepts them without altering the
+    # parsed value. The candidate string is returned unchanged for the caller's
+    # final json.loads call (which also uses strict=False).
     for candidate in candidates:
         try:
-            if isinstance(json.loads(candidate), dict):
+            if isinstance(json.loads(candidate, strict=False), dict):
                 return candidate
         except (json.JSONDecodeError, ValueError):
             continue
@@ -141,10 +146,12 @@ def _parse_intent(raw: str) -> tuple[Intent | None, str | None]:
     text = raw.strip()
 
     # Step 1: Direct parse attempt (happy path — does not alter ClaudeAdapter behaviour)
+    # strict=False: tolerate literal control characters (e.g. \n) inside JSON string
+    # values, which weak local models sometimes emit in RESPOND text fields.
     data: object = None
     last_exc: str | None = None
     try:
-        data = json.loads(text)
+        data = json.loads(text, strict=False)
     except (json.JSONDecodeError, ValueError) as exc:
         last_exc = str(exc)
 
@@ -153,7 +160,7 @@ def _parse_intent(raw: str) -> tuple[Intent | None, str | None]:
         extracted = _extract_json_from_text(text)
         if extracted is not None:
             try:
-                data = json.loads(extracted)
+                data = json.loads(extracted, strict=False)
             except (json.JSONDecodeError, ValueError) as exc:
                 last_exc = str(exc)
 
