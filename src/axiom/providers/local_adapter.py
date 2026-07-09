@@ -196,7 +196,7 @@ class LocalAdapter(PraoAdapterBase):
         observes -> iterates until done or max_steps reached. Returns the
         final result string.
         """
-        from smolagents import CodeAgent, LocalPythonExecutor  # noqa: PLC0415 -- Python import cache: free after first __init__ load
+        from smolagents import CodeAgent, DuckDuckGoSearchTool, LocalPythonExecutor  # noqa: PLC0415 -- Python import cache: free after first __init__ load
 
         # G2: CodeAgent constructor is inside the try/except so that construction
         # failures are also wrapped in AdapterError, not raw exceptions.
@@ -204,16 +204,33 @@ class LocalAdapter(PraoAdapterBase):
             # smolagents 1.26.0: open() is not in BASE_PYTHON_TOOLS and the sandbox
             # blocks it as an unnamed builtin. Inject it explicitly via additional_functions
             # so the CodeAgent's generated code can write real files to disk (E2E #3 / W3).
+            # Tool-set fix: pre-populate `re` in the executor namespace.
+            # qwen2.5:7b routinely generates re.search(...) without writing `import re`
+            # first. additional_authorized_imports only permits the import statement --
+            # it does NOT pre-inject the module. Pre-populating via additional_functions
+            # means `re` is in scope even when the model omits the import, eliminating
+            # InterpreterError: The variable 're' is not defined.
             import builtins  # noqa: PLC0415
+            import re as _re  # noqa: PLC0415
 
             executor = LocalPythonExecutor(
                 additional_authorized_imports=self._authorized_imports,
-                additional_functions={"open": builtins.open},
+                additional_functions={"open": builtins.open, "re": _re},
             )
+            # Tool-set fix (tool-provisioning pass): explicit minimal tool list replaces
+            # add_base_tools=True. Rationale:
+            # (1) add_base_tools=True includes VisitWebpageTool which requires markdownify
+            #     + requests (not installed) -> ImportError when qwen calls visit_webpage().
+            # (2) add_base_tools=True includes PythonInterpreterTool which confuses qwen:
+            #     it called python_interpreter('hello.py') treating it like a shell
+            #     executor and got InterpreterError: 'python_interpreter' not allowed.
+            #     In CodeAct, Python execution is the agent's own code block -- no
+            #     PythonInterpreterTool needed; LocalPythonExecutor handles it natively.
+            # (3) Fewer, clearer tools = less flailing for a weak model (qwen2.5:7b).
+            # Zero axiom-authored tool code: DuckDuckGoSearchTool is smolagents-provided.
             agent = CodeAgent(
                 model=self._model,
-                tools=[],
-                add_base_tools=True,
+                tools=[DuckDuckGoSearchTool()],
                 max_steps=self._max_steps,
                 executor=executor,
                 verbosity_level=0,  # Defect-B: suppress rich console logging;

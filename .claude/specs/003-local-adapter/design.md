@@ -82,20 +82,22 @@ model = LiteLLMModel(
 )
 ```
 
-**CodeAgent instantiation (for act()):**
+**CodeAgent instantiation (for act()) — updated by tool-provisioning fix (§20):**
 
 ```python
-from smolagents import CodeAgent
+import re as _re
+import builtins
+from smolagents import CodeAgent, DuckDuckGoSearchTool, LocalPythonExecutor
 
+executor = LocalPythonExecutor(
+    additional_authorized_imports=["math", "statistics", "datetime", "json", "re", "subprocess"],
+    additional_functions={"open": builtins.open, "re": _re},  # pre-populate re (§20)
+)
 agent = CodeAgent(
     model=model,
-    tools=[],              # no custom tools
-    add_base_tools=True,   # DuckDuckGoSearchTool + PythonInterpreterTool + others
+    tools=[DuckDuckGoSearchTool()],  # explicit minimal list -- no add_base_tools (§20)
     max_steps=5,           # bounds the internal agentic loop; parity with MAX_TOOL_ITERATIONS=5
-    additional_authorized_imports=[
-        "math", "statistics", "datetime", "json", "re",
-        "subprocess",  # required: E2E #3 writes hello.py to disk + executes it (W3)
-    ],
+    executor=executor,
 )
 ```
 
@@ -113,14 +115,14 @@ ClaudeAdapter's `act()` delegates to the Claude SDK's internal tool loop: the SD
 |-----------|---------------|-------------------|
 | `perceive()` | Inherited from `PraoAdapterBase`. Assembles context string (persona + history + request + intent format instructions). | PraoLoop (outer) |
 | `reason()` | Tool-less model call via smolagents' `LiteLLMModel`. Parses JSON intent (RESPOND/ACT/FINISH). Returns `Intent`. | PraoLoop (outer) -- reason() is a single model call, no internal loop. |
-| `act()` | Delegates to `CodeAgent.run(instruction)`. The CodeAgent owns its internal multi-step loop: generates Python code → executes via PythonInterpreterTool or DuckDuckGoSearchTool → observes result → iterates until done or `max_steps` reached. Returns the final result string. | smolagents CodeAgent (inner worker loop) -- invisible to PraoLoop. |
+| `act()` | Delegates to `CodeAgent.run(instruction)`. The CodeAgent owns its internal multi-step loop: generates Python code → executes natively (Python execution is built into CodeAct) or calls DuckDuckGoSearchTool → observes result → iterates until done or `max_steps` reached. Returns the final result string. | smolagents CodeAgent (inner worker loop) -- invisible to PraoLoop. |
 | `observe()` | Inherited from `PraoAdapterBase`. Appends `act()` result to `run_state.history`, increments `cycle_count`. | PraoLoop (outer) |
 
 **The mapping is unambiguous:**
 
 1. **PraoLoop drives the outer cycle:** `perceive → reason → [act → observe → perceive → reason]* → RESPOND/FINISH`.
 2. **reason() produces the intent decision:** A single, tool-less model call. The model sees the context (including any prior tool results from history) and decides RESPOND (answer directly), ACT (need tools), or FINISH (done). No smolagents CodeAgent involved.
-3. **act() delegates to CodeAgent.run():** The instruction from reason()'s ACT intent is passed to `CodeAgent.run(instruction)`. The CodeAgent internally writes Python code, executes it (using DuckDuckGoSearchTool, PythonInterpreterTool, or bare Python), observes results, and iterates until it has a final answer. All of this is invisible to PraoLoop.
+3. **act() delegates to CodeAgent.run():** The instruction from reason()'s ACT intent is passed to `CodeAgent.run(instruction)`. The CodeAgent internally writes Python code, executes it (Python execution is native to CodeAct; DuckDuckGoSearchTool is available for web search via `tools=[DuckDuckGoSearchTool()]`), observes results, and iterates until it has a final answer. All of this is invisible to PraoLoop.
 4. **observe() captures the CodeAgent's final result:** The string returned by `CodeAgent.run()` flows through `observe()` into `run_state.history`. On the next cycle, `perceive()` includes it in the context, and `reason()` decides whether to RESPOND with the answer or ACT again.
 
 **Why this works (consistency with M1 contract):**
@@ -291,13 +293,15 @@ All errors from the smolagents/Ollama stack are caught and raised as `AdapterErr
 
 The prior litellm design hand-rolled a complete tool-execution harness: `SHELL_TOOL_SCHEMA`, `_execute_shell_tool()` (raw `subprocess.run(shell=True)`), `_run_tool_loop()`, and an internal tool registry. All of this is **removed** and replaced by smolagents' built-in toolbox.
 
-smolagents provides tools via `add_base_tools=True` on `CodeAgent`:
+smolagents provides tools via an **explicit minimal list** on `CodeAgent` (see §20 for why `add_base_tools=True` was replaced):
 
 | Tool | Class | What it does | E2E coverage |
 |------|-------|-------------|--------------|
 | **DuckDuckGoSearchTool** | `smolagents.DuckDuckGoSearchTool` | Web search via ddgs library (no API key). Executes locally. | E2E #2 (weather in Durgapur) |
-| **PythonInterpreterTool** | `smolagents.PythonInterpreterTool` | Executes Python code in smolagents' sandboxed interpreter. | E2E #3 (write + run Python) |
-| Other base tools | (VisitWebpageTool, etc.) | Additional utility tools shipped with smolagents | Not explicitly tested but available |
+
+**Why not PythonInterpreterTool?** In CodeAct, the `CodeAgent` itself executes Python code blocks via `LocalPythonExecutor` — that IS the Python execution mechanism. Adding `PythonInterpreterTool` as an explicit tool creates confusion for weak models (qwen2.5:7b called `python_interpreter('hello.py')` as if it were a shell runner, which fails). E2E #3 works by having the CodeAgent write Python code that calls `subprocess.run(...)` directly — no PythonInterpreterTool needed.
+
+**Why not VisitWebpageTool?** Requires `markdownify` + `requests` (not in project deps). If added as a tool, qwen2.5:7b may invoke it, triggering `ImportError`. Excluded from the minimal set.
 
 **Axiom authors zero tool code.** No schemas, no executors, no registries. This mirrors ClaudeAdapter's relationship with its SDK (Bash/WebSearch are SDK-provided; axiom just passes `allowed_tools`).
 
@@ -599,11 +603,10 @@ Requires Ollama running with qwen2.5:7b. Marked `@pytest.mark.e2e_local`.
                            claude_agent_sdk          smolagents CodeAgent
                            (async subprocess)        (CodeAct: writes Python)
                                                            |
-                                                     +-----+-----+
-                                                     |           |
-                                                     v           v
-                                          DuckDuckGo     PythonInterpreter
-                                          SearchTool     Tool (sandboxed)
+                                                           |
+                                                           v
+                                                    DuckDuckGoSearchTool
+                                                    (tools=[DuckDuckGoSearchTool()])
                                                      |
                                                      v
                                               LiteLLMModel
@@ -622,7 +625,7 @@ Requires Ollama running with qwen2.5:7b. Marked `@pytest.mark.e2e_local`.
 |---|---|
 | **MLA-1** -- LocalAdapter satisfies all four Protocols, same PraoLoop, zero loop changes | `LocalAdapter` in `local_adapter.py` inherits `PraoAdapterBase` (perceive/observe) and implements `reason()`/`act()` using smolagents `LiteLLMModel` + `CodeAgent` against Ollama. `loop.py` + `interfaces.py` have zero diff. `PraoLoop` constructor accepts LocalAdapter identically to ClaudeAdapter. Zero axiom-authored tool code. |
 | **MLA-2** -- Shared perceive()/observe(), W3 resolved | Already implemented in `base.py`. `PraoAdapterBase` provides shared `perceive()` + `observe()`. Both adapters inherit. M1 tests unaffected. |
-| **MLA-3** -- act() via smolagents CodeAgent | `act()` delegates to `CodeAgent.run(instruction)`. CodeAgent uses CodeAct (writes Python), with `DuckDuckGoSearchTool` + `PythonInterpreterTool` via `add_base_tools=True`. `max_steps` bounds internal loop. Zero axiom tool code: no `_execute_shell_tool`, no `SHELL_TOOL_SCHEMA`, no `_run_tool_loop`. |
+| **MLA-3** -- act() via smolagents CodeAgent | `act()` delegates to `CodeAgent.run(instruction)`. CodeAgent uses CodeAct (writes Python), with `DuckDuckGoSearchTool` via explicit `tools=[DuckDuckGoSearchTool()]` (§20 — `add_base_tools=True` replaced). `max_steps` bounds internal loop. Zero axiom tool code: no `_execute_shell_tool`, no `SHELL_TOOL_SCHEMA`, no `_run_tool_loop`. |
 | **MLA-4** -- Fast unit tests (mocked smolagents) | `test_local_adapter.py`: mocked smolagents components cover reason() (valid/malformed/fallback), act() (happy path/error/result-conversion), constructor. No Ollama, no network. |
 | **MLA-5** -- Live E2E: 3 scenarios | `test_local_e2e.py`: (1) "hello" RESPOND-only, (2) DuckDuckGo weather search, (3) Python code execution. All through real PraoLoop + real Ollama + real smolagents. Marked `@pytest.mark.e2e_local`. |
 | **MLA-6** -- M1's 26 tests remain green | `test_contracts.py` untouched. `FakeAdapter` untouched. `loop.py` + `interfaces.py` frozen. `base.py` + `claude_adapter.py` unchanged. |
@@ -721,6 +724,36 @@ Two defects discovered during live E2E scenario #3 (create+run python file), fix
 **Fix (local_adapter.py `act()` only):** `CodeAgent` is constructed with `verbosity_level=0`, which suppresses all rich console logging from smolagents. This is applied at construction time on the fresh-per-call `CodeAgent` instance. No rich output = no cp1252 encoding failure regardless of result content.
 
 **Scope:** `local_adapter.py` `act()` only. One additional kwarg to the `CodeAgent` constructor. `loop.py`, `interfaces.py`, `base.py`, `claude_adapter.py` UNTOUCHED.
+
+---
+
+## 20. Post-Manual-E2E Tool-Provisioning Fix
+
+Two exceptions surfaced during manual qwen2.5:7b runs (after the automated E2E). Fixed in `local_adapter.py` `act()` only. `loop.py`, `interfaces.py`, `base.py`, `claude_adapter.py` UNTOUCHED.
+
+### 20.1 VisitWebpageTool ImportError (`add_base_tools=True` → explicit tool list)
+
+**Symptom:** Weather scenario: qwen called `visit_webpage(...)` → `ImportError: You must install packages markdownify and requests`.
+
+**Root cause:** `add_base_tools=True` adds `VisitWebpageTool` alongside `DuckDuckGoSearchTool`. `VisitWebpageTool` requires `markdownify` + `requests` which are not installed. When qwen picked `visit_webpage` over `DuckDuckGoSearchTool`, the import failed inside the tool's own code.
+
+Secondary root cause: `add_base_tools=True` also adds `PythonInterpreterTool`. In the Python-file scenario qwen called `python_interpreter('hello.py')` treating it like a shell executor → `InterpreterError: 'python_interpreter' is not among the explicitly allowed tools`. In CodeAct, Python is executed directly by the `LocalPythonExecutor` — `PythonInterpreterTool` as an explicit tool is redundant and confusing.
+
+**Fix:** Replace `tools=[], add_base_tools=True` with `tools=[DuckDuckGoSearchTool()]` (no `add_base_tools`). This gives qwen exactly one web-search tool and no tool-list clutter. Python execution is the agent's native CodeAct mechanism, not a tool.
+
+**Why not also add `PythonInterpreterTool()`?** Unnecessary and counterproductive in CodeAct context. The `LocalPythonExecutor` already IS the Python execution engine for the CodeAgent. Adding `PythonInterpreterTool` as a tool creates a second, overlapping mechanism that weak models misuse. E2E #3 (write + run hello.py) works because the CodeAgent writes Python code that calls `subprocess.run(...)` directly in the executor — zero PythonInterpreterTool involvement.
+
+**pyproject deps:** No change needed. `markdownify`/`requests` were never in the deps, and we no longer invoke the tool that requires them.
+
+### 20.2 `re` Not Defined (`InterpreterError`)
+
+**Symptom:** Weather scenario (after visit_webpage failed): qwen's fallback code used `re.search(...)` → `InterpreterError: The variable 're' is not defined`.
+
+**Root cause:** `additional_authorized_imports` permits `import re` — but if model-generated code uses `re.search(...)` WITHOUT first writing `import re`, the `re` name is absent from the sandbox's local variable dict. `LocalPythonExecutor` does not pre-import anything from the authorized list; it only validates import statements when the generated code includes them. qwen2.5:7b routinely skips the import for stdlib modules it considers "always available".
+
+**Fix:** Add `"re": _re` to `LocalPythonExecutor`'s `additional_functions` (alongside the existing `"open": builtins.open`). `additional_functions` injects named values directly into the executor's initial namespace, so `re.search(...)` works even without an explicit `import re` in the generated code.
+
+**Scope:** `local_adapter.py` `act()` only. `_authorized_imports` list unchanged — `re` stays there so explicit `import re` statements also work. No pyproject change needed.
 
 ---
 
