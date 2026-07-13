@@ -33,6 +33,13 @@ logger = logging.getLogger("axiom.providers")
 
 PER_QUERY_TIMEOUT_SECS: int = 60  # local model; shorter than Claude's 120s
 
+# gen_ai.system constant for all KIND-A local (Ollama) spans.
+# OTel GenAI semconv does not formally define "ollama" as a registered provider string
+# (only "anthropic", "openai", etc. are registered), but "ollama" is the conventional
+# value used by OTel GenAI instrumentation for Ollama-backed models — consistent with
+# the litellm "ollama_chat/" prefix and smolagents' provider naming.
+_GEN_AI_SYSTEM_LOCAL: str = "ollama"
+
 
 # ---------------------------------------------------------------------------
 # LocalAdapter
@@ -150,7 +157,11 @@ class LocalAdapter(PraoAdapterBase):
         else:
             augmented_context = context
 
-        raw_text = self._query_model(augmented_context)
+        raw_text, input_tokens, output_tokens = self._query_model(augmented_context)
+        # M2: populate gen_ai attrs after model call; tokens from ChatMessage.token_usage.
+        self._enrich_current_span_gen_ai(
+            input_tokens=input_tokens, output_tokens=output_tokens
+        )
 
         intent, error = _parse_intent(raw_text)
         if intent is not None:
@@ -169,7 +180,7 @@ class LocalAdapter(PraoAdapterBase):
             augmented_context + "\n\nYour previous response was not valid JSON. "
             "Reply with only the JSON intent object."
         )
-        retry_text = self._query_model(retry_context)
+        retry_text, _, _ = self._query_model(retry_context)
         retry_intent, retry_error = _parse_intent(retry_text)
         if retry_intent is not None:
             return retry_intent
@@ -239,6 +250,12 @@ class LocalAdapter(PraoAdapterBase):
                 # No custom system_prompt: relies on smolagents' built-in default (O2).
             )
             result = agent.run(instruction)
+            # M2: populate gen_ai attrs after CodeAgent loop. Token counts are left null
+            # here because smolagents CodeAgent's agent.run() does not expose an aggregate
+            # token_usage on its return value — the multi-step loop makes N internal model
+            # calls and there is no clean post-run accessor for the total. Honest null is
+            # correct; do not fabricate. model/system/cost are still populated.
+            self._enrich_current_span_gen_ai()
             return str(result)
         except Exception as e:
             logger.error("[LOCAL_ADAPTER_ACT_ERROR] %s", e)
@@ -248,10 +265,74 @@ class LocalAdapter(PraoAdapterBase):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _query_model(self, prompt: str) -> str:
+    def _enrich_current_span_gen_ai(
+        self,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        """Set gen_ai OTel attributes on the current span if it is recording.
+
+        Mirrors the ClaudeAdapter is_recording() gate pattern
+        (claude_adapter.py:369-377): lazy OTel import, is_recording() guard,
+        then set_attribute() calls using the exact attribute keys that
+        schema.py serialize_span_end() maps to the gen_ai_* record fields:
+          gen_ai.system            -> gen_ai_system
+          gen_ai.request.model     -> gen_ai_request_model
+          gen_ai.response.model    -> gen_ai_response_model
+          gen_ai.usage.input_tokens  -> gen_ai_usage_input_tokens
+          gen_ai.usage.output_tokens -> gen_ai_usage_output_tokens
+          axiom.cost_usd           -> cost_usd
+
+        Unlike KIND-B (Claude), KIND-A knows its model at construction time so
+        both gen_ai.request.model and gen_ai.response.model are populated.
+        cost_usd = 0.0 always: local Ollama has no API billing.
+
+        Token counts are passed explicitly by the caller (extracted from the
+        ChatMessage returned by the model call) rather than read from model
+        attributes — smolagents 1.26's LiteLLMModel has no last_*_token_count
+        attrs; the real counts live on ChatMessage.token_usage (see _query_model).
+        Only sets the token attributes when the value is not None (null-safe).
+
+        Zero OTel overhead when not recording: is_recording() is False for the
+        no-op INVALID span that OTel returns when no span context is active or
+        when observability is not initialized.
+        """
+        try:
+            from opentelemetry import trace  # noqa: PLC0415
+
+            span = trace.get_current_span()
+            if not span.is_recording():
+                return
+            span.set_attribute("gen_ai.system", _GEN_AI_SYSTEM_LOCAL)
+            span.set_attribute("gen_ai.request.model", self._model_id)
+            span.set_attribute("gen_ai.response.model", self._model_id)
+            span.set_attribute("axiom.cost_usd", 0.0)
+            if input_tokens is not None:
+                span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
+            if output_tokens is not None:
+                span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+        except Exception:
+            # Observability must never break the main reasoning/acting path.
+            pass
+
+    def _query_model(self, prompt: str) -> tuple[str, int | None, int | None]:
         """Call the local model via smolagents LiteLLMModel for a tool-less completion.
 
-        Returns the model's text response. Raises AdapterError on failure.
+        Returns a 3-tuple: (text, input_tokens, output_tokens).
+        text           -- the model's text response (never None; empty string on None content).
+        input_tokens   -- prompt token count from ChatMessage.token_usage, or None if absent.
+        output_tokens  -- completion token count from ChatMessage.token_usage, or None if absent.
+
+        Raises AdapterError on failure.
+
+        Token extraction (confirmed against real qwen2.5:7b via probe_local_tokens.py):
+          Primary:  ChatMessage.token_usage.input_tokens / .output_tokens
+          Fallback: ChatMessage.raw.usage.prompt_tokens / .completion_tokens
+          Both paths are null-safe via getattr; if neither is present tokens are None.
+
+        Note: smolagents 1.26's LiteLLMModel has NO last_input/output_token_count
+        attributes — reading from the model object always yields None. The ChatMessage
+        returned by self._model(...) is the only reliable token source.
 
         VERIFIED (Step 0): smolagents 1.26.0 confirms:
           - LiteLLMModel.__call__ delegates to LiteLLMModel.generate().
@@ -282,8 +363,28 @@ class LocalAdapter(PraoAdapterBase):
             )
             # W2: defensive hasattr guard + None-content -> "" for _parse_intent safety.
             if not hasattr(response, "content"):
-                return str(response)
-            return response.content if response.content is not None else ""
+                return str(response), None, None
+            text = response.content if response.content is not None else ""
+
+            # Extract token counts from ChatMessage.token_usage (primary source).
+            # smolagents 1.26 sets token_usage on the ChatMessage returned by the model
+            # call; the model object itself has no last_*_token_count attrs.
+            input_tokens: int | None = None
+            output_tokens: int | None = None
+            token_usage = getattr(response, "token_usage", None)
+            if token_usage is not None:
+                input_tokens = getattr(token_usage, "input_tokens", None)
+                output_tokens = getattr(token_usage, "output_tokens", None)
+            # Fallback: raw.usage.prompt_tokens / completion_tokens (litellm response).
+            if input_tokens is None or output_tokens is None:
+                raw_usage = getattr(getattr(response, "raw", None), "usage", None)
+                if raw_usage is not None:
+                    if input_tokens is None:
+                        input_tokens = getattr(raw_usage, "prompt_tokens", None)
+                    if output_tokens is None:
+                        output_tokens = getattr(raw_usage, "completion_tokens", None)
+
+            return text, input_tokens, output_tokens
         except Exception as e:
             # W1: differentiated log tags per design SS4.5 error table.
             exc_name = type(e).__name__
