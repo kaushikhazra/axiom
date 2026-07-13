@@ -32,6 +32,15 @@ def main() -> None:
         help="Provider adapter: 'claude' (default, cloud) or 'local' (Ollama via LiteLLM)",
     )
     parser.add_argument(
+        "--observe",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable M2 observability: write a JSONL phase-span trace to "
+            "~/.axiom/traces/<run_id>.jsonl and print the path to stderr."
+        ),
+    )
+    parser.add_argument(
         "input",
         nargs="?",
         help="User input (reads from stdin if omitted)",
@@ -48,7 +57,11 @@ def main() -> None:
         print("No input provided.", file=sys.stderr)
         sys.exit(1)
 
-    agent = Agent(debug=args.debug, provider=args.provider)
+    agent = Agent(debug=args.debug, provider=args.provider, observe=args.observe)
+
+    if args.observe and agent.trace_path is not None:
+        print(f"[axiom] trace → {agent.trace_path}", file=sys.stderr)
+
     response = agent.run(user_input)
 
     if response:
