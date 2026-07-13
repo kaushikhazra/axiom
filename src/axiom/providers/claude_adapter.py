@@ -69,8 +69,10 @@ logger = logging.getLogger("axiom.providers")
 
 PER_QUERY_TIMEOUT_SECS: int = 120  # 2 minutes; CLI process can hang if unauthenticated
 
-# gen_ai.system constant for all KIND-B Claude spans
-_GEN_AI_SYSTEM: str = "claude"
+# gen_ai.system constant for all KIND-B Claude spans.
+# OTel GenAI semconv (v1.28.0) defines "anthropic" as the correct provider-system
+# value for Anthropic's Claude — not the model-family name "claude".
+_GEN_AI_SYSTEM: str = "anthropic"
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +90,8 @@ def _open_child_span(
     """Start and return an OTel span as a direct child of the current context.
 
     The caller is responsible for calling span.end() when the event is complete.
-    Returns a no-op span if tracer is None (observability not wired).
+    Precondition: tracer must not be None. The guard 'if tracer is not None'
+    in _collect_query_result ensures this precondition is never violated at runtime.
     """
     attributes: dict = {
         "axiom.run_id": run_id,

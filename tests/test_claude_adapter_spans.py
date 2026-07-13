@@ -487,28 +487,16 @@ class TestHandleSdkEventSpans:
         assert extra_spans == []
 
     def test_no_spans_when_tracer_none_for_assistant_message(self):
-        """When tracer is None, no spans are minted even for AssistantMessage."""
-        tp, sink = _make_provider_with_capture()
+        """Calling _handle_sdk_event_spans(AssistantMessage, tracer=None) raises
+        AttributeError — proof that the 'if tracer is not None' guard in
+        _collect_query_result is load-bearing and must not be removed."""
+        import pytest
 
-        # Call with tracer=None — should be a no-op for OTel
         msg = _make_assistant_message()
-        # _handle_sdk_event_spans checks isinstance(message, AssistantMessage) and
-        # calls _mint_* helpers which call _open_child_span(tracer, ...).
-        # We need to verify the guard path: when tracer is None, _open_child_span
-        # is never called. Since tracer is None and we call _open_child_span(None,...),
-        # it would AttributeError. So the guard must be at _handle_sdk_event_spans level.
-        # Per our implementation: tracer is passed in and _open_child_span is called
-        # unconditionally. So test that no spans land in the sink (which is separate).
-        # The correct guard is: only call _mint_* when tracer is not None.
-        # Check _collect_query_result signature — it guards on 'tracer is not None'.
-        # Here we test _handle_sdk_event_spans directly: if tracer=None it will
-        # call _mint_assistant_turn_span(msg, None, ...) → _open_child_span(None, ...)
-        # → None.start_span(...) → AttributeError.
-        # So we verify the guard exists at _collect_query_result level (not this helper).
-        # This test validates that behavior by calling via collect path mock instead.
-        # Simplify: just assert _handle_sdk_event_spans is NOT the guard point —
-        # the guard is in _collect_query_result. Document this clearly.
-        pass  # Guard is at _collect_query_result level (tracer is not None check)
+        with pytest.raises(AttributeError):
+            _handle_sdk_event_spans(
+                msg, tracer=None, run_id="run-1", provider_kind="KIND_B", act_span=None
+            )
 
 
 # ---------------------------------------------------------------------------
