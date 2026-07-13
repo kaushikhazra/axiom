@@ -22,6 +22,12 @@ from axiom.providers.claude_adapter import ClaudeAdapter
 # WebSearch added for the M1 web-search acceptance test (MPP-3/W5).
 M1_ALLOWED_TOOLS: list[str] = ["Bash", "WebSearch"]
 
+# Maps provider name to OTel provider_kind label used in trace records.
+_PROVIDER_KIND: dict[str, str] = {
+    "claude": "KIND_B",
+    "local": "KIND_A",
+}
+
 _axiom_logger = logging.getLogger("axiom")
 
 
@@ -47,9 +53,18 @@ class Agent:
 
     Composition root: loads persona, constructs the chosen adapter, wires PraoLoop.
     Wraps loop execution via timing.timed_run for latency measurement.
+
+    M2: When observe=True, constructs an ObservabilityFaculty and threads the
+    generated run_id into PraoLoop.run() so all PRAO phase-boundary _maybe_record
+    call-points fire and emit spans to the JSONL FileSink.
     """
 
-    def __init__(self, debug: bool = False, provider: str = "claude") -> None:
+    def __init__(
+        self,
+        debug: bool = False,
+        provider: str = "claude",
+        observe: bool = False,
+    ) -> None:
         """Wire the composition root.
 
         Args:
@@ -59,6 +74,9 @@ class Agent:
                       "local" (LiteLLM + Ollama via LocalAdapter). LocalAdapter is
                       imported lazily inside the "local" branch so that Claude-only
                       installs never pay the litellm import cost.
+            observe: When True, constructs ObservabilityFaculty and wires run_id into
+                     the loop so phase spans are emitted to ~/.axiom/traces/<run_id>.jsonl.
+                     Off by default — backward compatible; no OTel cost unless enabled.
         """
         if debug:
             _configure_debug_logging()
@@ -84,16 +102,66 @@ class Agent:
             max_cycles=10,
         )
 
+        self._provider_kind: str = _PROVIDER_KIND.get(provider, "KIND_A")
+
+        # M2 observability — off by default; wired only when observe=True.
+        # OTel imports are confined to the faculty; nothing leaks into this module.
+        self._faculty = None
+        self._run_id: str | None = None
+        self._trace_path: Path | None = None
+
+        if observe:
+            from axiom.observability.config import ObservabilityConfig  # noqa: PLC0415
+            from axiom.observability.faculty import ObservabilityFaculty  # noqa: PLC0415
+
+            config = ObservabilityConfig(tui_enabled=False)
+            faculty = ObservabilityFaculty(config=config)
+            run_id = faculty.new_run()
+
+            self._faculty = faculty
+            self._run_id = run_id
+            # Faculty registers its own atexit/SIGTERM handlers; shutdown is also
+            # called here explicitly so callers driving multiple turns have a clean path.
+            self._trace_path = config.trace_dir / f"{run_id}.jsonl"
+
+    @property
+    def trace_path(self) -> Path | None:
+        """Path of the JSONL trace file for this run, or None when observability is off."""
+        return self._trace_path
+
     def run(self, user_input: str) -> str:
         """Execute one user turn. Returns the agent's response string.
 
+        When observe=True was passed at construction, threads run_id into
+        PraoLoop.run() so every PRAO phase boundary emits an OTel span that is
+        flushed to the JSONL trace file.
+
         On MaxCyclesExceededError or AdapterError (re-raised by timed_run after
         the abort-path log), returns a user-visible "[Error: ...]" string.
+
+        Shutdown: when observability is active, calls faculty.shutdown() in the
+        finally block so the FileSink drainer receives its sentinel promptly and
+        the process exits cleanly without waiting for the atexit fallback.
+        faculty.shutdown() is idempotent — the atexit handler registered at
+        construction becomes a no-op after this call.
         """
         try:
-            response_text, _run_state = timing.timed_run(self._loop.run, user_input)
+            if self._run_id is not None:
+                run_id = self._run_id
+                provider_kind = self._provider_kind
+                response_text, _run_state = timing.timed_run(
+                    lambda u: self._loop.run(
+                        u, run_id=run_id, provider_kind=provider_kind
+                    ),
+                    user_input,
+                )
+            else:
+                response_text, _run_state = timing.timed_run(self._loop.run, user_input)
             return response_text
         except MaxCyclesExceededError as e:
             return f"[Error: max cycles exceeded — {e}]"
         except AdapterError as e:
             return f"[Error: {e}]"
+        finally:
+            if self._faculty is not None:
+                self._faculty.shutdown()

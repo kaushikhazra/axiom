@@ -16,14 +16,35 @@ OQ-2 confirmed:
     so subprocess_cli.py skips the --allowedTools flag entirely, leaving all
     CLI defaults active. Use tools=[] instead: subprocess_cli.py has an
     explicit None-check (not truthiness) and emits --tools "" for empty list.
+
+M2 KIND-B streaming spans:
+  act() passes the current OTel context into the async helper so that child
+  spans minted inside the async generator correctly nest under the Act span.
+  anyio.run() is synchronous and runs on the calling thread, so OTel context
+  is inherited automatically — no manual context attachment is required.
+
+  Child spans minted per SDK event:
+    AssistantMessage  -> 'axiom.provider.assistant_turn'
+                         attributes: gen_ai.system, gen_ai.response.model,
+                         gen_ai.usage.input_tokens, gen_ai.usage.output_tokens
+    ToolUseBlock(s)   -> one span per block: 'gen_ai.tool_call.<tool_name>'
+                         attributes: gen_ai.system, axiom.tool_use_id
+    ResultMessage     -> no child span; cost+aggregate tokens set on Act span
+                         via the act_span Span reference passed in
+
+  NOT exposed by SDK (null in all records):
+    gen_ai.request.model — model is CLI-configured; ClaudeAgentOptions.model
+                           is only set when the caller explicitly chooses one.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import anyio
 from claude_agent_sdk import (
+    AssistantMessage,
     CLIConnectionError,
     CLIJSONDecodeError,
     CLINotFoundError,
@@ -31,6 +52,7 @@ from claude_agent_sdk import (
     ClaudeSDKError,
     ProcessError,
     ResultMessage,
+    ToolUseBlock,
     query as sdk_query,
 )
 
@@ -40,9 +62,51 @@ from axiom.interfaces import (
 )
 from axiom.providers.base import PraoAdapterBase, _parse_intent
 
+if TYPE_CHECKING:
+    from opentelemetry.trace import Span
+
 logger = logging.getLogger("axiom.providers")
 
 PER_QUERY_TIMEOUT_SECS: int = 120  # 2 minutes; CLI process can hang if unauthenticated
+
+# gen_ai.system constant for all KIND-B Claude spans
+_GEN_AI_SYSTEM: str = "claude"
+
+
+# ---------------------------------------------------------------------------
+# Child-span helpers (module-level so they have no adapter state dependency)
+# ---------------------------------------------------------------------------
+
+
+def _open_child_span(
+    tracer,
+    name: str,
+    run_id: str,
+    provider_kind: str,
+    extra_attributes: dict | None = None,
+):
+    """Start and return an OTel span as a direct child of the current context.
+
+    The caller is responsible for calling span.end() when the event is complete.
+    Returns a no-op span if tracer is None (observability not wired).
+    """
+    attributes: dict = {
+        "axiom.run_id": run_id,
+        "axiom.span_source": "provider-streamed",
+        "axiom.provider_kind": provider_kind,
+        "gen_ai.system": _GEN_AI_SYSTEM,
+    }
+    if extra_attributes:
+        attributes.update(extra_attributes)
+    return tracer.start_span(name, attributes=attributes)
+
+
+def _end_span_ok(span) -> None:
+    """Set OK status and end an OTel span."""
+    from opentelemetry.trace import StatusCode  # local — OTel confined to observability
+
+    span.set_status(StatusCode.OK)
+    span.end()
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +114,14 @@ PER_QUERY_TIMEOUT_SECS: int = 120  # 2 minutes; CLI process can hang if unauthen
 # ---------------------------------------------------------------------------
 
 
-async def _collect_query_result(prompt: str, options: ClaudeAgentOptions) -> str:
+async def _collect_query_result(
+    prompt: str,
+    options: ClaudeAgentOptions,
+    tracer=None,
+    run_id: str | None = None,
+    provider_kind: str = "KIND_B",
+    act_span: "Span | None" = None,
+) -> str:
     """Async helper: run one sdk_query() call and collect the ResultMessage text.
 
     query() is an async generator function (confirmed via inspect.isasyncgenfunction).
@@ -60,12 +131,22 @@ async def _collect_query_result(prompt: str, options: ClaudeAgentOptions) -> str
     (prevents lingering subprocess on the is_error and timeout exit paths).
     ResultMessage is terminal — no break on the success path; the generator
     exhausts naturally, making aclose() a no-op on that path.
+
+    When tracer, run_id, and act_span are provided (KIND-B observability active),
+    mints child spans under the Act span for each AssistantMessage and its
+    ToolUseBlock entries. ResultMessage cost/token attributes are set on act_span.
     """
     result_text = ""
     gen = sdk_query(prompt=prompt, options=options)
     try:
         with anyio.fail_after(PER_QUERY_TIMEOUT_SECS):
             async for message in gen:
+                # -- KIND-B child span minting --
+                if tracer is not None and run_id is not None:
+                    _handle_sdk_event_spans(
+                        message, tracer, run_id, provider_kind, act_span
+                    )
+
                 if isinstance(message, ResultMessage):
                     if message.is_error:
                         subtype = getattr(message, "subtype", None)
@@ -82,6 +163,109 @@ async def _collect_query_result(prompt: str, options: ClaudeAgentOptions) -> str
         with anyio.move_on_after(5):  # best-effort: don't let teardown hang
             await gen.aclose()
     return result_text
+
+
+def _handle_sdk_event_spans(
+    message,
+    tracer,
+    run_id: str,
+    provider_kind: str,
+    act_span: "Span | None",
+) -> None:
+    """Mint child OTel spans for a single SDK message event.
+
+    Called synchronously from within the async generator loop.
+    OTel context is inherited from the calling coroutine's thread — no manual
+    context attachment needed because anyio.run() runs on the same thread as
+    the act() caller (which holds the Act span as the current context).
+
+    Span lifetime policy:
+      - AssistantMessage -> one 'axiom.provider.assistant_turn' span, closed immediately
+      - ToolUseBlock     -> one 'gen_ai.tool_call.<name>' span per block, closed immediately
+      - ResultMessage    -> no span; cost+tokens SET on act_span attributes
+    """
+    if isinstance(message, AssistantMessage):
+        _mint_assistant_turn_span(message, tracer, run_id, provider_kind)
+        _mint_tool_use_spans(message, tracer, run_id, provider_kind)
+
+    elif isinstance(message, ResultMessage) and act_span is not None:
+        _set_result_attrs_on_act_span(message, act_span)
+
+
+def _mint_assistant_turn_span(
+    message: AssistantMessage,
+    tracer,
+    run_id: str,
+    provider_kind: str,
+) -> None:
+    """Open and immediately close an 'axiom.provider.assistant_turn' child span."""
+    extra: dict = {
+        "axiom.phase": "act",
+        "gen_ai.operation.name": "assistant_turn",
+        "gen_ai.response.model": message.model,
+    }
+    usage = message.usage or {}
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if input_tokens is not None:
+        extra["gen_ai.usage.input_tokens"] = input_tokens
+    if output_tokens is not None:
+        extra["gen_ai.usage.output_tokens"] = output_tokens
+    if message.stop_reason is not None:
+        extra["axiom.stop_reason"] = message.stop_reason
+
+    span = _open_child_span(
+        tracer,
+        name="axiom.provider.assistant_turn",
+        run_id=run_id,
+        provider_kind=provider_kind,
+        extra_attributes=extra,
+    )
+    _end_span_ok(span)
+
+
+def _mint_tool_use_spans(
+    message: AssistantMessage,
+    tracer,
+    run_id: str,
+    provider_kind: str,
+) -> None:
+    """Open and immediately close one child span per ToolUseBlock in the message."""
+    for block in message.content:
+        if not isinstance(block, ToolUseBlock):
+            continue
+        span = _open_child_span(
+            tracer,
+            name=f"gen_ai.tool_call.{block.name}",
+            run_id=run_id,
+            provider_kind=provider_kind,
+            extra_attributes={
+                "axiom.phase": "act",
+                "gen_ai.operation.name": "tool_call",
+                "axiom.tool_name": block.name,
+                "axiom.tool_use_id": block.id,
+            },
+        )
+        _end_span_ok(span)
+
+
+def _set_result_attrs_on_act_span(
+    message: ResultMessage,
+    act_span: "Span",
+) -> None:
+    """Set aggregate cost and token attributes from ResultMessage onto the Act span."""
+    if message.total_cost_usd is not None:
+        act_span.set_attribute("axiom.cost_usd", message.total_cost_usd)
+
+    usage = message.usage or {}
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if input_tokens is not None:
+        act_span.set_attribute("gen_ai.usage.input_tokens", input_tokens)
+    if output_tokens is not None:
+        act_span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
+
+    act_span.set_attribute("axiom.num_turns", message.num_turns)
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +339,10 @@ class ClaudeAdapter(PraoAdapterBase):
 
         M1_ALLOWED_TOOLS (set by agent.py) are scoped here via ClaudeAgentOptions.
         The SDK manages its internal tool loop; Axiom writes no tool-execution harness.
+
+        M2: When an OTel Act span is current (KIND-B observability active), acquires
+        the tracer and act_span references and passes them into the async helper so
+        that child spans are minted under the Act span for each SDK event.
         """
         prompt = (
             f"Execute this instruction using your available tools (web search, bash, file access) "
@@ -166,19 +354,66 @@ class ClaudeAdapter(PraoAdapterBase):
             f"Instruction: {instruction}"
         )
         options = ClaudeAgentOptions(allowed_tools=self._allowed_tools)
-        return self._run_query(prompt, options)
+
+        # Resolve OTel tracer + current Act span for KIND-B child span minting.
+        # This import is lazy and guarded: if OTel is not initialized (observability
+        # off), get_current_span() returns the no-op INVALID span, which we detect
+        # via is_recording(). In that case tracer/act_span are both None and the
+        # async helper skips all span minting — zero OTel cost.
+        tracer = None
+        act_span = None
+        try:
+            from opentelemetry import trace  # noqa: PLC0415
+
+            current = trace.get_current_span()
+            if current.is_recording():
+                tracer = trace.get_tracer("axiom.providers.claude")
+                act_span = current
+        except Exception:
+            # If OTel import or introspection fails for any reason, degrade gracefully
+            pass
+
+        return self._run_query(
+            prompt,
+            options,
+            tracer=tracer,
+            act_span=act_span,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _run_query(self, prompt: str, options: ClaudeAgentOptions) -> str:
+    def _run_query(
+        self,
+        prompt: str,
+        options: ClaudeAgentOptions,
+        tracer=None,
+        act_span: "Span | None" = None,
+    ) -> str:
         """Sync bridge: delegate to anyio.run() wrapping the async helper.
 
         Catches all SDK and timeout exceptions and re-raises as AdapterError (§7.6).
+        When tracer and act_span are supplied, threads them into the async helper
+        for KIND-B child span minting.
         """
+        # Extract run_id from the Act span's attributes so child spans carry the
+        # same axiom.run_id as their parent (set by record_phase in loop.py).
+        run_id: str | None = None
+        if act_span is not None:
+            attrs = getattr(act_span, "attributes", None) or {}
+            run_id = attrs.get("axiom.run_id")
+
         try:
-            return anyio.run(_collect_query_result, prompt, options)
+            return anyio.run(
+                _collect_query_result,
+                prompt,
+                options,
+                tracer,
+                run_id,
+                "KIND_B",
+                act_span,
+            )
         except CLINotFoundError as e:
             logger.error("[ADAPTER_CLI_NOT_FOUND] %s", e)
             raise AdapterError(
