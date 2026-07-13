@@ -3,9 +3,22 @@ Master PRAO loop — PraoLoop.
 
 Owns the perceive→reason→act→observe iteration and all stop conditions.
 Imports axiom.interfaces only — zero provider imports (port-adapter seam proof).
+
+M2: Wraps each PRAO phase boundary with record_phase() context managers when
+run_id and provider_kind are supplied (injected by the composition root via
+ObservabilityFaculty.new_run()). When omitted, the loop runs without tracing —
+this preserves backward compatibility with direct callers (tests, CLI) that do
+not wire the observability faculty.
+
+Import boundary rule (design.md §10): loop.py imports ONLY
+axiom.observability.record (the record_phase context manager). It does not
+import faculty.py, registry.py, processors.py, or any sink.
 """
 
 from __future__ import annotations
+
+from contextlib import contextmanager
+from typing import Generator
 
 from axiom.interfaces import (
     ActIntent,
@@ -20,6 +33,27 @@ from axiom.interfaces import (
 )
 
 MAX_CYCLES: int = 10  # module-level constant; overridable via constructor
+
+
+@contextmanager
+def _maybe_record(
+    phase: str,
+    run_id: str | None,
+    provider_kind: str,
+) -> Generator[None, None, None]:
+    """Wrap a PRAO phase in record_phase() when run_id is provided; else no-op.
+
+    Keeps loop.py's core flow readable without duplicating if-guards at every phase.
+    """
+    if run_id is None:
+        yield
+        return
+
+    # Lazy import — OTel never loaded if observability is not wired
+    from axiom.observability.record import record_phase  # noqa: PLC0415
+
+    with record_phase(phase=phase, run_id=run_id, provider_kind=provider_kind):
+        yield
 
 
 class PraoLoop:
@@ -44,12 +78,25 @@ class PraoLoop:
         self._observe = observe
         self._max_cycles = max_cycles
 
-    def run(self, user_input: str) -> tuple[str, RunState]:
+    def run(
+        self,
+        user_input: str,
+        run_id: str | None = None,
+        provider_kind: str = "KIND_A",
+    ) -> tuple[str, RunState]:
         """Execute the PRAO loop for one user turn.
 
         Constructs initial RunState internally. Returns (response_text, run_state).
         - response_text is the agent reply string for RESPOND exits.
         - response_text is "" for FINISH exits.
+
+        Args:
+            user_input: The user's turn string.
+            run_id: Optional UUID4 from ObservabilityFaculty.new_run(). When
+                    provided, each PRAO phase is wrapped in a record_phase() span.
+                    When None (default), loop runs without tracing.
+            provider_kind: "KIND_A" or "KIND_B" — identifies the adapter family.
+                           Used as an OTel attribute on every phase span.
 
         Raises:
             MaxCyclesExceededError: When cycle_count reaches max_cycles without a
@@ -68,29 +115,36 @@ class PraoLoop:
             spawn_count=0,
         )
 
-        while True:
-            context = self._perceive.perceive(run_state)
+        with _maybe_record("run", run_id, provider_kind):
+            while True:
+                with _maybe_record("perceive", run_id, provider_kind):
+                    context = self._perceive.perceive(run_state)
 
-            run_state.spawn_count += 1
-            intent = self._reason.reason(context)
+                with _maybe_record("reason", run_id, provider_kind):
+                    run_state.spawn_count += 1
+                    intent = self._reason.reason(context)
 
-            if isinstance(intent, RespondIntent):
-                return (intent.text, run_state)
+                if isinstance(intent, RespondIntent):
+                    return (intent.text, run_state)
 
-            if isinstance(intent, FinishIntent):
-                return ("", run_state)
+                if isinstance(intent, FinishIntent):
+                    return ("", run_state)
 
-            # intent == ACT — execute, observe, then loop back to perceive
-            if not isinstance(intent, ActIntent):
-                raise TypeError(
-                    f"reason() returned unexpected type {type(intent).__name__!r}; "
-                    "expected ActIntent"
-                )
-            run_state.spawn_count += 1
-            result = self._act.act(intent.instruction)
-            run_state = self._observe.observe(result, run_state)
+                # intent == ACT — execute, observe, then loop back to perceive
+                if not isinstance(intent, ActIntent):
+                    raise TypeError(
+                        f"reason() returned unexpected type {type(intent).__name__!r}; "
+                        "expected ActIntent"
+                    )
 
-            if run_state.cycle_count >= self._max_cycles:
-                raise MaxCyclesExceededError(
-                    f"max cycles ({self._max_cycles}) exceeded without terminal intent"
-                )
+                with _maybe_record("act", run_id, provider_kind):
+                    run_state.spawn_count += 1
+                    result = self._act.act(intent.instruction)
+
+                with _maybe_record("observe", run_id, provider_kind):
+                    run_state = self._observe.observe(result, run_state)
+
+                if run_state.cycle_count >= self._max_cycles:
+                    raise MaxCyclesExceededError(
+                        f"max cycles ({self._max_cycles}) exceeded without terminal intent"
+                    )
