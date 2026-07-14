@@ -65,6 +65,7 @@ class Agent:
         debug: bool = False,
         provider: str = "claude",
         observe: bool = False,
+        memory: bool = False,
     ) -> None:
         """Wire the composition root.
 
@@ -95,12 +96,23 @@ class Agent:
         else:
             raise ValueError(f"unknown provider: {provider!r}")
 
+        # M3 memory — off by default; wired when memory=True.
+        # CognitiveMemoryAdapter is imported lazily so Claude-only installs that
+        # skip sentence-transformers never pay the import cost.
+        self._memory_adapter = None
+        if memory:
+            from axiom.memory.adapter import CognitiveMemoryAdapter  # noqa: PLC0415
+            from axiom.memory.config import MemoryConfig  # noqa: PLC0415
+
+            self._memory_adapter = CognitiveMemoryAdapter(MemoryConfig())
+
         self._loop = PraoLoop(
             perceive=adapter,
             reason=adapter,
             act=adapter,
             observe=adapter,
             max_cycles=10,
+            memory=self._memory_adapter,
         )
 
         self._provider_kind: str = _PROVIDER_KIND.get(provider, "KIND_A")
@@ -166,3 +178,16 @@ class Agent:
         finally:
             if self._faculty is not None:
                 self._faculty.shutdown()
+            # M3: consolidate + close memory at session end (loop already exited)
+            if self._memory_adapter is not None:
+                import asyncio  # noqa: PLC0415
+
+                try:
+                    asyncio.run(self._memory_adapter.consolidate())
+                except Exception as exc:
+                    _axiom_logger.warning("Memory consolidation failed: %s", exc)
+                # G1 fix: release storage file handle and embedding executor
+                try:
+                    self._memory_adapter.close()
+                except Exception as exc:
+                    _axiom_logger.warning("Memory close failed: %s", exc)
