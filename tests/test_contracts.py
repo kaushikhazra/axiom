@@ -23,16 +23,21 @@ from axiom.interfaces import (
     RespondIntent,
 )
 from axiom.loop import PraoLoop
-from tests.fake_adapter import FakeAdapter
+from tests.fake_adapter import FakeAdapter, FakeMemory
 
 
 def _make_loop(adapter: FakeAdapter, max_cycles: int = 10) -> PraoLoop:
-    """Helper: wire all four slots with the same FakeAdapter instance."""
+    """Helper: wire all four slots with the same FakeAdapter instance.
+
+    M3: memory is constitutive — always wired. FakeMemory is a no-op stub that
+    satisfies MemoryPort without touching real storage or embeddings.
+    """
     return PraoLoop(
         perceive=adapter,
         reason=adapter,
         act=adapter,
         observe=adapter,
+        memory=FakeMemory(),
         max_cycles=max_cycles,
     )
 
@@ -211,7 +216,7 @@ class TestFinishIntent:
     def test_finish_returns_empty_string(self) -> None:
         adapter = FakeAdapter(intents=[FinishIntent()])
         loop = _make_loop(adapter)
-        text, state = loop.run("done")
+        text, _state = loop.run("done")
         assert text == ""
 
     def test_finish_spawn_count_is_one(self) -> None:

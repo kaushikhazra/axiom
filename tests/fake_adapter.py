@@ -4,6 +4,10 @@ FakeAdapter — in-memory implementation of all four PRAO port Protocols.
 Second-adapter existence proof (MPP-4): confirms the port interface is implementable
 without the Claude SDK. Used as the fast test enabler — no subprocess spawns,
 no live SDK calls, deterministic and milliseconds-fast.
+
+FakeMemory — in-memory stub satisfying MemoryPort. Used in tests that need to
+wire PraoLoop without a real CognitiveMemoryAdapter. Returns empty AssembledContext
+and records calls for assertion.
 """
 
 from __future__ import annotations
@@ -88,3 +92,26 @@ class FakeAdapter:
         run_state.history.append(result)
         run_state.cycle_count += 1
         return run_state
+
+
+class FakeMemory:
+    """In-memory stub satisfying MemoryPort — for tests that wire PraoLoop directly.
+
+    Returns empty AssembledContext from assemble_context() and is a no-op for
+    append_unit/reinforce. Isolates loop contract tests from the real memory layer.
+    """
+
+    def __init__(self) -> None:
+        self.appended_units: list = []
+        self.reinforced_ids: list[list[str]] = []
+
+    async def assemble_context(self, query: str, **kwargs):  # type: ignore[return]
+        from axiom.memory.models import AssembledContext  # noqa: PLC0415
+
+        return AssembledContext(working_context=[], cognitive_memories=[])
+
+    async def append_unit(self, unit) -> None:
+        self.appended_units.append(unit)
+
+    async def reinforce(self, ids: list[str]) -> None:
+        self.reinforced_ids.append(ids)
