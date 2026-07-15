@@ -846,6 +846,8 @@ class MemoryConfig:
 
 **store() await invariant (Finding-3 fix):** The original design specified `store` as fire-and-forget via `create_task`. This was revised: `asyncio.create_task` schedules work that is cancelled when `asyncio.run()` tears down (the same bug that hit `reinforce` — B2 fix). The adapter's `store()` now awaits `_embed_and_store` directly. The port contract comment in `port.py` is preserved as-is (the method is still `async` and returns a UUID4); only the adapter's internal dispatch changed from `create_task` to direct await.
 
+**Sync adapter calls via asyncio.to_thread (nested-event-loop fix, M3):** `PraoLoop.run()` wraps `_run_async` in `asyncio.run()` so async memory calls (`assemble_context`, `append_unit`, `reinforce`, `store`) can be properly awaited. However, the PRAO adapter port methods (`perceive`, `reason`, `act`, `observe`) are synchronous — they bridge to their async SDK internals via `anyio.run()`. Calling `anyio.run()` from inside an already-running `asyncio.run()` raises `RuntimeError: Already running asyncio in this thread`. The fix: inside `_run_async`, each synchronous adapter port call is dispatched via `await asyncio.to_thread(callable, *args)`. This runs the callable on a worker thread where no event loop is active, so the adapter's internal `anyio.run()` starts a fresh loop on that thread instead of nesting inside the loop's asyncio loop. `asyncio.to_thread` copies the current `contextvars` context to the worker thread, so OTel span context (propagated via `ContextVar` by `opentelemetry-sdk`) flows naturally — no manual context attachment is required. Async memory calls are awaited directly on the loop's asyncio event loop and are NOT wrapped in `to_thread`.
+
 ---
 
 ## 14. Adapter Initialisation Sequence

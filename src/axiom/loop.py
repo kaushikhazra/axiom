@@ -165,11 +165,13 @@ class PraoLoop:
         with _maybe_record("run", run_id, provider_kind):
             while True:
                 with _maybe_record("perceive", run_id, provider_kind):
-                    context = self._perceive.perceive(run_state)
+                    context = await asyncio.to_thread(
+                        self._perceive.perceive, run_state
+                    )
 
                 with _maybe_record("reason", run_id, provider_kind):
                     run_state.spawn_count += 1
-                    intent = self._reason.reason(context)
+                    intent = await asyncio.to_thread(self._reason.reason, context)
 
                 if isinstance(intent, RespondIntent):
                     # Memory is constitutive — always present; no None guard.
@@ -217,10 +219,12 @@ class PraoLoop:
 
                 with _maybe_record("act", run_id, provider_kind):
                     run_state.spawn_count += 1
-                    result = self._act.act(intent.instruction)
+                    result = await asyncio.to_thread(self._act.act, intent.instruction)
 
                 with _maybe_record("observe", run_id, provider_kind):
-                    run_state = self._observe.observe(result, run_state)
+                    run_state = await asyncio.to_thread(
+                        self._observe.observe, result, run_state
+                    )
 
                 if run_state.cycle_count >= self._max_cycles:
                     raise MaxCyclesExceededError(
