@@ -15,7 +15,9 @@ M3 gives Axiom a persistent, decay-aware Memory faculty behind the Memory port s
 
 **Memory is constitutive — not optional.** The Memory faculty is always active. There is no `memory=True/False` toggle, no opt-in flag, and no code path where `PraoLoop` runs without a wired `MemoryPort`. Every session assembles context at Perceive and writes a conversation unit at Observe. This is a hard architectural invariant, not a feature flag.
 
-**Behavioral acceptance criterion (cross-session recall):** After a fact is stored in one CLI session (e.g. by interacting with the agent so it learns a user preference), asking about that fact in a later CLI session must produce a response that reflects the stored fact — without the user restating it. This is the observable proof that memory is persistent and constitutive.
+**Behavioral acceptance criterion (cross-session recall):** After a fact is stated in one CLI session (e.g. the user mentions a preference and the agent acknowledges it), asking about that fact in a later CLI session must produce a response that reflects the stored fact — without the user restating it. This is the observable proof that memory is persistent and constitutive.
+
+**How the AC is met (Finding-3 wiring):** At every RespondIntent turn-exit, the loop persists the completed exchange (`"User: {input}\nAgent: {response}"`) to the cognitive tier as an awaited episodic memory. The store is awaited end-to-end (not fire-and-forget) so it completes before `asyncio.run()` teardown — making cross-session learning real from the first session. LLM-assisted selection of what to extract is M8; M3 stores the full exchange per turn.
 
 **What M3 does not build:** persona genesis; seed or migration from any prior memory store; LLM-assisted memory extraction (M8); connectors (M9); multi-agent memory sharing (M7); web dashboard or admin UI. The consumer of the Memory port is the agent loop and nothing else within M3 scope.
 

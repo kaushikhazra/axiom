@@ -34,8 +34,8 @@ The design has five axes:
 ║  perceive → reason → act → observe                                   ║
 ║                                                                      ║
 ║  Perceive: await memory.assemble_context(query)                      ║
-║  Observe:  asyncio.create_task(memory.store(...))     [fire-forget]  ║
-║  Observe:  asyncio.create_task(memory.reinforce(ids)) [fire-forget]  ║
+║  Observe:  await memory.store(..., memory_type="episodic") [awaited] ║
+║  Observe:  await memory.reinforce(ids)                    [awaited]  ║
 ║  Shutdown: await memory.consolidate()                                ║
 ╚══════════════════════╤═══════════════════════════════════════════════╝
                        │  MemoryPort Protocol
@@ -196,8 +196,8 @@ class AssembledContext:
 | `consolidate` | AWAITED at session close | Loop is already exiting; blocking is accepted |
 | `stats`, `health` | AWAITED | Management; not on hot path |
 | `append_unit` | AWAITED (fast) | Working-context write path; embedding computed at call time; must complete before next cycle's Perceive |
-| `store` | FIRE-AND-FORGET (cognitive only) | Cognitive store only; ID minted synchronously; embed+insert via `asyncio.create_task`; does NOT touch working buffer |
-| `reinforce` | FIRE-AND-FORGET | Loop dispatches via `asyncio.create_task(memory.reinforce(...))` |
+| `store` | AWAITED end-to-end (cognitive only) | Cognitive store only; adapter awaits `_embed_and_store` directly (not `create_task`) so write survives `asyncio.run()` teardown; does NOT touch working buffer. Original design said fire-and-forget; revised by Finding-3 fix — same teardown-cancellation hazard as B2/reinforce. |
+| `reinforce` | AWAITED | Loop awaits `memory.reinforce(...)` directly (B2 fix — same teardown-cancellation hazard) |
 | `relate` | FIRE-AND-FORGET | Dispatched; write arrives asynchronously |
 | `update` | FIRE-AND-FORGET | Same |
 
@@ -832,17 +832,19 @@ class MemoryConfig:
 | **Perceive** | `assemble_context(query, ...)` | Awaited | Returns `AssembledContext`; loop renders into chat-API slots |
 | **Perceive** (targeted) | `recall(query, ...)` | Awaited | Optional; only when targeted recall is needed beyond assemble_context |
 | **Observe** | `append_unit(unit)` | Awaited | Loop constructs a `ConversationUnit` from the completed turn and awaits `append_unit`; ring buffer updated with embedding computed at call time |
-| **Observe** | `store(content, ...)` | Fire-and-forget via `create_task` | One call per cognitive knowledge item to persist (facts, decisions); does NOT write to working buffer; loop does not wait |
-| **Observe** | `reinforce(ids)` | Fire-and-forget via `create_task` | IDs of memories that actually influenced the cycle's reasoning |
+| **Observe** | `store(content, memory_type="episodic")` | **Awaited** | Loop persists each completed exchange (user + agent text) to the cognitive tier as an episodic memory. Awaited end-to-end — not `create_task` — so embed+insert completes before `asyncio.run()` teardown. Smart extraction / distillation is M8; M3 stores the full exchange. Only fires on RespondIntent (agent produced text); skipped on FinishIntent (empty response). |
+| **Observe** | `reinforce(ids)` | Awaited | IDs of memories assembled into context this cycle; awaited for same teardown-safety reason as store (B2 fix). |
 | **Session shutdown** | `consolidate()` | Awaited | Called by loop teardown; loop is already exiting |
 
 **Observe — two separate write paths (G3):**
 1. `await memory.append_unit(unit)` — loop constructs a `ConversationUnit(user_text, agent_text, turn_index, timestamp)` from the completed exchange and awaits `append_unit`. This is the working-context write path (in-memory, fast, embedding computed at call time).
-2. `asyncio.create_task(memory.store(content, ...))` — for each cognitive knowledge item worth retaining across sessions (facts, decisions, notable context), the loop fires a fire-and-forget store to the cognitive tier. Explicit cognitive stores in M3 are loop-driven; LLM-assisted extraction is M8.
+2. `await memory.store(content, memory_type="episodic")` — loop persists each completed exchange to the cognitive tier. Content is `"User: {user_input}\nAgent: {agent_text}"`. Awaited end-to-end (adapter's `_embed_and_store` is called directly, not via `create_task`) so the write survives `asyncio.run()` teardown — the same cancellation hazard that motivated the B2 fix for `reinforce`. LLM-assisted selection of what to store is deferred to M8; M3 stores the full exchange per turn.
 
 **These are always separate calls.** `store` does NOT write to the working buffer. `append_unit` does NOT write to the cognitive store.
 
 **Observe — reinforce signal:** The loop tracks which `RecallResult` IDs from the Perceive-phase context were materially used in the Reason phase (e.g. the agent referenced them). These IDs are passed to `reinforce(ids)` at Observe. The mechanism for tracking "used" IDs is a loop implementation detail — at minimum, the IDs assembled into the context are considered used.
+
+**store() await invariant (Finding-3 fix):** The original design specified `store` as fire-and-forget via `create_task`. This was revised: `asyncio.create_task` schedules work that is cancelled when `asyncio.run()` tears down (the same bug that hit `reinforce` — B2 fix). The adapter's `store()` now awaits `_embed_and_store` directly. The port contract comment in `port.py` is preserved as-is (the method is still `async` and returns a UUID4); only the adapter's internal dispatch changed from `create_task` to direct await.
 
 ---
 

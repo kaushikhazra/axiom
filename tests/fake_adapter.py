@@ -98,12 +98,17 @@ class FakeMemory:
     """In-memory stub satisfying MemoryPort — for tests that wire PraoLoop directly.
 
     Returns empty AssembledContext from assemble_context() and is a no-op for
-    append_unit/reinforce. Isolates loop contract tests from the real memory layer.
+    append_unit/reinforce/store. Isolates loop contract tests from the real memory layer.
+
+    Finding-3 fix: store() is now called by the loop at RESPOND exit to persist each
+    completed exchange to the cognitive tier. FakeMemory records store calls so tests
+    can assert the loop wires the call correctly.
     """
 
     def __init__(self) -> None:
         self.appended_units: list = []
         self.reinforced_ids: list[list[str]] = []
+        self.stored_calls: list[dict] = []  # records each store() invocation
 
     async def assemble_context(self, query: str, **kwargs):  # type: ignore[return]
         from axiom.memory.models import AssembledContext  # noqa: PLC0415
@@ -115,3 +120,19 @@ class FakeMemory:
 
     async def reinforce(self, ids: list[str]) -> None:
         self.reinforced_ids.append(ids)
+
+    async def store(
+        self,
+        content: str,
+        memory_type: str | None = None,
+        importance: float | None = None,
+        tags: list[str] | None = None,
+        source: str | None = None,
+    ) -> str:
+        import uuid  # noqa: PLC0415
+
+        mid = str(uuid.uuid4())
+        self.stored_calls.append(
+            {"content": content, "memory_type": memory_type, "id": mid}
+        )
+        return mid

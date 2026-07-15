@@ -14,6 +14,9 @@ M3: memory: MemoryPort is constitutive — always required. The loop:
   - calls assemble_context() at Perceive (stored on loop-local variable)
   - calls append_unit() at RESPOND/FINISH exit (working-context write path)
   - awaits reinforce() for recalled memory IDs
+  - awaits store() at RESPOND exit (cognitive tier — episodic exchange persist)
+    Awaited (not create_task) so embed+insert completes before asyncio.run()
+    teardown. Smart extraction is deferred to M8; M3 stores the full exchange.
 
 Import boundary rule (design.md §10): loop.py imports ONLY
 axiom.observability.record (the record_phase context manager) and
@@ -80,8 +83,8 @@ class PraoLoop:
         reason: ReasonPort,
         act: ActPort,
         observe: ObservePort,
-        max_cycles: int = MAX_CYCLES,
         memory: MemoryPort,
+        max_cycles: int = MAX_CYCLES,
     ) -> None:
         self._perceive = perceive
         self._reason = reason
@@ -182,6 +185,14 @@ class PraoLoop:
                     # B4 fix: use session-scoped self._turn_index instead of local var.
                     if recalled_ids:
                         await self._memory.reinforce(recalled_ids)
+                    # Finding 3 fix: persist each completed exchange to the cognitive tier
+                    # as an episodic memory. Awaited (not create_task) so the embed+insert
+                    # completes before asyncio.run() teardown — the same teardown-
+                    # cancellation hazard fixed by B2 for reinforce. Smart extraction /
+                    # distillation of what to store is deferred to M8; M3 stores the full
+                    # exchange so cross-session learning is real from the first session.
+                    exchange_content = f"User: {user_input}\nAgent: {intent.text}"
+                    await self._memory.store(exchange_content, memory_type="episodic")
                     self._turn_index += 1
                     return (intent.text, run_state)
 

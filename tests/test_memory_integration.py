@@ -276,6 +276,11 @@ class TestTurnIndexMonotonic:
             async def reinforce(self, ids):
                 pass
 
+            async def store(self, content, **kwargs):
+                import uuid
+
+                return str(uuid.uuid4())
+
         class _FakePerceive:
             def perceive(self, state):
                 return state
@@ -437,3 +442,150 @@ class TestStoreIsNonBlocking:
             # The call should be fast relative to a 384-dim embedding (~50ms);
             # in practice this assertion is hard to time precisely so we just verify
             # the ID is returned (the key contract: ID is minted synchronously)
+
+
+class TestLoopEpisodicStorePersists:
+    """Finding-3 fix: the loop must persist each completed Respond exchange to the
+    cognitive tier as an awaited episodic store — proving cross-session learning.
+
+    Two sub-tests:
+    (a) Loop-level: FakeMemory records the store() call; proves the loop wires it.
+    (b) Adapter-level: real CognitiveMemoryAdapter; proves the store survives adapter
+        teardown and is retrievable in a fresh adapter (cross-session proof).
+    """
+
+    def test_loop_calls_store_on_respond(self):
+        """(a) After a RespondIntent turn, loop calls store() with episodic type."""
+        from axiom.interfaces import RespondIntent
+        from axiom.loop import PraoLoop
+        from tests.fake_adapter import FakeMemory
+
+        memory = FakeMemory()
+
+        class _FakePerceive:
+            def perceive(self, state):
+                return state
+
+        class _FakeReason:
+            def reason(self, context):
+                return RespondIntent(text="Paris is the capital of France.")
+
+        loop = PraoLoop(
+            perceive=_FakePerceive(),
+            reason=_FakeReason(),
+            act=None,
+            observe=None,
+            memory=memory,
+        )
+
+        loop.run("What is the capital of France?")
+
+        assert len(memory.stored_calls) == 1, (
+            f"Expected exactly 1 store() call after a Respond turn; "
+            f"got {len(memory.stored_calls)}"
+        )
+        call = memory.stored_calls[0]
+        assert call["memory_type"] == "episodic", (
+            f"Expected memory_type='episodic'; got {call['memory_type']!r}"
+        )
+        assert "What is the capital of France?" in call["content"], (
+            "store() content must include the user_input"
+        )
+        assert "Paris is the capital of France." in call["content"], (
+            "store() content must include the agent response"
+        )
+
+    def test_loop_does_not_call_store_on_finish(self):
+        """FinishIntent produces no agent text — loop skips store()."""
+        from axiom.interfaces import FinishIntent
+        from axiom.loop import PraoLoop
+        from tests.fake_adapter import FakeMemory
+
+        memory = FakeMemory()
+
+        class _FakePerceive:
+            def perceive(self, state):
+                return state
+
+        class _FakeReason:
+            def reason(self, context):
+                return FinishIntent()
+
+        loop = PraoLoop(
+            perceive=_FakePerceive(),
+            reason=_FakeReason(),
+            act=None,
+            observe=None,
+            memory=memory,
+        )
+
+        loop.run("goodbye")
+
+        assert len(memory.stored_calls) == 0, (
+            f"Expected no store() call on FinishIntent; got {len(memory.stored_calls)}"
+        )
+
+    def test_episodic_store_survives_adapter_restart(self):
+        """(b) Real adapter: exchange stored by loop is retrievable in a fresh adapter."""
+        from axiom.interfaces import RespondIntent
+        from axiom.loop import PraoLoop
+
+        with tempfile.TemporaryDirectory() as td:
+            db_path = os.path.join(td, "test_loop_store.surrealkv")
+
+            # Session A: run one loop turn through a real adapter
+            adapter_a = _fresh_adapter(db_path)
+
+            stored_ids: list[str] = []
+
+            class _RecordingMemory:
+                """Thin wrapper around adapter_a that records the store() return value."""
+
+                async def assemble_context(self, query, **kwargs):
+                    return await adapter_a.assemble_context(query, **kwargs)
+
+                async def append_unit(self, unit):
+                    await adapter_a.append_unit(unit)
+
+                async def reinforce(self, ids):
+                    await adapter_a.reinforce(ids)
+
+                async def store(self, content, **kwargs):
+                    mid = await adapter_a.store(content, **kwargs)
+                    stored_ids.append(mid)
+                    return mid
+
+            class _FakePerceive:
+                def perceive(self, state):
+                    return state
+
+            class _FakeReason:
+                def reason(self, context):
+                    return RespondIntent(
+                        text="Kaushik prefers pair-programming on complex changes."
+                    )
+
+            loop = PraoLoop(
+                perceive=_FakePerceive(),
+                reason=_FakeReason(),
+                act=None,
+                observe=None,
+                memory=_RecordingMemory(),
+            )
+
+            loop.run("What is Kaushik's code review preference?")
+
+            assert len(stored_ids) == 1, (
+                f"Expected 1 cognitive store via loop; got {len(stored_ids)}"
+            )
+            mid = stored_ids[0]
+            del adapter_a
+
+            # Session B: fresh adapter against same file — memory must be present
+            adapter_b = _fresh_adapter(db_path)
+            results = asyncio.run(adapter_b.recall("code review preference Kaushik"))
+            ids_found = [r.id for r in results]
+            assert mid in ids_found, (
+                f"Episodic memory {mid!r} stored by loop in session A "
+                f"not found in session B recall. Got: {ids_found}"
+            )

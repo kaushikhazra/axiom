@@ -97,7 +97,7 @@ class CognitiveMemoryAdapter:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    # ── Fire-and-forget methods ───────────────────────────────────────────────
+    # ── Cognitive store ───────────────────────────────────────────────────────
 
     async def store(
         self,
@@ -107,8 +107,14 @@ class CognitiveMemoryAdapter:
         tags: list[str] | None = None,
         source: str | None = None,
     ) -> str:
-        """Cognitive store ONLY. Mints UUID4 synchronously; embed+insert is async via create_task.
-        Does NOT write to working-context buffer.
+        """Cognitive store ONLY. Awaits embed+insert end-to-end; does NOT write
+        to working-context buffer.
+
+        B3-store fix: _embed_and_store is awaited directly (not wrapped in
+        create_task) so the work completes before the caller's asyncio.run()
+        teardown can cancel pending tasks. This mirrors the B2 fix applied to
+        reinforce() — fire-and-forget via create_task is cancelled on teardown;
+        awaiting directly makes the write durable.
         """
         memory_id = str(uuid.uuid4())
 
@@ -134,8 +140,8 @@ class CognitiveMemoryAdapter:
             tags=tags or [],
         )
 
-        # Fire-and-forget: embed + insert
-        asyncio.create_task(self._embed_and_store(memory))
+        # B3-store fix: await directly so embed+insert completes before teardown.
+        await self._embed_and_store(memory)
         return memory_id
 
     async def _embed_and_store(self, memory: Memory) -> None:
