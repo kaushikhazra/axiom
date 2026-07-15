@@ -13,6 +13,10 @@ M3 gives Axiom a persistent, decay-aware Memory faculty behind the Memory port s
 
 **What M3 builds:** A sovereign in-process **Memory faculty** implementing the `MemoryPort` protocol. It stores, recalls, and ages memories across the agent lifecycle. It reinforces what gets used and lets the rest fade. It surfaces relevant context into the Perceive phase and captures new knowledge from the Observe phase. Two tiers: an ephemeral **Working-Context** (in-session vector ring buffer) and a persistent **Cognitive** store (decay-aware, typed, graph-connected).
 
+**Memory is constitutive — not optional.** The Memory faculty is always active. There is no `memory=True/False` toggle, no opt-in flag, and no code path where `PraoLoop` runs without a wired `MemoryPort`. Every session assembles context at Perceive and writes a conversation unit at Observe. This is a hard architectural invariant, not a feature flag.
+
+**Behavioral acceptance criterion (cross-session recall):** After a fact is stored in one CLI session (e.g. by interacting with the agent so it learns a user preference), asking about that fact in a later CLI session must produce a response that reflects the stored fact — without the user restating it. This is the observable proof that memory is persistent and constitutive.
+
 **What M3 does not build:** persona genesis; seed or migration from any prior memory store; LLM-assisted memory extraction (M8); connectors (M9); multi-agent memory sharing (M7); web dashboard or admin UI. The consumer of the Memory port is the agent loop and nothing else within M3 scope.
 
 ---
@@ -202,12 +206,13 @@ M3 gives Axiom a persistent, decay-aware Memory faculty behind the Memory port s
 
 1. **Spec gate:** `requirement.md`, `design.md`, `task.md` exist; `dryrun-design-1.md` verdict is PASS (no blocking gaps).
 2. **Code dryrun gate:** `dryrun-code-1.md` verdict is PASS (no bugs or missing error handling at blocking severity).
-3. **Port contract:** `MemoryPort` Protocol is implemented in `src/axiom/memory/port.py`; `CognitiveMemoryAdapter` in `src/axiom/memory/adapter.py` implements it without importing from `port.py` consumers.
-4. **Two-tier assembly:** `assemble_context(query)` returns a structured object with both `working_context` and `cognitive_memories` fields; each field is a non-null list (empty is valid).
-5. **Cross-session persistence:** A memory stored in a test session is retrievable via `recall` after the adapter is torn down and re-initialised against the same SurrealKV file.
-6. **Decay correctness:** R(t) = e^(−t/(9·S)) is computed correctly; a memory accessed at low R receives a larger stability boost than one accessed at high R (AC-04.2).
-7. **Unit tests green:** All files in `tests/test_memory_*.py` pass with no skips.
-8. **Integration tests green:** `tests/test_memory_integration.py` covers: store→recall across adapter restart; consolidation promotion; spreading activation write-back; assemble_context two-tier result shape.
-9. **E2E test green:** `tests/test_memory_e2e.py` proves: (a) a conversation unit stored in session A is surfaced by `assemble_context` in session B; (b) `assemble_context` returns both working-tier and cognitive-tier content in a single call.
-10. **Embedding warm-up:** `EmbeddingService.warmup()` is called at adapter init; the first `recall` does not incur model-load latency.
-11. **Loop wiring:** `perceive()` calls `assemble_context`; `observe()` calls `store` (fire-and-forget) + `reinforce` (fire-and-forget); `loop.py` imports only `MemoryPort` (never the adapter).
+3. **Memory constitutive:** `grep -rn "memory: bool\|if self._memory is not None\|_memory_adapter = None" src/axiom/` returns nothing. `PraoLoop.__init__` has no optional/default for `memory`. `Agent.__init__` constructs `CognitiveMemoryAdapter` unconditionally.
+4. **Port contract:** `MemoryPort` Protocol is implemented in `src/axiom/memory/port.py`; `CognitiveMemoryAdapter` in `src/axiom/memory/adapter.py` implements it without importing from `port.py` consumers.
+5. **Two-tier assembly:** `assemble_context(query)` returns a structured object with both `working_context` and `cognitive_memories` fields; each field is a non-null list (empty is valid).
+6. **Cross-session persistence:** A memory stored in a test session is retrievable via `recall` after the adapter is torn down and re-initialised against the same SurrealKV file.
+7. **Decay correctness:** R(t) = e^(−t/(9·S)) is computed correctly; a memory accessed at low R receives a larger stability boost than one accessed at high R (AC-04.2).
+8. **Unit tests green:** All files in `tests/test_memory_*.py` pass with no skips.
+9. **Integration tests green:** `tests/test_memory_integration.py` covers: store→recall across adapter restart; consolidation promotion; spreading activation write-back; assemble_context two-tier result shape.
+10. **E2E test green:** `tests/test_memory_e2e.py` proves: (a) a conversation unit stored in session A is surfaced by `assemble_context` in session B; (b) `assemble_context` returns both working-tier and cognitive-tier content in a single call.
+11. **Embedding warm-up:** `EmbeddingService.warmup()` is called at adapter init; the first `recall` does not incur model-load latency.
+12. **Loop wiring:** `perceive()` calls `assemble_context`; `observe()` calls `store` (fire-and-forget) + `reinforce` (fire-and-forget); `loop.py` imports only `MemoryPort` (never the adapter).

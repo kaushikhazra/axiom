@@ -16,12 +16,13 @@
 
 M3 adds a persistent, decay-aware **Memory faculty** to Axiom. The faculty is structured as a hexagonal-port adapter: the agent loop imports only `MemoryPort` (a Protocol); the concrete implementation (`CognitiveMemoryAdapter`) is wired at composition time. The loop is memory-backend-agnostic.
 
-The design has four axes:
+The design has five axes:
 
 1. **Two-tier:** a runtime **Working-Context** (in-session ephemeral ring buffer) and a persistent **Cognitive** store (decay-aware, typed, graph-connected).
 2. **Port contract:** `MemoryPort` defines six awaitable/fire-and-forget methods that exactly cover the loop's needs at each PRAO phase. Richer admin methods live in a separate management interface.
 3. **Sovereign storage:** embedded SurrealKV (in-process, single-file) provides vector search, graph, and full-text natively — no external database process.
 4. **Async invariant:** `assemble_context` and `recall` are awaited; `store`, `reinforce`, `relate`, `update` are fire-and-forget at the port contract level, enforced by construction.
+5. **Constitutive — not optional.** Memory is always wired. `PraoLoop` requires a `MemoryPort` instance (non-optional parameter). `Agent` constructs `CognitiveMemoryAdapter` unconditionally at composition time. There is no toggle, no `memory=False` flag, and no code path where the loop runs without a live `MemoryPort`. The loop always calls `assemble_context` at Perceive and `append_unit`/`reinforce` at RESPOND/FINISH. Removing this invariant requires updating both `requirement.md` and this document first.
 
 ---
 
@@ -896,17 +897,18 @@ These were open forks in the research document, resolved in the K+V design pass.
 
 ## 17. Architecture Invariants (hard — may not be relaxed without updating requirement.md and this document)
 
-1. **Non-blocking store.** `store`, `reinforce`, `relate`, `update` never block the loop. Fire-and-forget by construction.
-2. **Recall is awaited, fast.** `recall` and `assemble_context` are awaited; <100 ms target.
-3. **Memory owns two-tier composition.** The loop calls `assemble_context`; it does NOT independently assemble tiers.
-4. **Memory is confined to the Memory faculty.** The loop imports only `MemoryPort` (from `port.py`). No direct storage, embedding, or retrieval imports in the loop.
-5. **Embedded storage only.** No external database process. SurrealKV in `surrealkv-file` mode.
-6. **Fresh start.** No seed, no migration from any prior store.
-7. **Consolidation at session end only.** Never mid-session, never on a timer.
-8. **Spreading activation is fire-and-forget.** Graph neighbour write-backs never block `recall`.
-9. **Embedding warm-up at init.** `EmbeddingService.warmup()` called at adapter construction; first recall does not incur model-load latency.
-10. **ID minted synchronously.** `store` returns the UUID4 id before the embed+insert completes.
-11. **Two write paths.** `store` is cognitive-store-only. The working-context ring buffer is fed exclusively via `append_unit`. There is no `memory_type` routing in `store`.
+1. **Memory is constitutive.** `PraoLoop` has a required (non-optional, no-default) `memory: MemoryPort` parameter. `Agent.__init__` constructs `CognitiveMemoryAdapter` unconditionally — no toggle, no `if memory:` branch. The loop always calls `assemble_context` at Perceive and `append_unit`/`reinforce` at RESPOND/FINISH. No code path bypasses these calls.
+2. **Non-blocking store.** `store`, `reinforce`, `relate`, `update` never block the loop. Fire-and-forget by construction.
+3. **Recall is awaited, fast.** `recall` and `assemble_context` are awaited; <100 ms target.
+4. **Memory owns two-tier composition.** The loop calls `assemble_context`; it does NOT independently assemble tiers.
+5. **Memory is confined to the Memory faculty.** The loop imports only `MemoryPort` (from `port.py`). No direct storage, embedding, or retrieval imports in the loop.
+6. **Embedded storage only.** No external database process. SurrealKV in `surrealkv-file` mode.
+7. **Fresh start.** No seed, no migration from any prior store.
+8. **Consolidation at session end only.** Never mid-session, never on a timer.
+9. **Spreading activation is fire-and-forget.** Graph neighbour write-backs never block `recall`.
+10. **Embedding warm-up at init.** `EmbeddingService.warmup()` called at adapter construction; first recall does not incur model-load latency.
+11. **ID minted synchronously.** `store` returns the UUID4 id before the embed+insert completes.
+12. **Two write paths.** `store` is cognitive-store-only. The working-context ring buffer is fed exclusively via `append_unit`. There is no `memory_type` routing in `store`.
 
 ---
 
