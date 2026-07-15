@@ -61,6 +61,12 @@ class RunState:
 
     Mutability decision: mutate-and-return semantics (observe() modifies in-place
     and returns self). Avoids object churn; the loop always works with the current instance.
+
+    M3: memory_context carries the AssembledContext set by the loop at Perceive so
+    perceive() can render it into the prompt without importing memory types here.
+    Typed as object to avoid a circular import: interfaces.py must not import from
+    axiom.memory.models. Duck-typed by base.py perceive() via .cognitive_memories
+    and .working_context attributes.
     """
 
     user_input: str  # original user message
@@ -68,6 +74,9 @@ class RunState:
     cycle_count: int = 0  # completed act() cycles (incremented in observe())
     spawn_count: int = (
         0  # loop-dispatched query() calls (adapter-internal retries excluded)
+    )
+    memory_context: object = (
+        None  # M3: AssembledContext | None (typed as object to avoid memory import)
     )
 
 

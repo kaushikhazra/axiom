@@ -58,6 +58,10 @@ class Agent:
     M2: When observe=True, constructs an ObservabilityFaculty and threads the
     generated run_id into PraoLoop.run() so all PRAO phase-boundary _maybe_record
     call-points fire and emit spans to the JSONL FileSink.
+
+    M3: CognitiveMemoryAdapter is always constructed — memory is constitutive, not
+    optional. Imports are lazy so installs without sentence-transformers still work
+    in unit-test contexts where the memory path is stubbed.
     """
 
     def __init__(
@@ -65,7 +69,7 @@ class Agent:
         debug: bool = False,
         provider: str = "claude",
         observe: bool = False,
-        memory: bool = False,
+        memory_config: object = None,
     ) -> None:
         """Wire the composition root.
 
@@ -79,6 +83,9 @@ class Agent:
             observe: When True, constructs ObservabilityFaculty and wires run_id into
                      the loop so phase spans are emitted to ~/.axiom/traces/<run_id>.jsonl.
                      Off by default — backward compatible; no OTel cost unless enabled.
+            memory_config: Optional MemoryConfig instance. When None, a default
+                           MemoryConfig() is constructed. Callers (e.g., tests) may
+                           pass an isolated config with a tmp storage_path.
         """
         if debug:
             _configure_debug_logging()
@@ -96,15 +103,14 @@ class Agent:
         else:
             raise ValueError(f"unknown provider: {provider!r}")
 
-        # M3 memory — off by default; wired when memory=True.
-        # CognitiveMemoryAdapter is imported lazily so Claude-only installs that
-        # skip sentence-transformers never pay the import cost.
-        self._memory_adapter = None
-        if memory:
-            from axiom.memory.adapter import CognitiveMemoryAdapter  # noqa: PLC0415
-            from axiom.memory.config import MemoryConfig  # noqa: PLC0415
+        # M3 memory — constitutive: always wired, never optional.
+        # Lazy imports so installs without sentence-transformers still start when
+        # the memory path is stubbed in tests.
+        from axiom.memory.adapter import CognitiveMemoryAdapter  # noqa: PLC0415
+        from axiom.memory.config import MemoryConfig  # noqa: PLC0415
 
-            self._memory_adapter = CognitiveMemoryAdapter(MemoryConfig())
+        _mem_cfg = memory_config if memory_config is not None else MemoryConfig()
+        self._memory_adapter = CognitiveMemoryAdapter(_mem_cfg)
 
         self._loop = PraoLoop(
             perceive=adapter,
@@ -178,16 +184,16 @@ class Agent:
         finally:
             if self._faculty is not None:
                 self._faculty.shutdown()
-            # M3: consolidate + close memory at session end (loop already exited)
-            if self._memory_adapter is not None:
-                import asyncio  # noqa: PLC0415
+            # M3: consolidate + close memory at session end (loop already exited).
+            # Memory is constitutive — always present; no None guard.
+            import asyncio  # noqa: PLC0415
 
-                try:
-                    asyncio.run(self._memory_adapter.consolidate())
-                except Exception as exc:
-                    _axiom_logger.warning("Memory consolidation failed: %s", exc)
-                # G1 fix: release storage file handle and embedding executor
-                try:
-                    self._memory_adapter.close()
-                except Exception as exc:
-                    _axiom_logger.warning("Memory close failed: %s", exc)
+            try:
+                asyncio.run(self._memory_adapter.consolidate())
+            except Exception as exc:
+                _axiom_logger.warning("Memory consolidation failed: %s", exc)
+            # G1 fix: release storage file handle and embedding executor
+            try:
+                self._memory_adapter.close()
+            except Exception as exc:
+                _axiom_logger.warning("Memory close failed: %s", exc)

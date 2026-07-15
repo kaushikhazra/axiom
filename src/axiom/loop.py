@@ -10,11 +10,10 @@ ObservabilityFaculty.new_run()). When omitted, the loop runs without tracing —
 this preserves backward compatibility with direct callers (tests, CLI) that do
 not wire the observability faculty.
 
-M3: Added optional memory: MemoryPort parameter. When provided, the loop:
+M3: memory: MemoryPort is constitutive — always required. The loop:
   - calls assemble_context() at Perceive (stored on loop-local variable)
   - calls append_unit() at RESPOND/FINISH exit (working-context write path)
-  - fire-and-forget reinforce() for recalled memory IDs
-When memory=None (default), loop runs exactly as before — backward compatible.
+  - awaits reinforce() for recalled memory IDs
 
 Import boundary rule (design.md §10): loop.py imports ONLY
 axiom.observability.record (the record_phase context manager) and
@@ -82,7 +81,7 @@ class PraoLoop:
         act: ActPort,
         observe: ObservePort,
         max_cycles: int = MAX_CYCLES,
-        memory: MemoryPort | None = None,
+        memory: MemoryPort,
     ) -> None:
         self._perceive = perceive
         self._reason = reason
@@ -125,10 +124,10 @@ class PraoLoop:
         spawn_count tracks every reason() and act() dispatch made by the loop.
         Adapter-internal retries are NOT counted here (they are adapter-internal).
 
-        M3: When memory is wired, delegates to asyncio.run(_run_async()) so the
-        async memory calls can be awaited properly. When memory=None, the same
-        path is taken for consistency (asyncio.run is safe to call from sync
-        context and is torn down cleanly after each call).
+        M3: Delegates to asyncio.run(_run_async()) so the async memory calls
+        (assemble_context, append_unit, reinforce) can be awaited properly.
+        asyncio.run is safe to call from sync context and is torn down cleanly
+        after each call.
         """
         return asyncio.run(self._run_async(user_input, run_id, provider_kind))
 
@@ -151,13 +150,14 @@ class PraoLoop:
             spawn_count=0,
         )
 
-        # M3: assemble context once per user turn at the Perceive phase
-        assembled_context = None
-        recalled_ids: list[str] = []
-
-        if self._memory is not None:
-            assembled_context = await self._memory.assemble_context(user_input)
-            recalled_ids = [r.id for r in assembled_context.cognitive_memories]
+        # M3: assemble context once per user turn at the Perceive phase.
+        # Memory is constitutive — always present; no None guard.
+        assembled_context = await self._memory.assemble_context(user_input)
+        recalled_ids = [r.id for r in assembled_context.cognitive_memories]
+        # B1 fix: wire assembled context into run_state so perceive() renders it
+        # into the prompt — cognitive_memories as "Additional Context", working_context
+        # as "Previous Conversations". Without this, the context was computed and dropped.
+        run_state.memory_context = assembled_context
 
         with _maybe_record("run", run_id, provider_kind):
             while True:
@@ -169,32 +169,32 @@ class PraoLoop:
                     intent = self._reason.reason(context)
 
                 if isinstance(intent, RespondIntent):
-                    if self._memory is not None:
-                        unit = ConversationUnit(
-                            user_text=user_input,
-                            agent_text=intent.text,
-                            turn_index=self._turn_index,
-                            timestamp=datetime.now(timezone.utc),
-                        )
-                        await self._memory.append_unit(unit)
-                        # B2 fix: await reinforce directly instead of create_task so the
-                        # work completes before asyncio.run() teardown cancels pending tasks.
-                        # B4 fix: use session-scoped self._turn_index instead of local var.
-                        if recalled_ids:
-                            await self._memory.reinforce(recalled_ids)
-                        self._turn_index += 1
+                    # Memory is constitutive — always present; no None guard.
+                    unit = ConversationUnit(
+                        user_text=user_input,
+                        agent_text=intent.text,
+                        turn_index=self._turn_index,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    await self._memory.append_unit(unit)
+                    # B2 fix: await reinforce directly instead of create_task so the
+                    # work completes before asyncio.run() teardown cancels pending tasks.
+                    # B4 fix: use session-scoped self._turn_index instead of local var.
+                    if recalled_ids:
+                        await self._memory.reinforce(recalled_ids)
+                    self._turn_index += 1
                     return (intent.text, run_state)
 
                 if isinstance(intent, FinishIntent):
-                    if self._memory is not None:
-                        unit = ConversationUnit(
-                            user_text=user_input,
-                            agent_text="",
-                            turn_index=self._turn_index,
-                            timestamp=datetime.now(timezone.utc),
-                        )
-                        await self._memory.append_unit(unit)
-                        self._turn_index += 1
+                    # Memory is constitutive — always present; no None guard.
+                    unit = ConversationUnit(
+                        user_text=user_input,
+                        agent_text="",
+                        turn_index=self._turn_index,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    await self._memory.append_unit(unit)
+                    self._turn_index += 1
                     return ("", run_state)
 
                 # intent == ACT — execute, observe, then loop back to perceive
