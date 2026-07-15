@@ -215,13 +215,40 @@ class PraoAdapterBase:
     # ------------------------------------------------------------------
 
     def perceive(self, run_state: RunState) -> str:
-        """Assemble the reasoning context prompt — identical to M1 §7.1.
+        """Assemble the reasoning context prompt.
 
-        Output is byte-identical to the original ClaudeAdapter.perceive() for
-        the same input. No behavioural change.
+        M3: When run_state.memory_context is set (AssembledContext), renders both
+        memory tiers into the prompt per design §4.4:
+          - cognitive_memories → "[ADDITIONAL CONTEXT FROM MEMORY]" section (system-prompt slot)
+          - working_context   → "[PREVIOUS CONVERSATIONS]" section (history slot)
+        Memory owns the substance; the loop sets run_state.memory_context and this
+        method renders it — no memory imports here (duck-typed via attribute access).
         """
         sections: list[str] = []
         sections.append(f"[PERSONA]\n{self._persona}")
+
+        # M3 B1 fix: render assembled memory context into the prompt so the model
+        # reasons over recalled knowledge and prior conversation turns.
+        ctx = run_state.memory_context
+        if ctx is not None:
+            cognitive = getattr(ctx, "cognitive_memories", None) or []
+            working = getattr(ctx, "working_context", None) or []
+
+            if cognitive:
+                lines = []
+                for m in cognitive:
+                    mem_type = getattr(m, "memory_type", "memory")
+                    content = getattr(m, "content", str(m))
+                    lines.append(f"  [{mem_type}] {content}")
+                sections.append("[ADDITIONAL CONTEXT FROM MEMORY]\n" + "\n".join(lines))
+
+            if working:
+                conv_lines = []
+                for unit in working:
+                    u_text = getattr(unit, "user_text", "")
+                    a_text = getattr(unit, "agent_text", "")
+                    conv_lines.append(f"  User: {u_text}\n  Agent: {a_text}")
+                sections.append("[PREVIOUS CONVERSATIONS]\n" + "\n\n".join(conv_lines))
 
         if run_state.history:
             history_lines = [

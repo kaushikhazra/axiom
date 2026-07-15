@@ -7,6 +7,7 @@ dependencies = [
     "claude-agent-sdk>=0.1.55",
     "anyio>=4.0",
     "smolagents",          # was: "litellm" -- smolagents depends on litellm transitively
+    "websockets>=10.0",    # WsBridgeSink — optional at runtime (ws_port=None disables it)
 ]
 
 [project.scripts]
@@ -24,6 +25,11 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "e2e_local: marks tests requiring a running Ollama instance (deselect with '-m not e2e_local')",
+]
+
+[dependency-groups]
+dev = [
+    "opentelemetry-sdk>=1.43.0",  # pinned per design.md §2.1; spike confirmed 1.43.0
 ]
 
 [project.optional-dependencies]

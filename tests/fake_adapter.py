@@ -4,6 +4,10 @@ FakeAdapter — in-memory implementation of all four PRAO port Protocols.
 Second-adapter existence proof (MPP-4): confirms the port interface is implementable
 without the Claude SDK. Used as the fast test enabler — no subprocess spawns,
 no live SDK calls, deterministic and milliseconds-fast.
+
+FakeMemory — in-memory stub satisfying MemoryPort. Used in tests that need to
+wire PraoLoop without a real CognitiveMemoryAdapter. Returns empty AssembledContext
+and records calls for assertion.
 """
 
 from __future__ import annotations
@@ -88,3 +92,47 @@ class FakeAdapter:
         run_state.history.append(result)
         run_state.cycle_count += 1
         return run_state
+
+
+class FakeMemory:
+    """In-memory stub satisfying MemoryPort — for tests that wire PraoLoop directly.
+
+    Returns empty AssembledContext from assemble_context() and is a no-op for
+    append_unit/reinforce/store. Isolates loop contract tests from the real memory layer.
+
+    Finding-3 fix: store() is now called by the loop at RESPOND exit to persist each
+    completed exchange to the cognitive tier. FakeMemory records store calls so tests
+    can assert the loop wires the call correctly.
+    """
+
+    def __init__(self) -> None:
+        self.appended_units: list = []
+        self.reinforced_ids: list[list[str]] = []
+        self.stored_calls: list[dict] = []  # records each store() invocation
+
+    async def assemble_context(self, query: str, **kwargs):  # type: ignore[return]
+        from axiom.memory.models import AssembledContext  # noqa: PLC0415
+
+        return AssembledContext(working_context=[], cognitive_memories=[])
+
+    async def append_unit(self, unit) -> None:
+        self.appended_units.append(unit)
+
+    async def reinforce(self, ids: list[str]) -> None:
+        self.reinforced_ids.append(ids)
+
+    async def store(
+        self,
+        content: str,
+        memory_type: str | None = None,
+        importance: float | None = None,
+        tags: list[str] | None = None,
+        source: str | None = None,
+    ) -> str:
+        import uuid  # noqa: PLC0415
+
+        mid = str(uuid.uuid4())
+        self.stored_calls.append(
+            {"content": content, "memory_type": memory_type, "id": mid}
+        )
+        return mid
