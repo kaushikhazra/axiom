@@ -70,6 +70,7 @@ class Agent:
         provider: str = "claude",
         observe: bool = False,
         memory_config: object = None,
+        ollama_host: str | None = None,
     ) -> None:
         """Wire the composition root.
 
@@ -80,6 +81,9 @@ class Agent:
                       "local" (LiteLLM + Ollama via LocalAdapter). LocalAdapter is
                       imported lazily inside the "local" branch so that Claude-only
                       installs never pay the litellm import cost.
+            ollama_host: Optional Ollama API base URL, e.g. "http://192.168.0.235:11434".
+                         Only used when provider="local"; ignored otherwise. Defaults to
+                         LocalAdapter's own localhost default when None.
             observe: When True, constructs ObservabilityFaculty and wires run_id into
                      the loop so phase spans are emitted to ~/.axiom/traces/<run_id>.jsonl.
                      Off by default — backward compatible; no OTel cost unless enabled.
@@ -95,7 +99,10 @@ class Agent:
         if provider == "local":
             from axiom.providers.local_adapter import LocalAdapter  # noqa: PLC0415 (lazy)
 
-            adapter = LocalAdapter(persona=persona_text)
+            local_kwargs = {}
+            if ollama_host is not None:
+                local_kwargs["ollama_api_base"] = ollama_host
+            adapter = LocalAdapter(persona=persona_text, **local_kwargs)
         elif provider == "claude":
             adapter = ClaudeAdapter(
                 persona=persona_text, allowed_tools=M1_ALLOWED_TOOLS
