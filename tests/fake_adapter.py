@@ -114,15 +114,32 @@ class FakeMemory:
     can assert the loop wires the call correctly.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, recall_results: list | None = None) -> None:
         self.appended_units: list = []
         self.reinforced_ids: list[list[str]] = []
         self.stored_calls: list[dict] = []  # records each store() invocation
+        # M8: scripted recall() return value -- defaults to no lessons matched
+        # (the common case), mirrors FakeRouter's scripted-selection pattern.
+        self._recall_results = recall_results or []
+        self.recall_calls: list[dict] = []
 
     async def assemble_context(self, query: str, **kwargs):  # type: ignore[return]
         from axiom.memory.models import AssembledContext  # noqa: PLC0415
 
         return AssembledContext(working_context=[], cognitive_memories=[])
+
+    async def recall(
+        self,
+        query: str,
+        context: dict | None = None,
+        type_filter: str | None = None,
+        tags: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list:
+        self.recall_calls.append(
+            {"query": query, "type_filter": type_filter, "limit": limit}
+        )
+        return self._recall_results
 
     async def append_unit(self, unit) -> None:
         self.appended_units.append(unit)
@@ -221,6 +238,7 @@ class FakeRouter:
         worker_selections: list[WorkerSelection] | None = None,
         fallback_selection: WorkerSelection | None = None,
         committee_selections: list[list[WorkerSelection] | None] | None = None,
+        extraction_selection: WorkerSelection | None = None,
     ) -> None:
         adapter = default_worker if default_worker is not None else FakeAdapter()
         self._default_selection = WorkerSelection(
@@ -234,10 +252,18 @@ class FakeRouter:
         self._committee_selections: deque[list[WorkerSelection] | None] = deque(
             committee_selections or []
         )
+        # M8: defaults to the same default_worker-backed selection so a bare
+        # FakeRouter() is usable without configuring extraction explicitly.
+        self._extraction_selection = (
+            extraction_selection
+            if extraction_selection is not None
+            else self._default_selection
+        )
 
         self.select_worker_calls: list[str] = []
         self.select_fallback_worker_calls: list[str] = []
         self.select_committee_calls: list[str] = []
+        self.select_extraction_worker_calls: int = 0
 
     def select_worker(self, instruction: str) -> WorkerSelection:
         self.select_worker_calls.append(instruction)
@@ -254,3 +280,7 @@ class FakeRouter:
         if self._committee_selections:
             return self._committee_selections.popleft()
         return None
+
+    def select_extraction_worker(self) -> WorkerSelection:
+        self.select_extraction_worker_calls += 1
+        return self._extraction_selection

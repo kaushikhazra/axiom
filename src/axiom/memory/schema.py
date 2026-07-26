@@ -28,7 +28,7 @@ def _edge_stmts(t: str) -> list[str]:
 SCHEMA_STATEMENTS: list[str] = [
     "DEFINE TABLE OVERWRITE memory SCHEMAFULL",
     "DEFINE FIELD OVERWRITE content         ON memory TYPE string",
-    "DEFINE FIELD OVERWRITE memory_type     ON memory TYPE string ASSERT $value IN ['working', 'episodic', 'semantic', 'procedural', 'identity', 'person']",
+    "DEFINE FIELD OVERWRITE memory_type     ON memory TYPE string ASSERT $value IN ['working', 'episodic', 'semantic', 'procedural', 'identity', 'person', 'lesson']",
     "DEFINE FIELD OVERWRITE state           ON memory TYPE string DEFAULT 'active' ASSERT $value IN ['active', 'archived', 'superseded']",
     "DEFINE FIELD OVERWRITE importance      ON memory TYPE float",
     "DEFINE FIELD OVERWRITE stability       ON memory TYPE float",

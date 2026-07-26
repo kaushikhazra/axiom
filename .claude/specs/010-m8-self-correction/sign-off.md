@@ -1,0 +1,51 @@
+# M8 · Self-correction — Live Verification Sign-Off
+
+Per `requirement.md`'s SC-5 and the project's standing pattern (M1 MPP-5, M3 recall proof, M4 AC-08.5, M5/M6/M7 sign-offs). CAPTURE and INJECT are each proven live via a direct-construction script (`verify_m8_capture_inject.py`, scratch) built from the same real `Router`/`ClaudeAdapter`/`CognitiveMemoryAdapter` objects `agent.py` composes — used specifically because tonight's other live verification runs had `local` (Ollama) deliberately unreachable, and `select_extraction_worker()` (D4) prefers `local` first; routing CAPTURE's own dispatch into the same unreachable host it was proving would only demonstrate D7's best-effort absorption, not a genuine CAPTURE success. The script instead configures a `Router` with only `"claude"` registered, so `select_extraction_worker()` necessarily resolves to `"claude"` (healthy) — isolating the mechanism under test from an unrelated environmental condition, the same precedent M7's sign-off (OR-4) already established for direct-construction verification.
+
+---
+
+## SC-1 — CAPTURE fires selectively on a real trigger, not unconditionally
+
+**PASS, live + unit.**
+
+1. **Live (deliberate fallback trigger):** `axiom-cli --ollama-host http://10.255.255.1:11434 --auto-approve-tools --debug "List the files in the current directory"` — local's connection failed, `[ROUTER_FALLBACK]` fired, the turn completed correctly via Claude, and CAPTURE dispatched its own extraction call. Because `select_extraction_worker()` also preferred the same unreachable `local` host, the extraction dispatch itself failed and was absorbed per D7 ("Self-correction CAPTURE failed (non-fatal): ..." in debug output) — correct best-effort behavior, but not a clean demonstration of a *successful* capture.
+2. **Live (direct-construction, isolated):** `verify_m8_capture_inject.py`, with `Router(adapter_factories={"claude": make_claude})` (no `"local"` factory at all) — `loop._capture_lesson(correction_signal, run_state)` dispatched a real Claude extraction call and stored a coherent, distilled lesson via the real `CognitiveMemoryAdapter`/SurrealDB: *"When the local provider is unavailable, the system will automatically fall back to Claude — so ensure fallback chains are configured and tested so failures degrade gracefully rather than surfacing as hard errors to the user."* Confirms the full real dispatch: `select_extraction_worker()` → real adapter `.act()` → real `MemoryPort.store(memory_type="lesson")` → real SurrealDB write, accepted by the schema.py enum extension (D6).
+3. **Unit:** `TestSelfCorrectionCapture` (7 tests, `test_contracts.py`) — no capture on a clean cycle, capture fires on fallback / partial committee failure / max-cycles breach, no capture on full committee failure, capture failure doesn't abort the turn, and the dryrun-code-1 B1 regression test (a genuine success whose content contains the literal word "FAILED" is correctly NOT misclassified as a committee failure).
+
+## SC-2 — INJECT delivers relevant lessons into the Reasoner's context
+
+**PASS, live + unit — includes a genuine live-verification finding, root-caused and fixed.**
+
+1. **Live, first pass:** `verify_m8_capture_inject.py` — `memory.recall(query="provider failed fallback", type_filter="lesson", limit=3)` returned 3 hits: the 1 genuine lesson stored above, plus 2 unrelated `episodic` entries from earlier turns. `perceive()`'s new `[LESSONS FROM PAST CORRECTIONS]` block rendered *all three* — meaning a real INJECT could deliver stray episodic conversation fragments into the Reason-phase prompt mislabeled as lessons, and (the more serious half) a genuine lesson could be silently crowded out of the top-N slots by unrelated keyword/temporal hits as the memory store grows, with no error surfaced anywhere.
+2. **Root cause (D10):** `RetrievalPipeline.recall()` (M3, `src/axiom/memory/retrieval.py`) only passed `type_filter` to the semantic strategy (`vector_search`); the keyword (`fulltext_search`) and temporal (`get_by_recency`) strategies ran with no type constraint, and RRF-fused their untyped hits into the same ranked/truncated result set — pre-existing M3 behavior, SC-2 is the first consumer to depend on `type_filter` actually filtering.
+3. **Fix, at the source:** `recall()` now re-filters `keyword_results`/`temporal_results` to `memory_type == type_filter` immediately after the three strategies resolve and before RRF fusion, so all three strategies agree on type before scoring/truncation — not a downstream consumer-side patch in `loop.py`, which would have hidden the visible symptom while leaving the worse silent-crowding failure mode untouched.
+4. **Live, re-verified post-fix:** same script, same query — `recall(type_filter="lesson")` now returns exactly the 1 genuine lesson; `perceive()`'s rendered context contains only that lesson under `[LESSONS FROM PAST CORRECTIONS]`.
+5. **Unit:** `TestSelfCorrectionInject` (3 tests) — lessons retrieved and stored on `run_state`, no match leaves `run_state.lessons` empty, a `recall()` failure doesn't abort the turn. `TestLessonsRendering` (3 tests, `test_provider_base.py`) — section present when populated, absent when empty, multiple lessons each rendered. `tests/test_memory_retrieval.py` + full suite re-run green after the D10 fix (116 targeted tests, then 558/558 full suite excluding the known pre-existing `test_local_e2e.py` pollution — see below).
+
+## SC-3 — A clean cycle costs zero extra dispatches
+
+**PASS, unit.** `TestSelfCorrectionCapture::test_no_capture_on_clean_cycle` — `correction_signal` stays `None`, `_capture_lesson()` never called, `spawn_count` unaffected. Confirmed structurally: `correction_signal` is freshly re-declared at the top of every ACT-intent-handling iteration (dryrun-design-1 W1), so nothing from a prior cycle can leak forward, including across a `USE_SKILL` cycle's `continue`.
+
+## SC-4 — No new port, adapter, IntentKind, or top-level phase
+
+**PASS, code inspection + dryrun-code-2 Pass 1/8.** Confirmed against live source: no new `Port` protocol, no new `Worker`/adapter class, no new `IntentKind` value, no new `_maybe_record(...)`-wrapped phase span (D8) — `run_state.spawn_count` increments by 1 for CAPTURE's real dispatch, matching the existing "loop-dispatched query() calls" contract without adding a new trace dimension.
+
+## SC-5 — M8 verified live via `axiom-cli`
+
+**PASS.** SC-1 and SC-2's behavioral ACs are each demonstrated live above. The combined CAPTURE→store→recall→INJECT→render loop was proven end-to-end through the direct-construction script using the same real, persistent `CognitiveMemoryAdapter`/SurrealDB instance the real `axiom-cli` uses — the same class of substitution M7's sign-off (OR-3/OR-4) already used and justified for a mechanism whose live CLI path is entangled with an unrelated, deliberately-forced environmental failure (there, the Conductor's own unpredictable RESPOND-vs-ACT choice; here, `local`'s deliberate unreachability affecting both the primary dispatch under test AND CAPTURE's own extraction dispatch simultaneously).
+
+---
+
+## Bugs and gaps found and fixed during this milestone
+
+1. **Committee partial-failure detection via fragile substring matching** (dryrun-code-1 B1) — `failed_members` was derived from `"FAILED" in` the already-formatted `parts` display text, so a genuinely successful member whose own content happened to contain the literal word "FAILED" would be misclassified as failed, violating SC-3. Fixed: `outcomes: list[bool]` now tracks the real per-member dispatch result directly from the `try`/`except AdapterError`, never from re-parsing formatted text. Regression test added. `design.md` §5's own pseudocode (the bug originated there too) corrected to match.
+2. **`type_filter` only partially enforced across `recall()`'s three retrieval strategies** (D10, found during this milestone's own live verification, not by any unit test or dryrun pass) — see SC-2 above for the full account. Fixed at the source in `src/axiom/memory/retrieval.py`, re-verified live and via the full test suite.
+3. **Two pre-existing test assertions affected by CAPTURE's new (correct) extra dispatch** — `TestMaxCyclesBreach::test_act_called_max_cycles_times` (isolated via a separate extraction adapter so CAPTURE's dispatch doesn't inflate the primary adapter's `act_calls` count) and `TestRouterFallback::test_spawn_count_counts_both_dispatch_attempts_on_fallback` (`spawn_count` assertion updated 4→5, documented why). Neither is a defect — both are the test suite catching up to CAPTURE's genuinely new, correct dispatch.
+
+## Known, unrelated, out-of-scope issues (not fixed — documented for the record)
+
+- **Test-order-dependent pollution** in the full suite: all three `tests/test_local_e2e.py` tests fail with `TypeError: the JSON object must be str, bytes or bytearray, not MagicMock` when run as part of the full ~560-test suite, but pass individually in isolation — the exact same pre-existing, root-caused-in-M7 flake documented in M7's own sign-off (a mock-leakage flake in an unrelated test file's global state, unrelated to Router/self-correction code). Not re-investigated here; M7's sign-off already confirmed via `git stash` that this predates M7 and is unrelated to loop/router code.
+
+## Full suite status
+
+558 passed, 2 skipped (`tests/test_local_e2e.py` excluded from this run — see above; all three of its tests independently confirmed passing in isolation, e.g. `test_e2e_hello_respond_path` and `test_e2e_weather_durgapur` each pass alone). Targeted re-run of the D10-affected areas (`test_memory_retrieval.py`, `test_contracts.py`, `test_provider_base.py`, `test_router.py`) — 116/116 passed.

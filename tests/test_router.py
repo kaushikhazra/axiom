@@ -312,3 +312,43 @@ class TestSelectCommittee:
         router.select_committee("anything")
         assert claude_calls == [1]  # not reconstructed
         assert local_calls == [1]  # constructed exactly once
+
+
+class TestSelectExtractionWorker:
+    """M8: cheapest configured provider, bypasses RoutePolicy entirely."""
+
+    def test_prefers_local_when_configured(self) -> None:
+        router = Router(RoutePolicy(), _factories([], []))
+        selection = router.select_extraction_worker()
+        assert selection.provider_name == "local"
+        assert selection.control_level == "KIND_A"
+        assert selection.fallback_allowed is False
+
+    def test_bypasses_policy_even_with_forced_provider(self) -> None:
+        """Extraction is an internal task -- forced_provider (RT-8-style
+        override) is irrelevant to it; it always prefers local regardless."""
+        router = Router(RoutePolicy(), _factories([], []), forced_provider="claude")
+        selection = router.select_extraction_worker()
+        assert selection.provider_name == "local"
+
+    def test_falls_back_to_whatever_is_configured_when_local_absent(self) -> None:
+        router = Router(
+            RoutePolicy(), {"claude": lambda: _FakeRoutableAdapter("KIND_B")}
+        )
+        selection = router.select_extraction_worker()
+        assert selection.provider_name == "claude"
+
+    def test_raises_router_error_on_zero_adapters(self) -> None:
+        router = Router(RoutePolicy(), {})
+        with pytest.raises(RouterError, match="no adapter factories configured"):
+            router.select_extraction_worker()
+
+    def test_reuses_cached_local_adapter(self) -> None:
+        claude_calls: list = []
+        local_calls: list = []
+        router = Router(RoutePolicy(), _factories(claude_calls, local_calls))
+        router.select_conductor()  # constructs claude only
+        router.select_extraction_worker()  # should construct local fresh
+        assert local_calls == [1]
+        router.select_extraction_worker()  # should reuse cached local
+        assert local_calls == [1]

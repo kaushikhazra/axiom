@@ -288,6 +288,14 @@ class PraoAdapterBase:
                     conv_lines.append(f"  User: {u_text}\n  Agent: {a_text}")
                 sections.append("[PREVIOUS CONVERSATIONS]\n" + "\n\n".join(conv_lines))
 
+        # M8: lessons from past self-corrections, rendered only when present
+        # (empty list = no section, no wasted prompt tokens).
+        if run_state.lessons:
+            lesson_lines = [f"  - {lesson}" for lesson in run_state.lessons]
+            sections.append(
+                "[LESSONS FROM PAST CORRECTIONS]\n" + "\n".join(lesson_lines)
+            )
+
         if run_state.history:
             history_lines = [
                 f"Step {i + 1}: {result}" for i, result in enumerate(run_state.history)

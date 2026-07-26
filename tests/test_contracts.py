@@ -34,6 +34,7 @@ def _make_loop(
     max_cycles: int = 10,
     skills: FakeSkills | None = None,
     router: FakeRouter | None = None,
+    memory: FakeMemory | None = None,
 ) -> PraoLoop:
     """Helper: wire perceive/reason/observe to the same FakeAdapter instance.
 
@@ -46,6 +47,8 @@ def _make_loop(
     asserting on adapter.act_calls keeps working unchanged; tests that need
     to exercise Router-specific behavior (per-cycle provider switching,
     fallback) pass their own FakeRouter.
+    M8: memory defaults to a plain no-op FakeMemory(); tests exercising
+    INJECT pass a scripted FakeMemory(recall_results=[...]).
     """
     if router is None:
         router = FakeRouter(default_worker=adapter)
@@ -53,7 +56,7 @@ def _make_loop(
         perceive=adapter,
         reason=adapter,
         observe=adapter,
-        memory=FakeMemory(),
+        memory=memory if memory is not None else FakeMemory(),
         skills=skills if skills is not None else FakeSkills(),
         router=router,
         max_cycles=max_cycles,
@@ -169,7 +172,21 @@ class TestMaxCyclesBreach:
             intents=[ActIntent(instruction=f"step {i}") for i in range(20)],
             act_results=[f"result {i}" for i in range(20)],
         )
-        self.loop = _make_loop(self.adapter, max_cycles=self.MAX)
+        # M8: a MAX_CYCLES breach is a correction_signal (CAPTURE fires) --
+        # route extraction to a SEPARATE fake adapter so it doesn't pollute
+        # this test's act_calls count on the primary Worker adapter.
+        extraction_adapter = FakeAdapter(act_results=["a lesson"])
+        router = FakeRouter(
+            default_worker=self.adapter,
+            extraction_selection=WorkerSelection(
+                adapter=extraction_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        self.extraction_adapter = extraction_adapter
+        self.loop = _make_loop(self.adapter, max_cycles=self.MAX, router=router)
 
     def test_raises_max_cycles_exceeded(self) -> None:
         with pytest.raises(MaxCyclesExceededError):
@@ -524,8 +541,9 @@ class TestRouterFallback:
         loop = _make_loop(conductor_adapter, router=router)
         _text, state = loop.run("go")
         # 1 reason (ActIntent) + 1 reason (final RESPOND) + 2 act dispatches
-        # (primary failure + fallback success) = 4.
-        assert state.spawn_count == 4
+        # (primary failure + fallback success) + 1 M8 CAPTURE extraction
+        # dispatch (a fallback succeeding is a correction_signal) = 5.
+        assert state.spawn_count == 5
 
     def test_no_fallback_when_fallback_not_allowed(self) -> None:
         failing_adapter = FakeAdapter(raise_on_act=True)
@@ -963,3 +981,263 @@ class TestCommitteeDispatch:
         calls = {c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list}
         assert calls["axiom.router.committee_size"] == 2
         assert calls["axiom.router.providers"] == "claude,local"
+
+
+class TestSelfCorrectionCapture:
+    """M8 (SC-1, SC-3): CAPTURE fires only on a correction signal (fallback,
+    partial committee failure, max-cycles breach) -- never on a clean cycle."""
+
+    def _extraction_router(self, worker_selections=None, committee_selections=None):
+        extraction_adapter = FakeAdapter(act_results=["a lesson"])
+        router = FakeRouter(
+            worker_selections=worker_selections,
+            committee_selections=committee_selections,
+            extraction_selection=WorkerSelection(
+                adapter=extraction_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        return router, extraction_adapter
+
+    def test_no_capture_on_clean_cycle(self) -> None:
+        adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")],
+            act_results=["x result"],
+        )
+        router, extraction_adapter = self._extraction_router()
+        memory = FakeMemory()
+        loop = _make_loop(adapter, router=router, memory=memory)
+        loop.run("go")
+        assert extraction_adapter.act_calls == []
+        # M3's own RESPOND-exit episodic store still fires -- only "lesson"
+        # entries are M8's concern.
+        lesson_calls = [c for c in memory.stored_calls if c["memory_type"] == "lesson"]
+        assert lesson_calls == []
+
+    def test_capture_fires_on_fallback(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["fallback result"])
+        extraction_adapter = FakeAdapter(act_results=["a lesson"])
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=WorkerSelection(
+                adapter=healthy_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+            extraction_selection=WorkerSelection(
+                adapter=extraction_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        memory = FakeMemory()
+        loop = _make_loop(conductor_adapter, router=router, memory=memory)
+        loop.run("go")
+        assert len(extraction_adapter.act_calls) == 1
+        assert "provider claude failed" in extraction_adapter.act_calls[0]
+        lesson_calls = [c for c in memory.stored_calls if c["memory_type"] == "lesson"]
+        assert len(lesson_calls) == 1
+        assert lesson_calls[0]["content"] == "a lesson"
+
+    def test_capture_fires_on_partial_committee_failure(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["local answer"])
+        router, extraction_adapter = self._extraction_router(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=failing_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=healthy_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        memory = FakeMemory()
+        loop = _make_loop(conductor_adapter, router=router, memory=memory)
+        loop.run("go")
+        assert len(extraction_adapter.act_calls) == 1
+        assert "committee member(s) claude failed" in extraction_adapter.act_calls[0]
+        lesson_calls = [c for c in memory.stored_calls if c["memory_type"] == "lesson"]
+        assert len(lesson_calls) == 1
+
+    def test_no_capture_when_successful_content_contains_the_word_failed(
+        self,
+    ) -> None:
+        """dryrun-code-1 B1: a genuine SUCCESS whose own content happens to
+        contain the literal word "FAILED" must not be misclassified as a
+        committee-member failure -- outcomes are tracked from the actual
+        try/except result, never from substring-matching the formatted text."""
+        claude_adapter = FakeAdapter(
+            act_results=["the deployment FAILED due to a config error, now fixed"]
+        )
+        local_adapter = FakeAdapter(act_results=["local answer"])
+        router, extraction_adapter = self._extraction_router(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=claude_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=local_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        memory = FakeMemory()
+        loop = _make_loop(conductor_adapter, router=router, memory=memory)
+        loop.run("go")
+        assert extraction_adapter.act_calls == []
+        lesson_calls = [c for c in memory.stored_calls if c["memory_type"] == "lesson"]
+        assert lesson_calls == []
+
+    def test_no_capture_on_full_committee_failure(self) -> None:
+        """An all-fail committee already raises AdapterError -- the turn
+        never reaches CAPTURE (the exception propagates past it)."""
+        failing_1 = FakeAdapter(raise_on_act=True)
+        failing_2 = FakeAdapter(raise_on_act=True)
+        router, extraction_adapter = self._extraction_router(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=failing_1,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=failing_2,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(intents=[ActIntent(instruction="do x")])
+        memory = FakeMemory()
+        loop = _make_loop(conductor_adapter, router=router, memory=memory)
+        with pytest.raises(AdapterError):
+            loop.run("go")
+        assert extraction_adapter.act_calls == []
+        assert memory.stored_calls == []
+
+    def test_capture_fires_on_max_cycles_breach(self) -> None:
+        adapter = FakeAdapter(
+            intents=[ActIntent(instruction=f"step {i}") for i in range(20)],
+            act_results=[f"result {i}" for i in range(20)],
+        )
+        router, extraction_adapter = self._extraction_router()
+        memory = FakeMemory()
+        loop = _make_loop(adapter, max_cycles=2, router=router, memory=memory)
+        with pytest.raises(MaxCyclesExceededError):
+            loop.run("do many things")
+        assert len(extraction_adapter.act_calls) == 1
+        assert "max cycles" in extraction_adapter.act_calls[0]
+        assert len(memory.stored_calls) == 1
+
+    def test_capture_failure_does_not_abort_the_turn(self) -> None:
+        """D7: the extraction dispatch itself failing is absorbed silently --
+        the turn's own (already-successful) result is unaffected."""
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["fallback result"])
+        failing_extraction_adapter = FakeAdapter(raise_on_act=True)
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=WorkerSelection(
+                adapter=healthy_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+            extraction_selection=WorkerSelection(
+                adapter=failing_extraction_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        memory = FakeMemory()
+        loop = _make_loop(conductor_adapter, router=router, memory=memory)
+        text, _state = loop.run("go")
+        assert text == "done"  # the turn itself still succeeds
+        lesson_calls = [c for c in memory.stored_calls if c["memory_type"] == "lesson"]
+        assert lesson_calls == []  # lesson never got stored
+
+
+class TestSelfCorrectionInject:
+    """M8 (SC-2): lessons retrieved once per turn, rendered into perceive()'s
+    context only when non-empty."""
+
+    def test_lessons_retrieved_and_stored_on_run_state(self) -> None:
+        from types import SimpleNamespace
+
+        memory = FakeMemory(recall_results=[SimpleNamespace(content="watch out for X")])
+        adapter = FakeAdapter(intents=[RespondIntent(text="done")])
+        loop = _make_loop(adapter, memory=memory)
+        _text, state = loop.run("go")
+        assert state.lessons == ["watch out for X"]
+        assert memory.recall_calls[0]["type_filter"] == "lesson"
+
+    def test_no_lessons_matched_leaves_run_state_lessons_empty(self) -> None:
+        memory = FakeMemory(recall_results=[])
+        adapter = FakeAdapter(intents=[RespondIntent(text="done")])
+        loop = _make_loop(adapter, memory=memory)
+        _text, state = loop.run("go")
+        assert state.lessons == []
+
+    def test_recall_failure_does_not_abort_the_turn(self) -> None:
+        class _FailingMemory(FakeMemory):
+            async def recall(self, *args, **kwargs):
+                raise RuntimeError("recall backend down")
+
+        memory = _FailingMemory()
+        adapter = FakeAdapter(intents=[RespondIntent(text="done")])
+        loop = _make_loop(adapter, memory=memory)
+        text, state = loop.run("go")
+        assert text == "done"
+        assert state.lessons == []
