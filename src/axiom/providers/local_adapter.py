@@ -17,6 +17,7 @@ not pay the smolagents import cost. See design §4.1 / §11.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from axiom.interfaces import (
     AdapterError,
@@ -24,6 +25,8 @@ from axiom.interfaces import (
     RespondIntent,
 )
 from axiom.providers.base import PraoAdapterBase, _parse_intent
+from axiom.tools.guardrails import GuardrailsGate
+from axiom.tools.registry import ToolRegistry
 
 logger = logging.getLogger("axiom.providers")
 
@@ -61,12 +64,22 @@ class LocalAdapter(PraoAdapterBase):
     def __init__(
         self,
         persona: str,
+        working_dir: Path,
+        gate: GuardrailsGate,
         model_id: str = "ollama_chat/qwen2.5:7b",
         ollama_api_base: str = "http://localhost:11434",
         max_steps: int = 5,
         additional_authorized_imports: list[str] | None = None,
     ) -> None:
         super().__init__(persona=persona)
+
+        # M4: working_dir/gate are required (no defaults) -- a default here
+        # would silently construct an unscoped/ungated ToolRegistry, exactly
+        # the "silent auto-approve" failure mode M4 exists to remove
+        # (design.md D6, D11).
+        self._working_dir = working_dir
+        self._gate = gate
+        self._registry = ToolRegistry(working_dir=working_dir, gate=gate)
 
         # Deferred import: pay smolagents import cost only when LocalAdapter is used.
         try:
@@ -87,7 +100,12 @@ class LocalAdapter(PraoAdapterBase):
             "datetime",
             "json",
             "re",
-            "subprocess",  # required: E2E #3 writes hello.py to disk + executes it (W3)
+            # M4: "subprocess" removed (design.md AC-05.4). The only sanctioned
+            # way to run a shell command is now the gated RunShellTool -- raw
+            # Python subprocess access was the unscoped escape hatch M4 closes
+            # (design.md Purpose, D6). Writing/executing files (formerly E2E
+            # #3's reason for needing "subprocess") now goes through
+            # WriteFileTool + RunShellTool instead.
         ]
 
         # Store CodeAgent config -- CodeAgent is created FRESH per act() call (W2 resolution).
@@ -209,24 +227,30 @@ class LocalAdapter(PraoAdapterBase):
         """
         from smolagents import CodeAgent, DuckDuckGoSearchTool, LocalPythonExecutor  # noqa: PLC0415 -- Python import cache: free after first __init__ load
 
+        from axiom.tools.smolagents_tools import (  # noqa: PLC0415 -- lazy, matches smolagents-deferred rule
+            ListDirTool,
+            ReadFileTool,
+            RunShellTool,
+            WriteFileTool,
+        )
+
         # G2: CodeAgent constructor is inside the try/except so that construction
         # failures are also wrapped in AdapterError, not raw exceptions.
         try:
-            # smolagents 1.26.0: open() is not in BASE_PYTHON_TOOLS and the sandbox
-            # blocks it as an unnamed builtin. Inject it explicitly via additional_functions
-            # so the CodeAgent's generated code can write real files to disk (E2E #3 / W3).
+            # M4: the raw `open` escape hatch is removed (design.md AC-04.4) --
+            # file access now goes through the gated, working-dir-scoped
+            # ReadFileTool/WriteFileTool below, not bare Python builtins.
             # Tool-set fix: pre-populate `re` in the executor namespace.
             # qwen2.5:7b routinely generates re.search(...) without writing `import re`
             # first. additional_authorized_imports only permits the import statement --
             # it does NOT pre-inject the module. Pre-populating via additional_functions
             # means `re` is in scope even when the model omits the import, eliminating
             # InterpreterError: The variable 're' is not defined.
-            import builtins  # noqa: PLC0415
             import re as _re  # noqa: PLC0415
 
             executor = LocalPythonExecutor(
                 additional_authorized_imports=self._authorized_imports,
-                additional_functions={"open": builtins.open, "re": _re},
+                additional_functions={"re": _re},
             )
             # Tool-set fix (tool-provisioning pass): explicit minimal tool list replaces
             # add_base_tools=True. Rationale:
@@ -238,10 +262,19 @@ class LocalAdapter(PraoAdapterBase):
             #     In CodeAct, Python execution is the agent's own code block -- no
             #     PythonInterpreterTool needed; LocalPythonExecutor handles it natively.
             # (3) Fewer, clearer tools = less flailing for a weak model (qwen2.5:7b).
-            # Zero axiom-authored tool code: DuckDuckGoSearchTool is smolagents-provided.
+            # DuckDuckGoSearchTool is smolagents-provided (SAFE, ungated). The other
+            # four are Axiom's own working-dir-scoped, gated tools (design.md §8) --
+            # read_file/list_dir are SAFE; write_file/run_shell are DESTRUCTIVE and
+            # route through self._gate on every call (design.md AC-04.5).
             agent = CodeAgent(
                 model=self._model,
-                tools=[DuckDuckGoSearchTool()],
+                tools=[
+                    DuckDuckGoSearchTool(),
+                    ReadFileTool(self._registry),
+                    WriteFileTool(self._registry),
+                    ListDirTool(self._registry),
+                    RunShellTool(self._registry),
+                ],
                 max_steps=self._max_steps,
                 executor=executor,
                 verbosity_level=0,  # Defect-B: suppress rich console logging;

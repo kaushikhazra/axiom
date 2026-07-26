@@ -20,6 +20,8 @@ Key mocking strategy (design §12.1):
 from __future__ import annotations
 
 import sys
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,14 +29,25 @@ import pytest
 # ---------------------------------------------------------------------------
 # Inject mock smolagents into sys.modules BEFORE importing LocalAdapter so that
 # `from smolagents import CodeAgent, LiteLLMModel` inside __init__ resolves to
-# mocks (smolagents may or may not be installed; we isolate from network anyway).
+# mocks (isolates from live model/network calls -- smolagents is a required
+# dependency per pyproject.toml, so a real import to seed Tool below is safe).
+#
+# M4: axiom.tools.smolagents_tools does `class ReadFileTool(Tool): ...` at
+# import time (lazily, on the first act() call). A bare MagicMock
+# auto-attribute is not usable as a base class -- it doesn't raise, it just
+# silently produces a broken mock object in place of a real class. Tool is
+# seeded from the real smolagents module so subclassing behaves normally;
+# CodeAgent/LiteLLMModel stay mocked to avoid any live model/network work.
 # ---------------------------------------------------------------------------
+import smolagents as _real_smolagents_module  # noqa: E402 -- real import, captures Tool before the mock replaces sys.modules["smolagents"]
+
 _mock_smolagents = MagicMock()
 _mock_LiteLLMModel_instance = MagicMock()
 _mock_smolagents.LiteLLMModel.return_value = _mock_LiteLLMModel_instance
 _mock_smolagents.CodeAgent = MagicMock()
+_mock_smolagents.Tool = _real_smolagents_module.Tool
 
-sys.modules.setdefault("smolagents", _mock_smolagents)
+sys.modules["smolagents"] = _mock_smolagents
 
 from axiom.interfaces import (  # noqa: E402
     ActIntent,
@@ -43,6 +56,9 @@ from axiom.interfaces import (  # noqa: E402
     RespondIntent,
 )
 from axiom.providers.local_adapter import LocalAdapter  # noqa: E402
+from axiom.tools.guardrails import GuardrailsGate  # noqa: E402
+
+_TEST_WORKING_DIR = Path(tempfile.gettempdir())
 
 
 # ============================================================
@@ -66,7 +82,12 @@ def _make_adapter(
     Replaces adapter._model with a fresh MagicMock so every test configures
     side_effects independently without cross-contamination.
     """
-    kwargs: dict = {"persona": "Test persona", "max_steps": max_steps}
+    kwargs: dict = {
+        "persona": "Test persona",
+        "working_dir": _TEST_WORKING_DIR,
+        "gate": GuardrailsGate(auto_approve=True),
+        "max_steps": max_steps,
+    }
     if additional_authorized_imports is not None:
         kwargs["additional_authorized_imports"] = additional_authorized_imports
 
@@ -98,9 +119,12 @@ class TestLocalAdapterConstructor:
         adapter, _ = _make_adapter(max_steps=3)
         assert adapter._max_steps == 3
 
-    def test_default_authorized_imports_includes_subprocess(self) -> None:
+    def test_default_authorized_imports_excludes_subprocess(self) -> None:
+        """M4: raw subprocess access is removed -- run_shell (gated, working-dir-
+        scoped) is now the only sanctioned way to run a shell command
+        (design.md AC-05.4)."""
         adapter, _ = _make_adapter()
-        assert "subprocess" in adapter._authorized_imports
+        assert "subprocess" not in adapter._authorized_imports
 
     def test_custom_authorized_imports(self) -> None:
         adapter, _ = _make_adapter(additional_authorized_imports=["math"])
@@ -116,7 +140,11 @@ class TestLocalAdapterConstructor:
         # Setting a module to None in sys.modules causes `import smolagents` to raise ImportError.
         with patch.dict(sys.modules, {"smolagents": None}):
             with pytest.raises((ModuleNotFoundError, ImportError), match="smolagents"):
-                LocalAdapter(persona="Test")
+                LocalAdapter(
+                    persona="Test",
+                    working_dir=_TEST_WORKING_DIR,
+                    gate=GuardrailsGate(auto_approve=True),
+                )
 
 
 # ============================================================
@@ -328,13 +356,26 @@ class TestLocalAdapterAct:
         """CodeAgent is constructed with the right model, tools, max_steps, executor.
 
         Tool-set fix: add_base_tools is NOT passed (explicit minimal tool list is
-        used instead). CodeAgent receives tools=[DuckDuckGoSearchTool()], max_steps,
-        executor, verbosity_level.
+        used instead). CodeAgent receives tools=[DuckDuckGoSearchTool(), <4 Axiom
+        tools>], max_steps, executor, verbosity_level.
 
         Since smolagents 1.26.0: additional_authorized_imports is passed to a
         LocalPythonExecutor, not directly to CodeAgent. CodeAgent receives an
         executor= kwarg instead.
+
+        M4: the Axiom tools (ReadFileTool/WriteFileTool/ListDirTool/RunShellTool)
+        are imported from axiom.tools.smolagents_tools, not from the smolagents
+        package itself, so patch("smolagents.DuckDuckGoSearchTool") mocks only
+        that one tool -- the other four are real (but harmless: their __init__
+        just stores a ToolRegistry reference, no I/O).
         """
+        from axiom.tools.smolagents_tools import (
+            ListDirTool,
+            ReadFileTool,
+            RunShellTool,
+            WriteFileTool,
+        )
+
         adapter, _ = _make_adapter(max_steps=3)
         with (
             patch("smolagents.CodeAgent") as MockCodeAgent,
@@ -351,11 +392,17 @@ class TestLocalAdapterAct:
 
             adapter.act("do something")
 
-        # CodeAgent receives model, tools=[DuckDuckGoSearchTool()], max_steps, executor,
-        # verbosity_level. add_base_tools is NOT passed (tool-set fix).
+        # CodeAgent receives model, tools=[DuckDuckGoSearchTool(), <4 Axiom tools>],
+        # max_steps, executor, verbosity_level. add_base_tools is NOT passed (tool-set fix).
         call_kwargs = MockCodeAgent.call_args[1]
         assert call_kwargs["model"] is adapter._model
-        assert call_kwargs["tools"] == [mock_ddg_instance]
+        tools = call_kwargs["tools"]
+        assert len(tools) == 5
+        assert tools[0] is mock_ddg_instance
+        assert isinstance(tools[1], ReadFileTool)
+        assert isinstance(tools[2], WriteFileTool)
+        assert isinstance(tools[3], ListDirTool)
+        assert isinstance(tools[4], RunShellTool)
         assert "add_base_tools" not in call_kwargs, (
             "add_base_tools must NOT be passed -- explicit tool list replaces it"
         )
@@ -364,10 +411,12 @@ class TestLocalAdapterAct:
         # Defect-B: verbosity_level=0 must be present to suppress rich console logging
         assert call_kwargs["verbosity_level"] == 0
 
-        # LocalPythonExecutor receives additional_authorized_imports with subprocess
-        # and additional_functions with 're' pre-populated (tool-set fix).
+        # LocalPythonExecutor: M4 removed "subprocess" (AC-05.4) and "open" from
+        # additional_functions (AC-04.4) -- run_shell/write_file are the gated
+        # replacements. 're' is still pre-populated (tool-set fix, unrelated to M4).
         executor_kwargs = MockExecutor.call_args[1]
-        assert "subprocess" in executor_kwargs["additional_authorized_imports"]
+        assert "subprocess" not in executor_kwargs["additional_authorized_imports"]
+        assert "open" not in executor_kwargs["additional_functions"]
         assert "re" in executor_kwargs["additional_functions"], (
             "re module must be pre-populated in executor namespace (tool-set fix)"
         )

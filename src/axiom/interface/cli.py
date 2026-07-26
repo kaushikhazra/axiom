@@ -49,6 +49,25 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--auto-approve-tools",
+        action="store_true",
+        default=False,
+        help=(
+            "M4: answer every DESTRUCTIVE tool approval prompt 'yes' automatically "
+            "(write_file/run_shell for --provider local; Bash/Write/Edit for "
+            "--provider claude). Off by default -- the safe, prompting behavior "
+            "is the default. Needed for headless/scripted runs."
+        ),
+    )
+    parser.add_argument(
+        "--working-dir",
+        default=None,
+        help=(
+            "M4: root directory Axiom's own file/shell tools (--provider local "
+            "only) are scoped to. Defaults to the current directory when omitted."
+        ),
+    )
+    parser.add_argument(
         "input",
         nargs="?",
         help="User input (reads from stdin if omitted)",
@@ -70,6 +89,8 @@ def main() -> None:
         provider=args.provider,
         observe=args.observe,
         ollama_host=args.ollama_host,
+        working_dir=args.working_dir,
+        auto_approve_tools=args.auto_approve_tools,
     )
 
     if args.observe and agent.trace_path is not None:
