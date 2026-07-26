@@ -97,6 +97,10 @@ class RunState:
     # M5: one-shot status set by loop.py on a UseSkillIntent cycle, rendered
     # once by perceive() on the immediately following cycle, then cleared.
     skill_activation_note: str | None = None
+    # M8: lessons retrieved once per turn (same cadence as memory_context),
+    # rendered by perceive() into their own section. Empty list = no lessons
+    # matched (the common case) -- never None.
+    lessons: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

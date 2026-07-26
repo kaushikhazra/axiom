@@ -27,6 +27,7 @@ registry.py, processors.py, any sink, or any adapter.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Generator
@@ -49,6 +50,10 @@ from axiom.router.router import Router
 from axiom.skills.port import SkillNotFoundError, SkillsPort
 
 MAX_CYCLES: int = 10  # module-level constant; overridable via constructor
+
+_axiom_logger = logging.getLogger(
+    "axiom"
+)  # M8: best-effort warnings for INJECT/CAPTURE
 
 
 @contextmanager
@@ -173,6 +178,17 @@ class PraoLoop:
         # as "Previous Conversations". Without this, the context was computed and dropped.
         run_state.memory_context = assembled_context
 
+        # M8: INJECT -- once per turn, same cadence as memory_context above.
+        # Best-effort: a recall() failure must not abort the turn.
+        try:
+            lesson_hits = await self._memory.recall(
+                query=user_input, type_filter="lesson", limit=3
+            )
+            run_state.lessons = [hit.content for hit in lesson_hits]
+        except Exception as exc:  # noqa: BLE001 -- best-effort, matches agent.py's
+            # own memory-adjacent try/except Exception precedent
+            _axiom_logger.warning("Self-correction INJECT failed (non-fatal): %s", exc)
+
         with _maybe_record("run", run_id, provider_kind):
             while True:
                 # M5: discovery catalog refreshed every cycle (not once per
@@ -279,6 +295,12 @@ class PraoLoop:
                         "expected ActIntent"
                     )
 
+                # M8: reset fresh on every iteration that reaches this point --
+                # never carried over from a prior cycle (a USE_SKILL cycle's
+                # `continue` above skips this section entirely without
+                # touching this variable).
+                correction_signal: str | None = None
+
                 # M7: Router checks committee mode first (OR-1/OR-2) -- None
                 # means "not triggered", falls through to M6's single-dispatch
                 # path below, completely unmodified.
@@ -300,7 +322,12 @@ class PraoLoop:
                             committee
                         )  # OR-3: one real dispatch per member
                         parts: list[str] = []
-                        any_succeeded = False
+                        # M8 dryrun-code-1 B1: track the ACTUAL dispatch
+                        # outcome per member (not a substring match on the
+                        # formatted text below -- a genuine success whose
+                        # content happens to contain the word "FAILED" must
+                        # never be misclassified).
+                        outcomes: list[bool] = []
                         for member in committee:
                             try:
                                 member_result = await asyncio.to_thread(
@@ -309,20 +336,36 @@ class PraoLoop:
                                 parts.append(
                                     f"[{member.provider_name}]: {member_result}"
                                 )
-                                any_succeeded = True
+                                outcomes.append(True)
                             except AdapterError as exc:
                                 # OR-6: note the failure, keep going -- no
                                 # fallback substitution (OR-7).
                                 parts.append(
                                     f"[{member.provider_name}]: FAILED — {exc}"
                                 )
+                                outcomes.append(False)
 
+                        any_succeeded = any(outcomes)
                         if not any_succeeded:
                             # OR-6: a committee where nobody answered is not success.
                             raise AdapterError(
                                 f"all {len(committee)} committee members failed"
                             )
                         result = "\n".join(parts)
+
+                        # M8 (SC-1): partial failure -- some but not all members
+                        # failed -- is a correction signal for CAPTURE.
+                        failed_members = [
+                            m.provider_name
+                            for m, ok in zip(committee, outcomes)
+                            if not ok
+                        ]
+                        if failed_members:
+                            correction_signal = (
+                                f"committee member(s) {', '.join(failed_members)} "
+                                f"failed; {len(committee) - len(failed_members)} "
+                                "member(s) succeeded"
+                            )
 
                     with _maybe_record("observe", run_id, provider_kind):
                         run_state = await asyncio.to_thread(
@@ -364,6 +407,11 @@ class PraoLoop:
                                 fallback.adapter.act, intent.instruction
                             )
                             final_selection = fallback
+                            # M8 (SC-1): a fallback succeeding is a correction signal.
+                            correction_signal = (
+                                f"provider {selection.provider_name} failed; "
+                                f"fallback to {final_selection.provider_name} succeeded"
+                            )
 
                         if act_span is not None and final_selection is not selection:
                             # A fallback occurred -- overwrite with the ACTUAL outcome.
@@ -379,7 +427,40 @@ class PraoLoop:
                             self._observe.observe, result, run_state
                         )
 
+                # M8 (SC-1, SC-3): CAPTURE -- correction_signal set inside
+                # whichever ACT branch ran above; None on an ordinary clean
+                # cycle (no extra dispatch fires in that case).
+                if (
+                    correction_signal is None
+                    and run_state.cycle_count >= self._max_cycles
+                ):
+                    correction_signal = f"reached max cycles ({self._max_cycles}) without a terminal intent"
+
+                if correction_signal is not None:
+                    await self._capture_lesson(correction_signal, run_state)
+
                 if run_state.cycle_count >= self._max_cycles:
                     raise MaxCyclesExceededError(
                         f"max cycles ({self._max_cycles}) exceeded without terminal intent"
                     )
+
+    async def _capture_lesson(
+        self, correction_signal: str, run_state: RunState
+    ) -> None:
+        """M8 (SC-1): CAPTURE. Best-effort -- a failure here must never abort
+        the turn (the correction that triggered this has already succeeded
+        by the time this runs)."""
+        try:
+            selection = self._router.select_extraction_worker()
+            instruction = (
+                f"A correction occurred while handling this request: {correction_signal}\n"
+                f"Original request: {run_state.user_input}\n"
+                "In one concise sentence, state the lesson learned -- what to watch "
+                "for or do differently next time. Do not repeat the raw error text "
+                "verbatim; distill the actionable insight."
+            )
+            run_state.spawn_count += 1  # a real dispatch, no new phase span
+            lesson_text = await asyncio.to_thread(selection.adapter.act, instruction)
+            await self._memory.store(lesson_text, memory_type="lesson")
+        except Exception as exc:  # noqa: BLE001 -- best-effort, never propagates
+            _axiom_logger.warning("Self-correction CAPTURE failed (non-fatal): %s", exc)

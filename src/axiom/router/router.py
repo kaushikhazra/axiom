@@ -168,6 +168,26 @@ class Router:
             fallback_allowed=False,  # exactly one fallback hop, never chained
         )
 
+    def select_extraction_worker(self) -> WorkerSelection:
+        """M8: the cheapest configured provider, for internal system tasks
+        (self-correction lesson extraction) -- NOT user-facing ACT dispatch,
+        so RoutePolicy evaluation is deliberately bypassed entirely (unlike
+        select_worker()). Prefers "local"; falls back to whatever else is
+        configured if "local" isn't available.
+        """
+        provider_name = (
+            "local" if "local" in self._factories else next(iter(self._factories), None)
+        )
+        if provider_name is None or provider_name not in self._factories:
+            raise RouterError("no adapter factories configured for extraction")
+        adapter = self._get(provider_name)
+        return WorkerSelection(
+            adapter=adapter,
+            provider_name=provider_name,
+            control_level=adapter.control_level,
+            fallback_allowed=False,  # extraction failures are absorbed locally, not retried
+        )
+
     def select_committee(self, instruction: str) -> list[WorkerSelection] | None:
         """M7 (OR-2): returns None when committee mode doesn't apply for this
         instruction -- caller falls through to the existing select_worker()

@@ -156,10 +156,15 @@ if run_state.cycle_count >= self._max_cycles:
 
 `correction_signal: str | None = None` is (re-)declared at the top of the ACT-intent-handling section, immediately before the `committee = self._router.select_committee(...)` line — this section runs fresh on every loop iteration that processes an `ActIntent`, so `correction_signal` is freshly reset every time, never carried over from a prior cycle (including across a `USE_SKILL` cycle's `continue`, which skips this section entirely and loops back to `perceive()` without ever touching `correction_signal`). Set inside each branch (dryrun-design-1 W1 — reworded for clarity):
 
-- **Committee branch** (D5b): after the per-member dispatch loop, before the `if not any_succeeded: raise ...` check —
+- **Committee branch** (D5b): the per-member dispatch loop tracks the actual outcome of each member's `.act()` call in an `outcomes: list[bool]` (aligned by index with `committee`) — **not** a substring match on the already-formatted `parts` display text (dryrun-code-1 B1: a genuine success whose content happens to contain the literal word "FAILED" must never be misclassified as a failure). After the loop:
   ```python
-  failed_members = [m.provider_name for m, p in zip(committee, parts) if "FAILED" in p]
-  if failed_members and any_succeeded:  # partial failure -- full failure already raises separately
+  any_succeeded = any(outcomes)
+  if not any_succeeded:
+      raise AdapterError(f"all {len(committee)} committee members failed")
+  result = "\n".join(parts)
+
+  failed_members = [m.provider_name for m, ok in zip(committee, outcomes) if not ok]
+  if failed_members:  # partial failure -- full failure already raised above
       correction_signal = (
           f"committee member(s) {', '.join(failed_members)} failed; "
           f"{len(committee) - len(failed_members)} member(s) succeeded"

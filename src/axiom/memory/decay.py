@@ -7,6 +7,7 @@ STABILITY_BY_TYPE = {
     "procedural": 60.0,
     "identity": 365.0,
     "person": 90.0,
+    "lesson": 60.0,  # M8 -- distilled, durable knowledge, same class as procedural
 }
 
 
