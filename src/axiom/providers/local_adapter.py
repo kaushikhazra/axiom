@@ -150,6 +150,18 @@ class LocalAdapter(PraoAdapterBase):
         context string). The sentinel is stable: it is the only place this label is
         produced (providers/base.py perceive()). Any perceive() output that contains this
         label guarantees at least one act() result is in history.
+
+        M5 live-verification fix — skill-reactivation-loop forcing:
+        Live-CLI verification on --provider local (SK-7) found qwen-class local models
+        will repeatedly re-emit USE_SKILL for a skill that is already active — 10
+        consecutive USE_SKILL cycles observed for the same skill name in one run,
+        exhausting MAX_CYCLES without ever reaching ACT or RESPOND. FakeAdapter-based
+        unit tests (test_contracts.py) could not surface this: they script intents
+        directly rather than exercising an actual model's reasoning, so the dedup
+        check (design.md D6a) working correctly at the RunState level says nothing
+        about whether a real weak model actually stops requesting the skill again.
+        Same root cause and same fix shape as Defect-A: a plain informational
+        "[SKILL ALREADY ACTIVE]" note is not forceful enough for this model class.
         """
         # Defect-A: detect post-act context (history present) and prepend a strong
         # RESPOND-forcing framing block for qwen2.5:7b.
@@ -166,6 +178,26 @@ class LocalAdapter(PraoAdapterBase):
         # should act on," so the forcing is suppressed for that one cycle.
         _POST_ACT_SENTINEL = "[TOOL EXECUTION RESULTS"
         _SKILL_ACTIVATION_SENTINEL = "[SKILL ACTIVATION]"
+        _SKILL_ALREADY_ACTIVE_SENTINEL = "[SKILL ALREADY ACTIVE]"
+
+        framings: list[str] = []
+
+        if _SKILL_ALREADY_ACTIVE_SENTINEL in context:
+            # Live-verification fix (see docstring): stop the re-activation loop.
+            # [SKILL ALREADY ACTIVE] always appears inside a [SKILL ACTIVATION]
+            # section, so the Defect-A post-act block below is naturally
+            # suppressed too (its own _SKILL_ACTIVATION_SENTINEL check) --
+            # deliberately not stacked: post-act's "your ONLY valid response is
+            # RESPOND" would contradict this block's "choose ACT or RESPOND."
+            framings.append(
+                "SYSTEM INSTRUCTION (highest priority — read before anything else):\n"
+                "You already activated this skill — its full instructions are shown "
+                "above under [ACTIVE SKILL: ...]. Do NOT emit another USE_SKILL for "
+                "the same skill. Use its instructions now: choose ACT if you still "
+                "need more information, or RESPOND if you can already answer.\n"
+                "---\n\n"
+            )
+
         if _POST_ACT_SENTINEL in context and _SKILL_ACTIVATION_SENTINEL not in context:
             # Extract the act result(s) from the context for an explicit summary.
             # The perceive() format is:
@@ -174,7 +206,7 @@ class LocalAdapter(PraoAdapterBase):
             #   ...
             #   [NOTE: ...]
             # We reproduce it verbatim in the framing — no re-parsing needed.
-            framing = (
+            framings.append(
                 "SYSTEM INSTRUCTION (highest priority — read before anything else):\n"
                 "The executor has ALREADY completed the delegated task. The tool "
                 "execution results shown below are the REAL, FINAL output of that "
@@ -183,9 +215,8 @@ class LocalAdapter(PraoAdapterBase):
                 "Do NOT issue another ACT. The task is done. Surface the result now.\n"
                 "---\n\n"
             )
-            augmented_context = framing + context
-        else:
-            augmented_context = context
+
+        augmented_context = "".join(framings) + context
 
         raw_text, input_tokens, output_tokens = self._query_model(augmented_context)
         # M2: populate gen_ai attrs after model call; tokens from ChatMessage.token_usage.

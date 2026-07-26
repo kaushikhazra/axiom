@@ -324,6 +324,53 @@ class TestLocalAdapterReason:
         sent_text = call_args[0][0][0]["content"][0]["text"]
         assert "SYSTEM INSTRUCTION (highest priority" in sent_text
 
+    def test_framing_block_prepended_for_already_active_skill(self) -> None:
+        """Live-CLI verification (SK-7) regression: a real local model repeatedly
+        re-emitted USE_SKILL for an already-active skill and exhausted MAX_CYCLES.
+        A [SKILL ALREADY ACTIVE] note must trigger a hard forcing block telling
+        the model to stop re-requesting and use ACT/RESPOND instead."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "RESPOND", "text": "done"}'
+        )
+        already_active_context = (
+            "[PERSONA]\nTest persona\n\n"
+            "[ACTIVE SKILL: csv-summarizer]\nStep 1: read the CSV.\n\n"
+            "[SKILL ACTIVATION]\n[SKILL ALREADY ACTIVE] csv-summarizer\n\n"
+            "[CURRENT REQUEST]\nSummarize the csv"
+        )
+        adapter.reason(already_active_context)
+        call_args = mock_model.call_args
+        sent_text = call_args[0][0][0]["content"][0]["text"]
+        assert "SYSTEM INSTRUCTION (highest priority" in sent_text
+        assert "Do NOT emit another USE_SKILL" in sent_text
+
+    def test_already_active_forcing_does_not_stack_with_contradictory_post_act_forcing(
+        self,
+    ) -> None:
+        """Both sentinels can co-occur (an earlier ACT, then a re-requested
+        already-active skill in the same run). The post-act block's "your
+        ONLY valid response is RESPOND, do NOT ACT" instruction would
+        contradict the already-active block's "choose ACT or RESPOND" --
+        so only the already-active framing fires, matching the existing
+        [SKILL ACTIVATION]-suppresses-post-act rule (dryrun-code-1 B2)."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "RESPOND", "text": "done"}'
+        )
+        both_context = (
+            "[PERSONA]\nTest persona\n\n"
+            "[TOOL EXECUTION RESULTS — read these carefully]\n"
+            "Step 1: file1.csv\n\n"
+            "[SKILL ACTIVATION]\n[SKILL ALREADY ACTIVE] csv-summarizer\n\n"
+            "[CURRENT REQUEST]\nSummarize the csv"
+        )
+        adapter.reason(both_context)
+        call_args = mock_model.call_args
+        sent_text = call_args[0][0][0]["content"][0]["text"]
+        assert "Do NOT emit another USE_SKILL" in sent_text
+        assert "The executor has ALREADY completed the delegated task" not in sent_text
+
     def test_post_act_context_returns_respond_intent(self) -> None:
         """Defect-A integration: reason() returns RESPOND when history is present
         and model correctly returns RESPOND intent (main scenario for loop termination)."""
