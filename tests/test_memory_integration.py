@@ -261,7 +261,7 @@ class TestTurnIndexMonotonic:
         # Use mock ports so we don't need a real Claude adapter
         from axiom.interfaces import RespondIntent
         from axiom.loop import PraoLoop
-        from tests.fake_adapter import FakeSkills
+        from tests.fake_adapter import FakeRouter, FakeSkills
 
         units_appended: list[ConversationUnit] = []
 
@@ -293,10 +293,10 @@ class TestTurnIndexMonotonic:
         loop = PraoLoop(
             perceive=_FakePerceive(),
             reason=_FakeReason(),
-            act=None,
             observe=None,
             memory=_FakeMemory(),
             skills=FakeSkills(),
+            router=FakeRouter(),
         )
 
         loop.run("turn one")
@@ -460,7 +460,7 @@ class TestLoopEpisodicStorePersists:
         """(a) After a RespondIntent turn, loop calls store() with episodic type."""
         from axiom.interfaces import RespondIntent
         from axiom.loop import PraoLoop
-        from tests.fake_adapter import FakeMemory, FakeSkills
+        from tests.fake_adapter import FakeMemory, FakeRouter, FakeSkills
 
         memory = FakeMemory()
 
@@ -475,10 +475,10 @@ class TestLoopEpisodicStorePersists:
         loop = PraoLoop(
             perceive=_FakePerceive(),
             reason=_FakeReason(),
-            act=None,
             observe=None,
             memory=memory,
             skills=FakeSkills(),
+            router=FakeRouter(),
         )
 
         loop.run("What is the capital of France?")
@@ -502,7 +502,7 @@ class TestLoopEpisodicStorePersists:
         """FinishIntent produces no agent text — loop skips store()."""
         from axiom.interfaces import FinishIntent
         from axiom.loop import PraoLoop
-        from tests.fake_adapter import FakeMemory, FakeSkills
+        from tests.fake_adapter import FakeMemory, FakeRouter, FakeSkills
 
         memory = FakeMemory()
 
@@ -517,10 +517,10 @@ class TestLoopEpisodicStorePersists:
         loop = PraoLoop(
             perceive=_FakePerceive(),
             reason=_FakeReason(),
-            act=None,
             observe=None,
             memory=memory,
             skills=FakeSkills(),
+            router=FakeRouter(),
         )
 
         loop.run("goodbye")
@@ -533,7 +533,7 @@ class TestLoopEpisodicStorePersists:
         """(b) Real adapter: exchange stored by loop is retrievable in a fresh adapter."""
         from axiom.interfaces import RespondIntent
         from axiom.loop import PraoLoop
-        from tests.fake_adapter import FakeSkills
+        from tests.fake_adapter import FakeRouter, FakeSkills
 
         with tempfile.TemporaryDirectory() as td:
             db_path = os.path.join(td, "test_loop_store.surrealkv")
@@ -573,10 +573,10 @@ class TestLoopEpisodicStorePersists:
             loop = PraoLoop(
                 perceive=_FakePerceive(),
                 reason=_FakeReason(),
-                act=None,
                 observe=None,
                 memory=_RecordingMemory(),
                 skills=FakeSkills(),
+                router=FakeRouter(),
             )
 
             loop.run("What is Kaushik's code review preference?")

@@ -285,6 +285,8 @@ class ClaudeAdapter(PraoAdapterBase):
     reason() and act() are implemented here using the Claude SDK.
     """
 
+    control_level: str = "KIND_B"  # M6 RT-7: provider owns the loop, pre-run scope only
+
     def __init__(
         self, persona: str, allowed_tools: list[str], gate: GuardrailsGate
     ) -> None:

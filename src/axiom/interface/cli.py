@@ -28,8 +28,12 @@ def main() -> None:
     parser.add_argument(
         "--provider",
         choices=["claude", "local"],
-        default="claude",
-        help="Provider adapter: 'claude' (default, cloud) or 'local' (Ollama via LiteLLM)",
+        default=None,
+        help=(
+            "Provider adapter: 'claude' (cloud) or 'local' (Ollama via LiteLLM). "
+            "Forces that provider for the whole session, bypassing the Router's "
+            "policy engine. Omit to let the Router decide (M6 default)."
+        ),
     )
     parser.add_argument(
         "--ollama-host",

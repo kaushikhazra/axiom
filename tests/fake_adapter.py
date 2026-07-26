@@ -20,6 +20,7 @@ from axiom.interfaces import (
     RespondIntent,
     RunState,
 )
+from axiom.router.router import WorkerSelection
 from axiom.skills.port import SkillContent, SkillNotFoundError, SkillSpec
 
 
@@ -33,6 +34,9 @@ class FakeAdapter:
                      When exhausted, returns "[FAKE] act result".
         raise_on_reason: If True, reason() raises AdapterError on the first call
                          (for error-propagation tests).
+        raise_on_act: If True, every act() call raises AdapterError (M6: for
+                      RT-9 fallback tests -- pair with a second, healthy
+                      FakeAdapter as the fallback worker).
     """
 
     def __init__(
@@ -40,10 +44,12 @@ class FakeAdapter:
         intents: list[Intent] | None = None,
         act_results: list[str] | None = None,
         raise_on_reason: bool = False,
+        raise_on_act: bool = False,
     ) -> None:
         self._intents: deque[Intent] = deque(intents or [])
         self._act_results: deque[str] = deque(act_results or [])
         self._raise_on_reason = raise_on_reason
+        self._raise_on_act = raise_on_act
 
         # Call-tracking lists for test assertions
         self.perceive_calls: list[RunState] = []
@@ -80,6 +86,8 @@ class FakeAdapter:
 
     def act(self, instruction: str) -> str:
         self.act_calls.append(instruction)
+        if self._raise_on_act:
+            raise AdapterError("fake adapter act error")
         if self._act_results:
             return self._act_results.popleft()
         return "[FAKE] act result"
@@ -177,3 +185,52 @@ class FakeSkills:
             for c in self._skills.values()
             if q in c.name.lower() or q in c.description.lower()
         ]
+
+
+class FakeRouter:
+    """In-memory stub satisfying the Router surface loop.py consumes -- for
+    tests that wire PraoLoop directly without a real Router.
+
+    Args:
+        default_worker: WorkerSelection returned by select_worker() when
+                         worker_selections is exhausted/not provided --
+                         defaults to a fixed FakeAdapter-backed selection so
+                         a bare FakeRouter() is usable with no configuration.
+        worker_selections: Scripted sequence of WorkerSelection objects
+                            returned from select_worker() in order (mirrors
+                            FakeAdapter's `intents` pattern) -- lets a test
+                            script different providers per ACT cycle (RT-3).
+        fallback_selection: WorkerSelection (or None) returned by
+                             select_fallback_worker() -- None means "no
+                             fallback available" (RT-9's propagate-original-
+                             error path).
+    """
+
+    def __init__(
+        self,
+        default_worker: object | None = None,
+        worker_selections: list[WorkerSelection] | None = None,
+        fallback_selection: WorkerSelection | None = None,
+    ) -> None:
+        adapter = default_worker if default_worker is not None else FakeAdapter()
+        self._default_selection = WorkerSelection(
+            adapter=adapter,
+            provider_name="fake",
+            control_level="KIND_A",
+            fallback_allowed=True,
+        )
+        self._worker_selections: deque[WorkerSelection] = deque(worker_selections or [])
+        self._fallback_selection = fallback_selection
+
+        self.select_worker_calls: list[str] = []
+        self.select_fallback_worker_calls: list[str] = []
+
+    def select_worker(self, instruction: str) -> WorkerSelection:
+        self.select_worker_calls.append(instruction)
+        if self._worker_selections:
+            return self._worker_selections.popleft()
+        return self._default_selection
+
+    def select_fallback_worker(self, excluded_provider: str) -> WorkerSelection | None:
+        self.select_fallback_worker_calls.append(excluded_provider)
+        return self._fallback_selection
