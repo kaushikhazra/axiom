@@ -27,12 +27,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=["claude", "local"],
+        choices=["claude", "local", "committee"],
         default=None,
         help=(
-            "Provider adapter: 'claude' (cloud) or 'local' (Ollama via LiteLLM). "
-            "Forces that provider for the whole session, bypassing the Router's "
-            "policy engine. Omit to let the Router decide (M6 default)."
+            "Provider adapter: 'claude' (cloud), 'local' (Ollama via LiteLLM), or "
+            "'committee' (M7 -- dispatch every ACT to all configured providers, "
+            "synthesized by the next Reason cycle). Forces that mode for the "
+            "whole session, bypassing the Router's policy engine. Omit to let "
+            "the Router decide (M6 default)."
         ),
     )
     parser.add_argument(

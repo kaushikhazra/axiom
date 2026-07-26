@@ -11,7 +11,12 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-from axiom.router.policy import RoutePolicy, RoutingDecision, evaluate
+from axiom.router.policy import (
+    RoutePolicy,
+    RoutingDecision,
+    evaluate,
+    should_form_committee,
+)
 
 logger = logging.getLogger("axiom.router")
 
@@ -87,8 +92,11 @@ class Router:
         single-call itself (no hidden state machine), but stores the chosen
         provider so select_worker()'s CONDUCTOR_DEFAULT fallthrough can
         resolve against it."""
+        conductor_override = (
+            self._forced_provider if self._forced_provider != "committee" else None
+        )  # M7: "committee" only ever selects Workers, never the Conductor
         provider_name = (
-            self._forced_provider or "claude"
+            conductor_override or "claude"
         )  # RT-2: capability-preferred default
         self._conductor_provider = provider_name
         return self._get(provider_name)
@@ -159,3 +167,35 @@ class Router:
             control_level=adapter.control_level,
             fallback_allowed=False,  # exactly one fallback hop, never chained
         )
+
+    def select_committee(self, instruction: str) -> list[WorkerSelection] | None:
+        """M7 (OR-2): returns None when committee mode doesn't apply for this
+        instruction -- caller falls through to the existing select_worker()
+        single-dispatch path (M6, unmodified) in that case. When it applies,
+        returns one WorkerSelection per configured adapter, capped by
+        max_committee_size, in adapter_factories' insertion order (deterministic).
+        """
+        if not should_form_committee(instruction, self._policy, self._forced_provider):
+            return None
+
+        cap = self._policy.max_committee_size
+        effective_cap = (
+            min(cap, len(self._factories)) if cap is not None else len(self._factories)
+        )
+        member_names = list(self._factories)[:effective_cap]
+        logger.debug(
+            "[ROUTER_%s] %s", RoutingDecision.CONSORTIUM.upper(), ",".join(member_names)
+        )
+
+        selections: list[WorkerSelection] = []
+        for provider_name in member_names:
+            adapter = self._get(provider_name)
+            selections.append(
+                WorkerSelection(
+                    adapter=adapter,
+                    provider_name=provider_name,
+                    control_level=adapter.control_level,
+                    fallback_allowed=False,  # OR-7: committee members are never fallback-eligible
+                )
+            )
+        return selections

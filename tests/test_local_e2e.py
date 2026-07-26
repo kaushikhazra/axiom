@@ -30,7 +30,10 @@ from axiom.agent import Agent
 from axiom.loop import PraoLoop
 from axiom.observability import timing
 from axiom.providers.local_adapter import LocalAdapter
+from axiom.router.policy import RoutePolicy
+from axiom.router.router import Router
 from axiom.skills.registry import SkillsRegistry
+from tests.fake_adapter import FakeMemory
 
 # ---------------------------------------------------------------------------
 # Prerequisite checks — evaluated once at module load (collection) time.

@@ -704,3 +704,262 @@ class TestActSpanRoutingAttributes:
         calls = {c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list}
         assert calls["axiom.control_level"] == "KIND_B"
         assert calls["axiom.router.provider"] == "claude"
+
+
+class TestCommitteeDispatch:
+    """M7 (OR-3, OR-4, OR-6, OR-7): committee dispatch — same instruction to
+    every member, combined-result synthesis via the existing observe() call,
+    per-slot failure tolerance, no fallback substitution."""
+
+    def test_same_instruction_dispatched_to_every_member(self) -> None:
+        claude_adapter = FakeAdapter(act_results=["claude result"])
+        local_adapter = FakeAdapter(act_results=["local result"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=claude_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=local_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        text, _state = loop.run("go")
+        assert text == "done"
+        assert claude_adapter.act_calls == ["do x"]
+        assert local_adapter.act_calls == ["do x"]
+
+    def test_each_member_result_captured_independently_no_overwrite(self) -> None:
+        claude_adapter = FakeAdapter(act_results=["claude answer"])
+        local_adapter = FakeAdapter(act_results=["local answer"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=claude_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=local_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        loop.run("go")
+        # OR-4: one combined observe() call, both members' results present,
+        # provider-attributed.
+        assert len(conductor_adapter.observe_calls) == 1
+        combined_result, _run_state = conductor_adapter.observe_calls[0]
+        assert "[claude]: claude answer" in combined_result
+        assert "[local]: local answer" in combined_result
+
+    def test_combined_result_reaches_history_via_existing_observe(self) -> None:
+        claude_adapter = FakeAdapter(act_results=["claude answer"])
+        local_adapter = FakeAdapter(act_results=["local answer"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=claude_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=local_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        _text, state = loop.run("go")
+        assert any("claude answer" in h and "local answer" in h for h in state.history)
+
+    def test_one_member_failing_does_not_abort_the_cycle(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["local answer"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=failing_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=healthy_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        text, state = loop.run("go")
+        assert text == "done"  # cycle completed despite one failure
+        combined_result, _run_state = conductor_adapter.observe_calls[0]
+        assert "[claude]: FAILED" in combined_result
+        assert "[local]: local answer" in combined_result
+
+    def test_all_members_failing_raises_adapter_error(self) -> None:
+        failing_1 = FakeAdapter(raise_on_act=True)
+        failing_2 = FakeAdapter(raise_on_act=True)
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=failing_1,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=failing_2,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(intents=[ActIntent(instruction="do x")])
+        loop = _make_loop(conductor_adapter, router=router)
+        with pytest.raises(AdapterError, match="all 2 committee members failed"):
+            loop.run("go")
+
+    def test_select_fallback_worker_never_called_from_committee_path(self) -> None:
+        """OR-7: even with a failing member, the committee path must not
+        reach for Router.select_fallback_worker() -- that mechanism is
+        exclusively single-provider-dispatch."""
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["local answer"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=failing_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=healthy_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        loop.run("go")
+        assert router.select_fallback_worker_calls == []
+
+    def test_spawn_count_increments_by_committee_size(self) -> None:
+        claude_adapter = FakeAdapter(act_results=["claude answer"])
+        local_adapter = FakeAdapter(act_results=["local answer"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=claude_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=local_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        _text, state = loop.run("go")
+        # 1 reason (ActIntent) + 1 reason (final RESPOND) + 2 committee dispatches = 4.
+        assert state.spawn_count == 4
+
+    def test_act_span_carries_committee_size_and_providers(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        mock_span = MagicMock()
+
+        class _FakeRecordPhaseCM:
+            def __enter__(self):
+                return mock_span
+
+            def __exit__(self, *exc):
+                return False
+
+        claude_adapter = FakeAdapter(act_results=["claude answer"])
+        local_adapter = FakeAdapter(act_results=["local answer"])
+        router = FakeRouter(
+            committee_selections=[
+                [
+                    WorkerSelection(
+                        adapter=claude_adapter,
+                        provider_name="claude",
+                        control_level="KIND_B",
+                        fallback_allowed=False,
+                    ),
+                    WorkerSelection(
+                        adapter=local_adapter,
+                        provider_name="local",
+                        control_level="KIND_A",
+                        fallback_allowed=False,
+                    ),
+                ]
+            ]
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        with patch(
+            "axiom.observability.record.record_phase",
+            return_value=_FakeRecordPhaseCM(),
+        ):
+            loop = _make_loop(conductor_adapter, router=router)
+            loop.run("go", run_id="fake-run-id", provider_kind="KIND_B")
+        calls = {c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list}
+        assert calls["axiom.router.committee_size"] == 2
+        assert calls["axiom.router.providers"] == "claude,local"

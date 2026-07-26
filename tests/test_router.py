@@ -209,3 +209,106 @@ class TestSelectFallbackWorker:
         assert local_calls == [1]
         router.select_fallback_worker("claude")  # should reuse cached local
         assert local_calls == [1]  # not reconstructed
+
+
+class TestSelectConductorCommitteeGuard:
+    def test_forced_committee_does_not_leak_into_conductor_selection(self) -> None:
+        """dryrun-design-1 C1: "committee" must never be used as a literal
+        provider name for the Conductor -- it degrades to the capability-
+        preferred default ("claude"), same as no override at all."""
+        router = Router(RoutePolicy(), _factories([], []), forced_provider="committee")
+        adapter = router.select_conductor()
+        assert adapter.control_level == "KIND_B"
+        assert router.conductor_provider == "claude"
+
+
+class TestSelectCommittee:
+    def test_returns_none_when_not_triggered(self) -> None:
+        router = Router(RoutePolicy(), _factories([], []))
+        router.select_conductor()
+        assert router.select_committee("anything") is None
+
+    def test_forced_committee_returns_one_selection_per_configured_adapter(
+        self,
+    ) -> None:
+        router = Router(RoutePolicy(), _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        committee = router.select_committee("anything")
+        assert committee is not None
+        assert {s.provider_name for s in committee} == {"claude", "local"}
+        assert all(s.fallback_allowed is False for s in committee)
+
+    def test_consortium_pattern_match_returns_committee(self) -> None:
+        policy = RoutePolicy(consortium_patterns=["*second opinion*"])
+        router = Router(policy, _factories([], []))
+        router.select_conductor()
+        committee = router.select_committee("get a second opinion")
+        assert committee is not None
+        assert len(committee) == 2
+
+    def test_members_have_real_distinct_control_levels(self) -> None:
+        router = Router(RoutePolicy(), _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        committee = router.select_committee("anything")
+        control_levels = {s.provider_name: s.control_level for s in committee}
+        assert control_levels == {"claude": "KIND_B", "local": "KIND_A"}
+
+    def test_capped_by_max_committee_size(self) -> None:
+        policy = RoutePolicy(max_committee_size=1)
+        router = Router(policy, _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        committee = router.select_committee("anything")
+        assert len(committee) == 1
+
+    def test_cap_never_exceeds_configured_adapter_count(self) -> None:
+        """A generous cap larger than what's actually configured must not
+        over-select -- effective_cap is min(cap, len(factories))."""
+        policy = RoutePolicy(max_committee_size=10)
+        router = Router(policy, _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        committee = router.select_committee("anything")
+        assert len(committee) == 2
+
+    def test_default_cap_is_the_configured_adapter_count(self) -> None:
+        """max_committee_size=None (default) -- no explicit cap configured,
+        resolves to len(adapter_factories) -- a no-op cap in today's 2-provider
+        world (OR-8)."""
+        router = Router(RoutePolicy(), _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        committee = router.select_committee("anything")
+        assert len(committee) == 2
+
+    def test_membership_order_is_deterministic_insertion_order(self) -> None:
+        policy = RoutePolicy(max_committee_size=1)
+        router = Router(policy, _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        committee = router.select_committee("anything")
+        assert committee[0].provider_name == "claude"  # first key in _factories()
+
+    def test_single_provider_override_returns_none_even_with_consortium_pattern(
+        self,
+    ) -> None:
+        policy = RoutePolicy(consortium_patterns=["*"])  # would match everything
+        router = Router(policy, _factories([], []), forced_provider="claude")
+        router.select_conductor()
+        assert router.select_committee("anything") is None
+
+    def test_privacy_match_returns_none_even_with_forced_committee(self) -> None:
+        policy = RoutePolicy(privacy_patterns=["*secret*"])
+        router = Router(policy, _factories([], []), forced_provider="committee")
+        router.select_conductor()
+        assert router.select_committee("a secret file") is None
+
+    def test_reuses_cached_adapters_already_constructed(self) -> None:
+        claude_calls: list = []
+        local_calls: list = []
+        router = Router(
+            RoutePolicy(),
+            _factories(claude_calls, local_calls),
+            forced_provider="committee",
+        )
+        router.select_conductor()  # constructs claude
+        assert claude_calls == [1]
+        router.select_committee("anything")
+        assert claude_calls == [1]  # not reconstructed
+        assert local_calls == [1]  # constructed exactly once

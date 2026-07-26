@@ -5,7 +5,12 @@ Unit tests for axiom.router.policy -- evaluate() precedence: privacy (RT-4)
 
 from __future__ import annotations
 
-from axiom.router.policy import RoutePolicy, RoutingDecision, evaluate
+from axiom.router.policy import (
+    RoutePolicy,
+    RoutingDecision,
+    evaluate,
+    should_form_committee,
+)
 
 
 class TestPrivacyOnly:
@@ -128,3 +133,57 @@ class TestPatternMatching:
         assert (
             reason == RoutingDecision.BULK_DEFAULT
         )  # falls through, not privacy/capability
+
+
+class TestShouldFormCommittee:
+    """M7 (OR-1, OR-2, OR-5) -- precedence: single-provider override > privacy
+    > explicit committee override > consortium_patterns match."""
+
+    def test_no_trigger_returns_false(self) -> None:
+        policy = RoutePolicy()
+        assert should_form_committee("anything", policy, None) is False
+
+    def test_explicit_committee_override_triggers(self) -> None:
+        policy = RoutePolicy()
+        assert should_form_committee("anything", policy, "committee") is True
+
+    def test_consortium_pattern_match_triggers(self) -> None:
+        policy = RoutePolicy(consortium_patterns=["*second opinion*"])
+        assert (
+            should_form_committee("get a second opinion on this", policy, None) is True
+        )
+
+    def test_no_consortium_pattern_match_does_not_trigger(self) -> None:
+        policy = RoutePolicy(consortium_patterns=["*second opinion*"])
+        assert should_form_committee("just do the task", policy, None) is False
+
+    def test_single_provider_override_beats_consortium_pattern(self) -> None:
+        """A user who forced --provider claude wants exactly one provider --
+        an incidental consortium_patterns match must not override that."""
+        policy = RoutePolicy(consortium_patterns=["*second opinion*"])
+        assert (
+            should_form_committee("get a second opinion on this", policy, "claude")
+            is False
+        )
+
+    def test_single_provider_override_beats_explicit_committee_flag_too(self) -> None:
+        """forced_provider is only ever one string -- "claude"/"local" and
+        "committee" are mutually exclusive by construction, but this proves
+        the precedence check itself, not just the config surface."""
+        policy = RoutePolicy()
+        assert should_form_committee("anything", policy, "local") is False
+
+    def test_privacy_beats_explicit_committee_override(self) -> None:
+        """OR-5: privacy is absolute, even over an explicit committee override."""
+        policy = RoutePolicy(privacy_patterns=["*secret*"])
+        assert should_form_committee("a secret file", policy, "committee") is False
+
+    def test_privacy_beats_consortium_pattern_match(self) -> None:
+        policy = RoutePolicy(
+            privacy_patterns=["*secret*"], consortium_patterns=["*secret*"]
+        )
+        assert should_form_committee("a secret file", policy, None) is False
+
+    def test_no_privacy_match_and_committee_override_triggers(self) -> None:
+        policy = RoutePolicy(privacy_patterns=["*secret*"])
+        assert should_form_committee("a public file", policy, "committee") is True
