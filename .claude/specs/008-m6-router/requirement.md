@@ -38,7 +38,7 @@ M6 replaces the M1-era Router stub — a single CLI flag (`provider="claude"|"lo
 - `axiom/router/router.py` defines a `Router` class. `axiom/router/policy.py` defines the declarative policy rule types (RT-4/RT-5/RT-6's shapes).
 - `Router` imports only `axiom.interfaces`-level concepts and the provider adapter classes it selects between — it does not import `axiom.loop` (mirrors the existing import-boundary discipline `loop.py` itself already documents for its own dependencies).
 - `agent.py`'s `Agent.__init__` constructs a `Router` and asks it for the Conductor adapter once; `PraoLoop`'s Act-phase dispatch (or an adapter-selecting wrapper around it) asks the Router for the Worker adapter each cycle — `agent.py` no longer contains provider-selection `if`/`elif` branching itself (that logic moves into `Router`).
-- **[behavioral]** Running `axiom-cli` with no provider-forcing flags at all completes a normal turn successfully (proving `Router`'s default policy path is reachable end-to-end through the real CLI, not just constructible in a unit test).
+- **[behavioral]** Running `axiom-cli` with no `--provider` flag at all completes a normal turn successfully, and `--observe`'s trace shows the ACT phase actually went through policy evaluation rather than an override (e.g. `axiom.router.provider` reflects RT-5's bulk-default rule for a short instruction) — proving `Router`'s default policy path is genuinely reachable end-to-end through the real CLI, not merely indistinguishable from `--provider claude` being forced (dryrun-design-1 C1).
 
 ---
 

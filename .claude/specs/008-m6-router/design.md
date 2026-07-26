@@ -30,6 +30,9 @@ Both of these directly conflict with RT-3 (Worker re-selected per ACT dispatch, 
 | D7 | `_maybe_record()` (`loop.py`) gains an `extra_attributes: dict \| None` passthrough to `record_phase()`, which already accepts one — no signature change needed on `record_phase()` itself. | `record_phase()` (`observability/record.py`) already has `extra_attributes` in its signature, unused by `loop.py` today. RT-7's `axiom.control_level` attribute threads through this existing, already-built mechanism — zero new observability surface needed. |
 | D8 | RT-9's fallback wraps the **loop's** Act-phase dispatch (a `try/except AdapterError` around `worker.act()`, retrying via `router.select_fallback_worker()`), not something inside `Router.select_worker()` itself. | `select_worker()` is a pure selection decision (given inputs, which provider); *retrying after a failure* is a control-flow concern that belongs where the actual dispatch and its exception happen — the loop, matching how `MaxCyclesExceededError` and `AdapterError` propagation are already loop-owned concerns (D1 in the original M1 design, unchanged). |
 | D9 | `Router.select_fallback_worker(excluded_provider: str)` returns the other of exactly the two known providers — no N-provider ranking logic. | `requirement.md` Out of Scope: "retry beyond one fallback attempt," and only two adapters exist today (per Purpose section — a third true-API adapter is a later, unlocked milestone tech choice). A 2-provider "give me the other one" function is honest about current scope; a general N-provider ranking algorithm would be speculative for adapters that don't exist yet. |
+| D10 | **(Added after dryrun-design-1, C1)** `cli.py`'s `--provider` flag drops its `default="claude"` (stays optional, `choices=["claude","local"]`, no default — `args.provider` is `None` when omitted). `Agent.__init__`'s `provider` parameter changes from `provider: str = "claude"` to `provider: str \| None = None`. `forced_provider = provider` directly (no `in (...)` guard needed — `choices=` already constrains the two non-`None` values on the CLI side). | dryrun-design-1 C1: with the old `default="claude"`, "no `--provider` flag" and "`--provider claude`" were indistinguishable, so `Router`'s override-bypass branch fired on every real invocation and the entire policy engine (RT-4/5/6) was unreachable from the real CLI. `None` now genuinely means "no preference, let policy decide" — restoring RT-8's own AC scope ("preserves the pre-M6 CLI contract... for existing **explicit**-provider usage") to what it always meant: unchanged behavior only when a provider *is* named. |
+| D11 | **(Added after dryrun-design-1, C2)** `_maybe_record()` yields the underlying `Span` (mirroring `record_phase()`'s own `Generator[Span, None, None]`, previously discarded). The ACT branch sets `axiom.control_level`/`axiom.router.provider` on that span **after** the dispatch (primary or fallback) actually completes, not via `extra_attributes` computed at `with`-entry. | dryrun-design-1 C2: `extra_attributes` computed once from the pre-fallback `selection` meant a successful fallback still reported the *failed* provider's `control_level`/`provider_name` in the trace — a genuine observability lie on exactly the path RT-9 exists to handle gracefully. |
+| D12 | **(Added after dryrun-design-1, C3)** `run_state.spawn_count` is incremented a second time in the fallback branch, immediately before `fallback.adapter.act(...)`. | dryrun-design-1 C3: a fallback dispatch is a second loop-dispatched provider call by `spawn_count`'s own documented contract ("loop-dispatched query() calls") — the original design counted only the primary attempt, undercounting by one on every successful fallback. Same contract-drift issue class M5's dryrun-code-2 W1 already caught once (there: overcounting; here: undercounting). |
 
 ---
 
@@ -297,7 +300,7 @@ def __init__(
     ...
 ```
 
-`_maybe_record()` gains the `extra_attributes` passthrough (D7):
+`_maybe_record()` gains the `extra_attributes` passthrough (D7) **and now yields the `Span`** (D11 — was previously `yield` with no value, discarding `record_phase()`'s own yielded span):
 
 ```python
 @contextmanager
@@ -306,19 +309,19 @@ def _maybe_record(
     run_id: str | None,
     provider_kind: str,
     extra_attributes: dict | None = None,
-) -> Generator[None, None, None]:
+) -> Generator["Span | None", None, None]:
     if run_id is None:
-        yield
+        yield None
         return
     from axiom.observability.record import record_phase  # noqa: PLC0415
     with record_phase(
         phase=phase, run_id=run_id, provider_kind=provider_kind,
         extra_attributes=extra_attributes,
-    ):
-        yield
+    ) as span:
+        yield span
 ```
 
-The ACT branch (previously `with _maybe_record("act", run_id, provider_kind): result = await asyncio.to_thread(self._act.act, intent.instruction)`) becomes Router-driven, with RT-9's single-hop fallback:
+The ACT branch (previously `with _maybe_record("act", run_id, provider_kind): result = await asyncio.to_thread(self._act.act, intent.instruction)`) becomes Router-driven, with RT-9's single-hop fallback. Per D11/D12, the span's routing attributes are set **after** dispatch completes (reflecting whichever provider actually produced `result`), and `spawn_count` increments once per actual dispatch attempt:
 
 ```python
 # intent == ACT
@@ -326,29 +329,30 @@ if not isinstance(intent, ActIntent):
     raise TypeError(...)
 
 selection = self._router.select_worker(intent.instruction)
-with _maybe_record(
-    "act", run_id, provider_kind,
-    extra_attributes={
-        "axiom.control_level": selection.control_level,
-        "axiom.router.provider": selection.provider_name,
-    },
-):
+with _maybe_record("act", run_id, provider_kind) as act_span:
     run_state.spawn_count += 1
     try:
         result = await asyncio.to_thread(selection.adapter.act, intent.instruction)
+        final_selection = selection
     except AdapterError:
         if not selection.fallback_allowed:
             raise
         fallback = self._router.select_fallback_worker(selection.provider_name)
         if fallback is None:
             raise
+        run_state.spawn_count += 1  # D12: fallback is a second loop-dispatched call
         result = await asyncio.to_thread(fallback.adapter.act, intent.instruction)
+        final_selection = fallback
+
+    if act_span is not None:  # D11: set attrs from whichever selection actually ran
+        act_span.set_attribute("axiom.control_level", final_selection.control_level)
+        act_span.set_attribute("axiom.router.provider", final_selection.provider_name)
 
 with _maybe_record("observe", run_id, provider_kind):
     run_state = await asyncio.to_thread(self._observe.observe, result, run_state)
 ```
 
-**Note on `provider_kind` (the pre-existing, session-wide parameter):** left unchanged in meaning — it continues to label the *Conductor's* control-level for the run-level and reason/perceive/observe spans (those all still run on the fixed Conductor adapter, D1). Only the `act` span additionally carries the per-dispatch `axiom.control_level`/`axiom.router.provider` attributes, which may legitimately differ from the run's `provider_kind` when the Worker differs from the Conductor (RT-3). This is not a rename or a breaking change to `provider_kind`'s existing meaning — it's an additive, more granular attribute alongside it.
+**Note on `provider_kind` (the pre-existing, session-wide parameter):** left unchanged in meaning — it continues to label the *Conductor's* control-level for the run-level and reason/perceive/observe spans (those all still run on the fixed Conductor adapter, D1). Only the `act` span additionally carries the per-dispatch `axiom.control_level`/`axiom.router.provider` attributes (now correctly reflecting the *actual* dispatch, D11), which may legitimately differ from the run's `provider_kind` when the Worker differs from the Conductor (RT-3). This is not a rename or a breaking change to `provider_kind`'s existing meaning — it's an additive, more granular attribute alongside it.
 
 ---
 
@@ -373,10 +377,17 @@ def _make_local_adapter(
     return LocalAdapter(persona=persona_text, working_dir=working_dir, gate=gate, **kwargs)
 
 # inside Agent.__init__, replacing the existing if/elif block:
-forced_provider = provider if provider in ("claude", "local") else None
-# NOTE: Agent's `provider` constructor param keeps its pre-M6 meaning exactly
-# (RT-8's AC: "must not be a breaking change") -- when passed, it now maps to
-# Router's forced_provider instead of directly picking an adapter.
+# D10 (dryrun-design-1 C1 fix): `provider` defaults to None now, not "claude"
+# -- Agent.__init__ signature changes to `provider: str | None = None`, and
+# cli.py's --provider argparse flag drops its `default="claude"` to match.
+# Without this, "no --provider flag" and "--provider claude" were
+# indistinguishable, and Router's override-bypass branch fired on every real
+# invocation -- the entire policy engine (RT-4/5/6) was unreachable.
+forced_provider = provider  # None means "no preference, let policy decide" (RT-4/5/6 active)
+# NOTE: when explicitly passed ("claude" or "local"), this keeps the pre-M6
+# CLI contract exactly (RT-8's AC) -- it now maps to Router's forced_provider
+# instead of directly picking an adapter, but the observable behavior for an
+# explicit choice is unchanged.
 
 router = Router(
     policy=RoutePolicy(),  # default policy (empty patterns, 200-char bulk threshold) -- RT-4/5/6 patterns are a future config surface (Out of Scope: --router-config)
@@ -424,7 +435,8 @@ self._loop = PraoLoop(
 | `src/axiom/providers/claude_adapter.py` | Add `control_level: str = "KIND_B"` class attribute. | RT-7 |
 | `src/axiom/providers/local_adapter.py` | Add `control_level: str = "KIND_A"` class attribute. | RT-7 |
 | `src/axiom/loop.py` | `PraoLoop.__init__` replaces `act: ActPort` with `router: Router`; ACT branch asks Router per dispatch, wraps with RT-9 fallback; `_maybe_record()` gains `extra_attributes` passthrough. | RT-1, RT-3, RT-7, RT-9 |
-| `src/axiom/agent.py` | Replace `if provider == ...` block with `Router` construction (lazy adapter factories) + `router.select_conductor()`; wire `router=` into `PraoLoop` instead of `act=`. | RT-1, RT-2, RT-8 |
+| `src/axiom/agent.py` | Replace `if provider == ...` block with `Router` construction (lazy adapter factories) + `router.select_conductor()`; wire `router=` into `PraoLoop` instead of `act=`. `provider` parameter default changes from `"claude"` to `None` (D10). | RT-1, RT-2, RT-8 |
+| `src/axiom/interface/cli.py` | `--provider` argparse argument drops `default="claude"` (stays optional, `choices=` unchanged) (D10). | RT-1, RT-4, RT-5, RT-6 |
 | `tests/test_router_policy.py` | New. `evaluate()` precedence — all combinations (privacy-only, capability-only, bulk-only, none-match, privacy-beats-capability, capability-beats-bulk). | RT-4, RT-5, RT-6 |
 | `tests/test_router.py` | New. `Router.select_conductor()`/`select_worker()`/`select_fallback_worker()` — lazy construction/caching, override bypass (incl. privacy bypass), `RouterError` on unconfigured privacy target, fallback-allowed flag correctness per selection reason. | RT-1, RT-2, RT-3, RT-4, RT-8, RT-9 |
 | `tests/test_contracts.py` | Extend. Loop-level: Worker selection called per ACT cycle (not cached across cycles), `axiom.control_level`/`axiom.router.provider` span attributes present, fallback retry-once behavior, no-fallback-on-override/privacy paths. | RT-3, RT-7, RT-9 |

@@ -3,7 +3,8 @@
 - [ ] **Implementer** updates `src/axiom/providers/claude_adapter.py` — control_level class attribute. _RT-7_
 - [ ] **Implementer** updates `src/axiom/providers/local_adapter.py` — control_level class attribute. _RT-7_
 - [ ] **Implementer** updates `src/axiom/loop.py` — PraoLoop takes router: Router (replaces act:); per-cycle Worker selection + RT-9 fallback; _maybe_record() extra_attributes passthrough. _RT-1, RT-3, RT-7, RT-9_
-- [ ] **Implementer** updates `src/axiom/agent.py` — Router construction (lazy adapter factories) replaces if/elif provider block; wire router= into PraoLoop. _RT-1, RT-2, RT-8_
+- [ ] **Implementer** updates `src/axiom/agent.py` — Router construction (lazy adapter factories) replaces if/elif provider block; wire router= into PraoLoop; provider param defaults to None. _RT-1, RT-2, RT-8_
+- [ ] **Implementer** updates `src/axiom/interface/cli.py` — --provider argparse flag drops default="claude" (stays optional). _RT-1, RT-4, RT-5, RT-6_
 - [ ] **Implementer** creates `tests/test_router_policy.py` — evaluate() precedence, all combinations. _RT-4, RT-5, RT-6_
 - [ ] **Implementer** creates `tests/test_router.py` — Router selection/caching/override/fallback. _RT-1, RT-2, RT-3, RT-4, RT-8, RT-9_
 - [ ] **Implementer** extends `tests/test_contracts.py` — per-cycle Worker selection, control_level/router.provider span attrs, fallback behavior. _RT-3, RT-7, RT-9_
