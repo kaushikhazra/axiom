@@ -26,12 +26,20 @@ Everything downstream follows from that one choice:
 | D2 | Skill activation is a **new `IntentKind.USE_SKILL`** / `UseSkillIntent(skill_name: str)`, parsed by the same shared `_parse_intent()` both adapters already use — not a Tool, not a provider-specific mechanism. | Resolves SK-3's open mechanism question. Reuses the one pipeline both adapters already share instead of building two (KIND-A tool wrapper + some KIND-B equivalent that doesn't actually exist, per M4's MCP Non-Goal). Provider-symmetric by construction. |
 | D3 | The discovery catalog (`run_state.skills_catalog`) is refreshed **every Perceive call**, not once per user turn (contrast with `memory_context`, assembled once per turn in `_run_async`). | SK-4's behavioral AC requires an authored skill to appear "on the immediately following cycle" — mid-run, after an `ACT` that wrote a new `SKILL.md`. A once-per-turn snapshot (like memory) would miss it until the next user message. |
 | D4 | Activated skill bodies accumulate in `run_state.active_skills: list[SkillContent]` and persist for the rest of the run; they are never evicted mid-run. | SK-3 AC: "available for the remainder of the run... the Conductor does not need to re-request it every cycle." No eviction policy is in scope for M5 (see Future Work) — a run's `max_cycles=10` bound keeps worst-case context growth small. |
-| D5 | An unknown `skill_name` in a `UseSkillIntent` (hallucinated by the Conductor) does not crash the loop. `SkillsRegistry.get_skill()` raises `SkillNotFoundError`; `loop.py` catches it and feeds an error observation into `run_state.history` (the same channel `ACT` results already use), then continues the loop. | Consistency with the project-wide "never crash on a bad model output" posture already established by M4 (`ToolResult` never raises, D9) and by `base.py`'s intent-parse retry/fallback path. A hallucinated skill name is a normal, expected failure mode — not exceptional. |
-| D6 | `UseSkillIntent` handling counts toward `run_state.cycle_count` (via `observe()`), exactly like `ActIntent`. | Prevents a pathological loop where the Conductor repeatedly emits `USE_SKILL` without making progress — the existing `MAX_CYCLES` bound (10) already guards `ActIntent`; extending the same counter to `UseSkillIntent` costs nothing new and closes an otherwise-open runaway path. |
+| D5 | An unknown `skill_name` in a `UseSkillIntent` (hallucinated by the Conductor) does not crash the loop. `SkillsRegistry.get_skill()` raises `SkillNotFoundError`; `loop.py` catches it and sets `run_state.skill_activation_note` to an error string (rendered in its own dedicated context section — **not** `run_state.history**, see D5a/§5/§6), then continues the loop. | Consistency with the project-wide "never crash on a bad model output" posture already established by M4 (`ToolResult` never raises, D9) and by `base.py`'s intent-parse retry/fallback path. A hallucinated skill name is a normal, expected failure mode — not exceptional. |
+| D5a | **(Revised after dryrun-design-1, C3)** Skill-activation results (`[SKILL ACTIVATED]` / `[SKILL ALREADY ACTIVE]` / `[SKILL ERROR]`) are **not** routed through `run_state.history` / `ObservePort.observe()` — they get their own `run_state.skill_activation_note: str \| None` field, set directly by `loop.py`, rendered by `perceive()` under a dedicated `[SKILL ACTIVATION]` header, and cleared (one-shot) immediately after that render. | dryrun-design-1 C3 found that reusing `run_state.history` inherited `base.py`'s fixed ACT-result instructional text ("you now have the data you need... use RESPOND"), which is actively wrong guidance immediately after a skill activation — it nudges the Conductor to respond before consulting the skill it just loaded, defeating SK-3's purpose. A dedicated field with its own framing avoids inheriting boilerplate that doesn't apply. |
+| D6 | `UseSkillIntent` handling counts toward `run_state.cycle_count`, incremented directly by `loop.py` (not via `ObservePort.observe()`, since D5a removes that call for this branch), exactly matching `ActIntent`'s counting behavior. | Prevents a pathological loop where the Conductor repeatedly emits `USE_SKILL` without making progress — the existing `MAX_CYCLES` bound (10) already guards `ActIntent`; extending the same counter to `UseSkillIntent` costs nothing new and closes an otherwise-open runaway path. |
+| D6a | **(Added after dryrun-design-1, W1)** Before activating, `loop.py` checks whether `intent.skill_name` is already in `run_state.active_skills`; if so, it sets `skill_activation_note = "[SKILL ALREADY ACTIVE] {name}"` and does **not** re-fetch or re-append. | dryrun-design-1 W1: without this check, a Conductor re-emitting `USE_SKILL` for an already-active skill would duplicate its body in every subsequent prompt — wasted tokens, no benefit, and duplicate instruction blocks are a mild model-confusion risk. |
+| D6b | **(Added after dryrun-design-1, W2)** `[ACTIVE SKILL: ...]` body rendering in `perceive()` is capped at `MAX_SKILL_BODY_CHARS = 8000` (matching M4's `filesystem.py::MAX_READ_CHARS`), with a `"...[truncated N chars]"` suffix on overflow. | dryrun-design-1 W2: M4 already established this exact precedent for `read_file` ("An uncapped read_file on a large file would flood the reasoning prompt") — an activated skill body persists for the rest of the run (D4) and deserved the same bound, which the first design draft omitted. |
+| D6c | **(Added after dryrun-design-1, W3)** The `_maybe_record()` phase label for `UseSkillIntent` handling is `"use_skill"`, not `"act"`. | dryrun-design-1 W3: reusing `"act"` would blur M2 Observability traces between genuine provider Act calls and in-loop skill lookups, undermining the trace-clarity purpose `architecture.md` assigns to Observability. |
 | D7 | Self-authoring (SK-4) adds **no new tool, no new gate**. The agent writes `{skills_dir}/{name}/SKILL.md` via the existing `write_file` (KIND-A, `DESTRUCTIVE`, `ToolRegistry`) or `Write` (KIND-B, `DESTRUCTIVE`, native SDK tool gated by the existing `PreToolUse` hook) during a normal `ACT` cycle. | Matches `requirement.md`'s Purpose section and M4's own Non-Goal note ("M5 builds on top of M4's registry"). DRY — a second write path or a Skills-specific approval gate would duplicate M4's `GuardrailsGate` for no behavioral difference (`write_file`/`Write` are already `DESTRUCTIVE` and already gated). |
 | D8 | `SkillsRegistry` is filesystem-backed and framework-free: it reads `{skills_dir}/*/SKILL.md` with `pathlib` + a hand-rolled YAML-frontmatter split (regex on the leading `---`/`---` block) — no new dependency (no `python-frontmatter`, no `pyyaml`) is added for M5. | The frontmatter is small and flat (5 known keys, `metadata` being the only nested one). A regex split + `yaml.safe_load` on just the frontmatter block would need a `pyyaml` dependency the project doesn't currently have (checked: not in `pyproject.toml`); a minimal hand-rolled line-based parser avoids adding one for a genuinely small parsing job. If skill authors start hand-writing complex nested `metadata`, this is the first thing to revisit (Future Work). |
 | D9 | `SkillsPort.search()` (SK-5) is implemented but **not** wired into the loop's per-cycle catalog assembly — `list_skills()` (unfiltered) remains what `loop.py` calls at each Perceive. | Matches `requirement.md` SK-5's own AC: "M5 does not mandate wiring an unconditional-search-instead-of-list-all policy into Perceive." `search()` exists as a `SkillsPort` capability for a future Router-level policy decision, not consumed internally yet. |
 | D10 | `skills_dir` is threaded through `Agent.__init__` exactly like M4's `working_dir` — a constructor parameter, no CLI flag added in M5 (same "trivial-or-deferred" posture M4 took). | Consistency (SK-6's own rationale) — no new decision needed, just following the established pattern. |
+| D11 | **(Added after dryrun-design-1, C1)** `parse_skill_md()` wraps `path.read_text()` in `except OSError`, converting it to `SkillValidationError`; `SkillsRegistry._discover()` wraps `self._skills_dir.iterdir()` in `except OSError`, degrading to an empty scan result (logged) rather than propagating. | dryrun-design-1 C1: unguarded, these crash `list_skills()`/`get_skill()` on a single unreadable file or directory — and since D3 calls `list_skills()` every Perceive cycle, this would crash every cycle of every run, not just a cold-start edge case. Mirrors M4's own `filesystem.py` fix for the identical hazard class (`except OSError` around every real filesystem call). |
+| D12 | **(Added after dryrun-design-1, C2)** `_parse_frontmatter_block()` special-cases a bare `metadata:` header line (empty value) by initializing `result["metadata"] = {}` directly, instead of falling through to the generic string-assignment branch that a subsequent indented line's `setdefault(..., {})` would silently fail to override. | dryrun-design-1 C2: the original line-based parser crashed with `TypeError` on nested `metadata:` — which is literally the shape shown in the agentskills.io spec's own documented example (`requirement.md`'s "Example with optional fields"). Any skill following that example crashed discovery. |
+| D13 | **(Added after dryrun-design-1, W4)** `requirement.md` DoD item 4's wording is narrowed to "required-field (`name`/`description`) validation matches the spec verbatim" — optional-field constraints (`compatibility`'s 500-char cap, etc.) are parsed into `SkillContent.frontmatter` but not validated in M5, consistent with SK-2's actual ACs (which only mandate `name`/`description` enforcement). | dryrun-design-1 W4: the original DoD wording ("verbatim... no bespoke deviation") overstated what the design actually enforces, creating a self-consistency gap between the requirement's DoD and its own AC scope. |
+| D14 | **(Added after dryrun-design-1, W5)** Multi-line YAML block-scalar values (`description: \|` / `description: >`) are an explicitly accepted M5 limitation, not silently mishandled: `_parse_frontmatter_block()` detects a bare `\|`/`>` value and raises `SkillValidationError` immediately (clear exclusion + log) rather than attempting to parse and producing a garbled `description`. | dryrun-design-1 W5: the hand-rolled parser (D8) can't fold multi-line scalars; failing loudly and predictably (excluded + logged, matching every other malformed-skill case) is strictly better than silently truncating or misparsing a value that then passes length checks by accident. Self-authoring (SK-4) is unaffected — the agent controls its own frontmatter and can simply emit single-line values. |
 
 ---
 
@@ -70,6 +78,7 @@ class RunState:
     memory_context: object = None
     skills_catalog: list[SkillSpec] = field(default_factory=list)   # M5: refreshed every Perceive (D3)
     active_skills: list[SkillContent] = field(default_factory=list)  # M5: accumulates for the run (D4)
+    skill_activation_note: str | None = None  # M5: one-shot status set by loop.py, rendered once by perceive() then cleared (D5a)
 ```
 
 ---
@@ -168,7 +177,21 @@ class SkillValidationError(Exception):
 def _parse_frontmatter_block(block: str) -> dict:
     """Minimal line-based key: value parser (D8) -- sufficient for the flat
     5-key frontmatter agentskills.io defines. Only 'metadata' nests; nested
-    keys are collected as a flat dict under 'metadata' by indentation."""
+    keys are collected as a flat dict under 'metadata' by indentation.
+
+    D12 fix (dryrun-design-1 C2): a bare 'metadata:' header (empty value) is
+    special-cased to initialize result["metadata"] = {} directly. Without
+    this, the generic branch below would first set result["metadata"] = ""
+    (a string), and the nested-line branch's setdefault("metadata", {})
+    would then find that key already present and return the string
+    unchanged -- crashing with TypeError on the very next indented line.
+    This is exactly the shape of the agentskills.io spec's own documented
+    example ("metadata:\n  author: ...\n  version: ...").
+
+    D14 fix (dryrun-design-1 W5): a bare '|' or '>' value (YAML block-scalar
+    indicator) is rejected with SkillValidationError rather than silently
+    mis-parsed -- this parser does not fold multi-line scalars.
+    """
     result: dict = {}
     current_key: str | None = None
     for line in block.splitlines():
@@ -176,13 +199,24 @@ def _parse_frontmatter_block(block: str) -> dict:
             continue
         if line.startswith(("  ", "\t")) and current_key == "metadata":
             k, _, v = line.strip().partition(":")
-            result.setdefault("metadata", {})[k.strip()] = v.strip().strip('"')
+            result["metadata"][k.strip()] = v.strip().strip('"')
             continue
         k, sep, v = line.partition(":")
         if not sep:
             continue
-        current_key = k.strip()
-        result[current_key] = v.strip().strip('"')
+        key = k.strip()
+        value = v.strip()
+        if value in ("|", ">"):
+            raise SkillValidationError(
+                f"unsupported multi-line YAML scalar for {key!r} "
+                "(block-scalar syntax is not supported by this parser)"
+            )
+        if key == "metadata" and not value:
+            current_key = "metadata"
+            result["metadata"] = {}
+            continue
+        current_key = key
+        result[current_key] = value.strip('"')
     return result
 
 
@@ -192,7 +226,14 @@ def parse_skill_md(path: Path) -> SkillContent:
     PARENT directory name, then cross-checked against frontmatter 'name'
     (spec rule: name must match the parent directory name)."""
     dir_name = path.parent.name
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        # D11 fix (dryrun-design-1 C1): a permission error, bad encoding, or
+        # any other read failure must become a SkillValidationError (caught
+        # and excluded by the registry, D2's degrade-gracefully contract) --
+        # never an uncaught OSError propagating out of discovery.
+        raise SkillValidationError(f"{path}: failed to read: {exc}") from exc
 
     m = _FRONTMATTER_RE.match(text)
     if not m:
@@ -250,11 +291,22 @@ class SkillsRegistry:
         """Re-scan skills_dir on every call (D3 -- no caching, so a skill
         authored mid-run is picked up on the very next call). skills_dir
         not existing is a valid, common state (SK-6) -- empty result, not
-        an error."""
+        an error.
+
+        D11 fix (dryrun-design-1 C1): iterdir() itself can raise OSError
+        (e.g. permission-denied on skills_dir) -- guarded the same way a
+        malformed individual SKILL.md is: logged and degraded to an empty
+        scan, not propagated.
+        """
         found: dict[str, SkillContent] = {}
         if not self._skills_dir.is_dir():
             return found
-        for entry in sorted(self._skills_dir.iterdir()):
+        try:
+            entries = sorted(self._skills_dir.iterdir())
+        except OSError as exc:
+            logger.debug("[SKILLS_DIR_UNREADABLE] %s", exc)
+            return found
+        for entry in entries:
             skill_md = entry / "SKILL.md"
             if not entry.is_dir() or not skill_md.is_file():
                 continue
@@ -318,6 +370,10 @@ while True:
     with _maybe_record("perceive", run_id, provider_kind):
         context = await asyncio.to_thread(self._perceive.perceive, run_state)
 
+    # D5a: skill_activation_note is one-shot -- rendered into the context
+    # just built, then cleared so it doesn't repeat on subsequent cycles.
+    run_state.skill_activation_note = None
+
     with _maybe_record("reason", run_id, provider_kind):
         run_state.spawn_count += 1
         intent = await asyncio.to_thread(self._reason.reason, context)
@@ -328,19 +384,35 @@ while True:
         ...  # unchanged
 
     if isinstance(intent, UseSkillIntent):
-        with _maybe_record("act", run_id, provider_kind):  # reuses the Act
-            run_state.spawn_count += 1                      # span/counter --
-            try:                                             # activation is
-                content = await asyncio.to_thread(            # a bounded,
-                    self._skills.get_skill, intent.skill_name  # observable
-                )                                              # step, same
-                run_state.active_skills.append(content)        # shape as ACT
-                result = f"[SKILL ACTIVATED] {intent.skill_name}"
-            except SkillNotFoundError as exc:
-                result = f"[SKILL ERROR] {exc}"
-
-        with _maybe_record("observe", run_id, provider_kind):
-            run_state = await asyncio.to_thread(self._observe.observe, result, run_state)
+        # D5a/D6/D6a/D6c: skill activation is loop-owned bookkeeping, not a
+        # provider Act call -- it gets its own phase label ("use_skill", not
+        # "act", D6c), its own result channel (skill_activation_note, not
+        # run_state.history -- D5a), its own dedup check (D6a), and
+        # increments cycle_count directly (no ObservePort.observe() call,
+        # D6) since ObservePort's contract is specifically "append an ACT
+        # result to history," which this deliberately does not do.
+        with _maybe_record("use_skill", run_id, provider_kind):
+            run_state.spawn_count += 1
+            already_active_names = {s.name for s in run_state.active_skills}
+            if intent.skill_name in already_active_names:
+                run_state.skill_activation_note = (
+                    f"[SKILL ALREADY ACTIVE] {intent.skill_name}"
+                )
+            else:
+                try:
+                    content = await asyncio.to_thread(
+                        self._skills.get_skill, intent.skill_name
+                    )
+                    run_state.active_skills.append(content)
+                    run_state.skill_activation_note = (
+                        f"[SKILL ACTIVATED] {intent.skill_name} -- its full "
+                        f"instructions are now available below under "
+                        f"[ACTIVE SKILL: {intent.skill_name}]. Use them to "
+                        f"inform your next ACT or RESPOND."
+                    )
+                except SkillNotFoundError as exc:
+                    run_state.skill_activation_note = f"[SKILL ERROR] {exc}"
+            run_state.cycle_count += 1
 
         if run_state.cycle_count >= self._max_cycles:
             raise MaxCyclesExceededError(...)
@@ -349,7 +421,7 @@ while True:
     # intent == ACT — unchanged from here
 ```
 
-No changes to `MemoryPort` handling, `ObservePort`, or the `RespondIntent`/`FinishIntent` branches. `SkillsPort` import added alongside the existing `MemoryPort` import at the top of `loop.py`.
+No changes to `MemoryPort` handling, `ObservePort`, or the `RespondIntent`/`FinishIntent` branches. `ObservePort.observe()` is **not** called for `UseSkillIntent` (D5a/D6) — cycle counting is done directly in this branch instead, since `observe()`'s contract is specifically about appending an ACT result to `run_state.history`, which this branch deliberately avoids. `SkillsPort` import added alongside the existing `MemoryPort` import at the top of `loop.py`.
 
 ---
 
@@ -388,15 +460,23 @@ if intent_str == "USE_SKILL":
 `PraoAdapterBase.perceive()` (shared, provider-independent) gains two rendering blocks, inserted after the existing `[PERSONA]` section and before `[CURRENT REQUEST]` (ordering: catalog is background context like memory, so it sits with the other context sections, not at the end next to the format instructions):
 
 ```python
+MAX_SKILL_BODY_CHARS: int = 8000  # D6b -- matches axiom.tools.filesystem.MAX_READ_CHARS
+
 if run_state.skills_catalog:
     lines = [f"  - {s.name}: {s.description}" for s in run_state.skills_catalog]
     sections.append("[AVAILABLE SKILLS]\n" + "\n".join(lines))
 
 for skill in run_state.active_skills:
-    sections.append(f"[ACTIVE SKILL: {skill.name}]\n{skill.body}")
+    body = skill.body
+    if len(body) > MAX_SKILL_BODY_CHARS:
+        body = body[:MAX_SKILL_BODY_CHARS] + f"\n... [truncated {len(body) - MAX_SKILL_BODY_CHARS} chars]"
+    sections.append(f"[ACTIVE SKILL: {skill.name}]\n{body}")
+
+if run_state.skill_activation_note:
+    sections.append(f"[SKILL ACTIVATION]\n{run_state.skill_activation_note}")
 ```
 
-Empty catalog / no active skills → both blocks are simply omitted (list is falsy), matching the existing pattern for `cognitive`/`working` memory sections and `run_state.history`.
+Empty catalog / no active skills / no pending note → each block is simply omitted (falsy), matching the existing pattern for `cognitive`/`working` memory sections and `run_state.history`. `[SKILL ACTIVATION]` is deliberately its **own** section (D5a) — it does not share `[TOOL EXECUTION RESULTS]`'s header or its ACT-specific "you now have the data you need, use RESPOND" instructional text, which does not apply to a skill activation event.
 
 ---
 
@@ -445,9 +525,15 @@ Worth stating explicitly since it's a full user story with no dedicated implemen
 | Failure | Behavior |
 |---|---|
 | `skills_dir` does not exist | `list_skills()` returns `[]`, `search()` returns `[]` — not an error (SK-6). |
+| `skills_dir` exists but is unreadable (`PermissionError` on `iterdir()`) | D11: caught in `_discover()`, logged (`[SKILLS_DIR_UNREADABLE]`), degrades to an empty scan result — not propagated. |
 | A `SKILL.md` fails frontmatter validation (SK-2) | Excluded from `list_skills()`/`search()`/`get_skill()`; logged at DEBUG (`[SKILL_INVALID]`) with the specific violation. Does not affect sibling skills. |
-| Conductor emits `USE_SKILL` with an unrecognized `skill_name` | `SkillNotFoundError` caught in `loop.py` (D5); a `[SKILL ERROR] ...` string is fed back through the existing `observe()` → history channel; the loop continues (no crash, no run abort). |
+| A `SKILL.md` fails to *read* (`OSError`/`UnicodeDecodeError`) | D11: converted to `SkillValidationError` inside `parse_skill_md()`, caught by the registry exactly like any other validation failure — not an uncaught exception. |
+| A `SKILL.md`'s `metadata:` field has nested keys (the spec's own documented shape) | D12: parsed correctly into a dict — no longer crashes with `TypeError`. |
+| A `SKILL.md`'s `description` uses multi-line YAML block-scalar syntax (`\|`/`>`) | D14: rejected explicitly as `SkillValidationError` (excluded + logged), not silently mis-parsed. |
+| Conductor emits `USE_SKILL` with an unrecognized `skill_name` | `SkillNotFoundError` caught in `loop.py` (D5); a `[SKILL ERROR] ...` string is set on `run_state.skill_activation_note` (D5a — its own render channel, not `history`); the loop continues (no crash, no run abort). |
+| Conductor emits `USE_SKILL` for an already-active skill | D6a: no re-fetch, no duplicate append — `skill_activation_note` is set to `[SKILL ALREADY ACTIVE] {name}` instead. |
 | `USE_SKILL` intent JSON missing `skill_name` | `_parse_intent()` returns `(None, error)`, which triggers the *existing* parse-failure retry-then-fallback path already used for any malformed intent (`base.py`, unchanged). |
+| An activated skill's body is very large | D6b: rendering in `perceive()` truncates at `MAX_SKILL_BODY_CHARS` (8000, matching M4's `read_file` cap), with a `"...[truncated N chars]"` suffix. |
 | Two skills with the same `name` in different directories | Not possible under SK-2's rule (frontmatter `name` must match its own parent directory name, and directory names are unique on a filesystem) — no dedup logic needed. |
 
 ---
@@ -459,9 +545,9 @@ Worth stating explicitly since it's a full user story with no dedicated implemen
 | `src/axiom/skills/port.py` | New. `SkillSpec`, `SkillContent`, `SkillNotFoundError`, `SkillsPort` Protocol. | SK-1 |
 | `src/axiom/skills/parser.py` | New. `parse_skill_md()`, `SkillValidationError`, agentskills.io frontmatter validation. | SK-2 |
 | `src/axiom/skills/registry.py` | New. `SkillsRegistry(SkillsPort)` — filesystem discovery, validation exclusion, search. | SK-1, SK-2, SK-5, SK-6 |
-| `src/axiom/interfaces.py` | Add `IntentKind.USE_SKILL`, `UseSkillIntent`, extend `Intent` union; add `RunState.skills_catalog` / `RunState.active_skills`. | SK-3 |
-| `src/axiom/loop.py` | `PraoLoop.__init__` takes `skills: SkillsPort`; `_run_async` refreshes `skills_catalog` every cycle and handles `UseSkillIntent`. | SK-1, SK-3, SK-4 |
-| `src/axiom/providers/base.py` | Extend `INTENT_FORMAT_INSTRUCTIONS` with `USE_SKILL`; extend `_parse_intent()`; extend `perceive()` to render `skills_catalog`/`active_skills`. | SK-3 |
+| `src/axiom/interfaces.py` | Add `IntentKind.USE_SKILL`, `UseSkillIntent`, extend `Intent` union; add `RunState.skills_catalog` / `RunState.active_skills` / `RunState.skill_activation_note`. | SK-3 |
+| `src/axiom/loop.py` | `PraoLoop.__init__` takes `skills: SkillsPort`; `_run_async` refreshes `skills_catalog` every cycle, clears `skill_activation_note` after each Perceive, and handles `UseSkillIntent` (own phase label, dedup check, direct cycle-count increment — no `ObservePort.observe()` call). | SK-1, SK-3, SK-4 |
+| `src/axiom/providers/base.py` | Extend `INTENT_FORMAT_INSTRUCTIONS` with `USE_SKILL`; extend `_parse_intent()`; extend `perceive()` to render `skills_catalog`/`active_skills` (with `MAX_SKILL_BODY_CHARS` truncation) / `skill_activation_note` as its own `[SKILL ACTIVATION]` section. | SK-3 |
 | `src/axiom/agent.py` | Add `skills_dir` constructor parameter (defaults to `{working_dir}/skills`); construct `SkillsRegistry`; pass into `PraoLoop`. | SK-6 |
 | `tests/test_skills_parser.py` | New. Frontmatter validation — valid/invalid `name`, missing `description`, length limits, dir-name mismatch. | SK-2 |
 | `tests/test_skills_registry.py` | New. Discovery, exclusion of invalid skills, `get_skill()` / `SkillNotFoundError`, `search()`, empty-`skills_dir` case. | SK-1, SK-2, SK-5, SK-6 |

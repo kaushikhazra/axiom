@@ -168,7 +168,7 @@ No new environment variables or CLI flags are required beyond what SK-6 specifie
 1. **Spec gate:** `requirement.md`, `design.md`, `task.md` exist; `dryrun-design-N.md`'s latest verdict has zero critical, zero warning, zero observation findings.
 2. **Code dryrun gate:** the latest `dryrun-code-N.md` verdict has zero critical, zero warning, zero observation findings.
 3. **Port contract:** `SkillsPort` Protocol exists in `axiom/skills/port.py`, consumed directly by `loop.py`'s Perceiver call-point (SK-1) — not adapter-side.
-4. **Format compliance:** skill validation matches the agentskills.io frontmatter rules verbatim (SK-2) — no bespoke deviation.
+4. **Format compliance:** required-field (`name`/`description`) validation matches the agentskills.io frontmatter rules verbatim (SK-2) — no bespoke deviation. Optional-field constraints (e.g. `compatibility`'s length cap) are parsed but not enforced in M5 (`design.md` D13).
 5. **Unit tests green:** new `tests/test_skills_*.py` covers discovery, validation (including the malformed-skill exclusion path), activation-catalog refresh, and search, with no skips.
 6. **Full suite green:** the whole `pytest` suite (pre-existing + new) passes.
 7. **Live verification:** SK-7's cross-provider demonstrations are all completed and recorded.
