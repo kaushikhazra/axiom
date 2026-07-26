@@ -4,8 +4,12 @@ Core assembly / composition root.
 Wires persona + ClaudeAdapter + PraoLoop + observability timing.
 Exposes a clean Agent.run(user_input: str) -> str API to the interface layer.
 
-M1_ALLOWED_TOOLS: ["Bash", "WebSearch"]
-WebSearch is required for the M1 web-search acceptance test (MPP-3/W5).
+CLAUDE_SAFE_TOOLS: ["WebSearch"] (M4 renamed M1_ALLOWED_TOOLS; WebSearch is
+required for the M1 web-search acceptance test, MPP-3/W5). "Bash" is
+deliberately NOT bare-listed here as of M4 -- the PreToolUse Guardrails GATE
+(ClaudeAdapter._gate_hook) is now the real guardrail and fires for every
+tool call regardless of this list's contents; this list is minimal-privilege
+practice, not the load-bearing mechanism (design.md D4).
 """
 
 from __future__ import annotations
@@ -18,10 +22,11 @@ from axiom.interfaces import AdapterError, MaxCyclesExceededError
 from axiom.loop import PraoLoop
 from axiom.observability import timing
 from axiom.providers.claude_adapter import ClaudeAdapter
+from axiom.tools.guardrails import GuardrailsGate
 
 # Tool allowlist for act() queries — single source of truth (§7.3).
 # WebSearch added for the M1 web-search acceptance test (MPP-3/W5).
-M1_ALLOWED_TOOLS: list[str] = ["Bash", "WebSearch"]
+CLAUDE_SAFE_TOOLS: list[str] = ["WebSearch"]
 
 # Maps provider name to OTel provider_kind label used in trace records.
 _PROVIDER_KIND: dict[str, str] = {
@@ -70,6 +75,10 @@ class Agent:
         provider: str = "claude",
         observe: bool = False,
         memory_config: object = None,
+        ollama_host: str | None = None,
+        working_dir: str | Path | None = None,
+        auto_approve_tools: bool = False,
+        skills_dir: str | Path | None = None,
     ) -> None:
         """Wire the composition root.
 
@@ -80,25 +89,60 @@ class Agent:
                       "local" (LiteLLM + Ollama via LocalAdapter). LocalAdapter is
                       imported lazily inside the "local" branch so that Claude-only
                       installs never pay the litellm import cost.
+            ollama_host: Optional Ollama API base URL, e.g. "http://192.168.0.235:11434".
+                         Only used when provider="local"; ignored otherwise. Defaults to
+                         LocalAdapter's own localhost default when None.
             observe: When True, constructs ObservabilityFaculty and wires run_id into
                      the loop so phase spans are emitted to ~/.axiom/traces/<run_id>.jsonl.
                      Off by default — backward compatible; no OTel cost unless enabled.
             memory_config: Optional MemoryConfig instance. When None, a default
                            MemoryConfig() is constructed. Callers (e.g., tests) may
                            pass an isolated config with a tmp storage_path.
+            working_dir: M4 — root directory Axiom's own file/shell tools (KIND-A
+                         only) are scoped to. Defaults to the process cwd when None.
+            auto_approve_tools: M4 — when True, GuardrailsGate.request_approval()
+                                 returns True unconditionally instead of prompting.
+                                 Off by default — the safe, prompting behavior is
+                                 the default (AC-07.3).
+            skills_dir: M5 — root directory SkillsRegistry discovers SKILL.md
+                        directories under. Defaults to {working_dir}/skills
+                        when None (SK-6).
         """
         if debug:
             _configure_debug_logging()
 
         persona_text = persona_pkg.load()
 
+        # M4: GuardrailsGate is shared by whichever adapter is constructed below
+        # — the single classification table + approval seam for both providers
+        # (design.md D2).
+        resolved_working_dir = (
+            Path(working_dir) if working_dir is not None else Path.cwd()
+        )
+        # M5: skills_dir defaults to {working_dir}/skills (SK-6) — mirrors
+        # working_dir's own default-resolution pattern.
+        resolved_skills_dir = (
+            Path(skills_dir)
+            if skills_dir is not None
+            else resolved_working_dir / "skills"
+        )
+        gate = GuardrailsGate(auto_approve=auto_approve_tools)
+
         if provider == "local":
             from axiom.providers.local_adapter import LocalAdapter  # noqa: PLC0415 (lazy)
 
-            adapter = LocalAdapter(persona=persona_text)
+            local_kwargs = {}
+            if ollama_host is not None:
+                local_kwargs["ollama_api_base"] = ollama_host
+            adapter = LocalAdapter(
+                persona=persona_text,
+                working_dir=resolved_working_dir,
+                gate=gate,
+                **local_kwargs,
+            )
         elif provider == "claude":
             adapter = ClaudeAdapter(
-                persona=persona_text, allowed_tools=M1_ALLOWED_TOOLS
+                persona=persona_text, allowed_tools=CLAUDE_SAFE_TOOLS, gate=gate
             )
         else:
             raise ValueError(f"unknown provider: {provider!r}")
@@ -112,6 +156,11 @@ class Agent:
         _mem_cfg = memory_config if memory_config is not None else MemoryConfig()
         self._memory_adapter = CognitiveMemoryAdapter(_mem_cfg)
 
+        # M5 skills — loop-level port, constructed here the same way memory is.
+        from axiom.skills.registry import SkillsRegistry  # noqa: PLC0415
+
+        skills_registry = SkillsRegistry(skills_dir=resolved_skills_dir)
+
         self._loop = PraoLoop(
             perceive=adapter,
             reason=adapter,
@@ -119,6 +168,7 @@ class Agent:
             observe=adapter,
             max_cycles=10,
             memory=self._memory_adapter,
+            skills=skills_registry,
         )
 
         self._provider_kind: str = _PROVIDER_KIND.get(provider, "KIND_A")

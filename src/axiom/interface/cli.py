@@ -32,12 +32,39 @@ def main() -> None:
         help="Provider adapter: 'claude' (default, cloud) or 'local' (Ollama via LiteLLM)",
     )
     parser.add_argument(
+        "--ollama-host",
+        default=None,
+        help=(
+            "Ollama API base URL for --provider local (e.g. http://192.168.0.235:11434). "
+            "Defaults to http://localhost:11434 when omitted."
+        ),
+    )
+    parser.add_argument(
         "--observe",
         action="store_true",
         default=False,
         help=(
             "Enable M2 observability: write a JSONL phase-span trace to "
             "~/.axiom/traces/<run_id>.jsonl and print the path to stderr."
+        ),
+    )
+    parser.add_argument(
+        "--auto-approve-tools",
+        action="store_true",
+        default=False,
+        help=(
+            "M4: answer every DESTRUCTIVE tool approval prompt 'yes' automatically "
+            "(write_file/run_shell for --provider local; Bash/Write/Edit for "
+            "--provider claude). Off by default -- the safe, prompting behavior "
+            "is the default. Needed for headless/scripted runs."
+        ),
+    )
+    parser.add_argument(
+        "--working-dir",
+        default=None,
+        help=(
+            "M4: root directory Axiom's own file/shell tools (--provider local "
+            "only) are scoped to. Defaults to the current directory when omitted."
         ),
     )
     parser.add_argument(
@@ -57,7 +84,14 @@ def main() -> None:
         print("No input provided.", file=sys.stderr)
         sys.exit(1)
 
-    agent = Agent(debug=args.debug, provider=args.provider, observe=args.observe)
+    agent = Agent(
+        debug=args.debug,
+        provider=args.provider,
+        observe=args.observe,
+        ollama_host=args.ollama_host,
+        working_dir=args.working_dir,
+        auto_approve_tools=args.auto_approve_tools,
+    )
 
     if args.observe and agent.trace_path is not None:
         print(f"[axiom] trace → {agent.trace_path}", file=sys.stderr)

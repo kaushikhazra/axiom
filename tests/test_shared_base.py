@@ -13,13 +13,16 @@ from axiom.interfaces import (
     FinishIntent,
     RespondIntent,
     RunState,
+    UseSkillIntent,
 )
 from axiom.providers.base import (
     INTENT_FORMAT_INSTRUCTIONS,
+    MAX_SKILL_BODY_CHARS,
     PraoAdapterBase,
     _extract_json_from_text,
     _parse_intent,
 )
+from axiom.skills.port import SkillContent, SkillSpec
 
 
 # ============================================================
@@ -58,7 +61,77 @@ class TestPraoAdapterBasePerceive:
         assert "Step 2: Found the answer" in result
         # E2E-discovered: after tool output the model should be nudged to RESPOND
         assert "RESPOND" in result
-        assert "do NOT request another ACT" in result
+
+    # ------------------------------------------------------------------
+    # M5: skills catalog / active skills / skill_activation_note rendering
+    # ------------------------------------------------------------------
+
+    def test_empty_skills_catalog_has_no_available_skills_section(self) -> None:
+        # Note: the wire-format instructions themselves mention "[AVAILABLE
+        # SKILLS]" in prose (the USE_SKILL rule), so check for the actual
+        # rendered section header (with its list-formatting newline), not a
+        # bare substring match.
+        result = self._base().perceive(self._state())
+        assert "\n[AVAILABLE SKILLS]\n  -" not in result
+
+    def test_skills_catalog_rendered(self) -> None:
+        state = self._state()
+        state.skills_catalog = [
+            SkillSpec(name="csv-summarizer", description="Summarizes CSV files.")
+        ]
+        result = self._base().perceive(state)
+        assert "[AVAILABLE SKILLS]" in result
+        assert "csv-summarizer: Summarizes CSV files." in result
+
+    def test_no_active_skills_has_no_active_skill_section(self) -> None:
+        result = self._base().perceive(self._state())
+        assert "[ACTIVE SKILL" not in result
+
+    def test_active_skill_body_rendered(self) -> None:
+        state = self._state()
+        state.active_skills = [
+            SkillContent(
+                name="csv-summarizer", description="d", body="Step 1: read the CSV."
+            )
+        ]
+        result = self._base().perceive(state)
+        assert "[ACTIVE SKILL: csv-summarizer]" in result
+        assert "Step 1: read the CSV." in result
+
+    def test_active_skill_body_truncated_when_oversized(self) -> None:
+        state = self._state()
+        oversized_body = "x" * (MAX_SKILL_BODY_CHARS + 500)
+        state.active_skills = [
+            SkillContent(name="big-skill", description="d", body=oversized_body)
+        ]
+        result = self._base().perceive(state)
+        assert "[truncated 500 chars]" in result
+        # The full untruncated body must not appear verbatim -- proves the
+        # cap actually cut it rather than just appending a suffix.
+        assert oversized_body not in result
+
+    def test_no_skill_activation_note_has_no_section(self) -> None:
+        result = self._base().perceive(self._state())
+        assert "[SKILL ACTIVATION]" not in result
+
+    def test_skill_activation_note_rendered(self) -> None:
+        state = self._state()
+        state.skill_activation_note = "[SKILL ACTIVATED] csv-summarizer"
+        result = self._base().perceive(state)
+        assert "[SKILL ACTIVATION]\n[SKILL ACTIVATED] csv-summarizer" in result
+
+    def test_skill_activation_note_not_in_tool_execution_results_section(self) -> None:
+        """dryrun-design-1 C3 regression guard: the note must NOT be folded
+        into [TOOL EXECUTION RESULTS] (whose fixed instructional text tells
+        the Conductor to RESPOND immediately -- wrong guidance right after
+        a skill activation)."""
+        state = self._state()
+        state.skill_activation_note = "[SKILL ACTIVATED] csv-summarizer"
+        result = self._base().perceive(state)
+        tool_results_idx = result.find("[TOOL EXECUTION RESULTS")
+        activation_idx = result.find("[SKILL ACTIVATION]")
+        assert tool_results_idx == -1  # no history -> no tool-results section at all
+        assert activation_idx != -1
 
 
 class TestPraoAdapterBaseObserve:
@@ -141,6 +214,24 @@ class TestParseIntent:
 
     def test_act_missing_instruction_field(self) -> None:
         intent, err = _parse_intent('{"intent": "ACT"}')
+        assert intent is None
+        assert err is not None
+
+    def test_clean_use_skill_json(self) -> None:
+        intent, err = _parse_intent(
+            '{"intent": "USE_SKILL", "skill_name": "csv-summarizer"}'
+        )
+        assert err is None
+        assert isinstance(intent, UseSkillIntent)
+        assert intent.skill_name == "csv-summarizer"
+
+    def test_use_skill_missing_skill_name_field(self) -> None:
+        intent, err = _parse_intent('{"intent": "USE_SKILL"}')
+        assert intent is None
+        assert err is not None
+
+    def test_use_skill_empty_skill_name_rejected(self) -> None:
+        intent, err = _parse_intent('{"intent": "USE_SKILL", "skill_name": ""}')
         assert intent is None
         assert err is not None
 

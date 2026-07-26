@@ -50,6 +50,7 @@ from claude_agent_sdk import (
     CLINotFoundError,
     ClaudeAgentOptions,
     ClaudeSDKError,
+    HookMatcher,
     ProcessError,
     ResultMessage,
     ToolUseBlock,
@@ -61,6 +62,7 @@ from axiom.interfaces import (
     Intent,
 )
 from axiom.providers.base import PraoAdapterBase, _parse_intent
+from axiom.tools.guardrails import Classification, GuardrailsGate
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span
@@ -283,9 +285,74 @@ class ClaudeAdapter(PraoAdapterBase):
     reason() and act() are implemented here using the Claude SDK.
     """
 
-    def __init__(self, persona: str, allowed_tools: list[str]) -> None:
+    def __init__(
+        self, persona: str, allowed_tools: list[str], gate: GuardrailsGate
+    ) -> None:
         super().__init__(persona=persona)
         self._allowed_tools = allowed_tools
+        # M4: gate is required (no default) -- same fail-loud rationale as
+        # LocalAdapter's working_dir/gate params (design.md D6, D11).
+        self._gate = gate
+
+    # ------------------------------------------------------------------
+    # Guardrails GATE (M4)
+    # ------------------------------------------------------------------
+
+    async def _gate_hook(
+        self, input_data: dict, tool_use_id: str | None, context
+    ) -> dict:
+        """PreToolUse hook -- fires for every tool call (no matcher restriction).
+
+        Uses a PreToolUse hook, not ClaudeAgentOptions.can_use_tool -- an
+        empirical probe (spikes/m4-tools/probe_can_use_tool.py) found
+        can_use_tool does not reliably fire, while a PreToolUse hook does
+        (spikes/m4-tools/probe_pretooluse_hook.py). See design.md D3.
+
+        Returns {} to let the call fall through to normal evaluation (SAFE
+        tools, or an approved DESTRUCTIVE call), or a deny hookSpecificOutput
+        for a refused DESTRUCTIVE call. There is no corresponding "force
+        allow" -- a hook 'allow' decision does not skip later evaluation
+        steps (confirmed via SDK docs), so SAFE tools are left to
+        allowed_tools / default evaluation instead of being explicitly
+        allowed here.
+        """
+        tool_name = input_data.get("tool_name", "")
+        tool_input = input_data.get("tool_input", {})
+
+        if self._gate.classify(tool_name) is Classification.SAFE:
+            return {}
+
+        try:
+            # D10: the blocking CLI prompt runs off the event-loop thread so
+            # it doesn't stall the SDK's async control-request handling.
+            approved = await anyio.to_thread.run_sync(
+                self._gate.request_approval, tool_name, tool_input
+            )
+        except Exception as exc:
+            # The approval step itself failed (e.g. a custom approval_fn
+            # raised, or stdin was closed for the default CLI prompt). Fails
+            # closed -- deny rather than let the exception propagate out of
+            # the hook (mirrors ToolRegistry.execute()'s equivalent guard on
+            # the KIND-A side; dryrun-code-1 finding B2).
+            logger.error("[GATE_HOOK_APPROVAL_ERROR] %s", exc)
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": f"approval check failed: {exc}",
+                }
+            }
+
+        if approved:
+            return {}
+
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "denied by user",
+            }
+        }
 
     # ------------------------------------------------------------------
     # ReasonPort
@@ -340,8 +407,11 @@ class ClaudeAdapter(PraoAdapterBase):
     def act(self, instruction: str) -> str:
         """Tool-bearing query -> execute bounded instruction -> return result (§7.3).
 
-        M1_ALLOWED_TOOLS (set by agent.py) are scoped here via ClaudeAgentOptions.
-        The SDK manages its internal tool loop; Axiom writes no tool-execution harness.
+        CLAUDE_SAFE_TOOLS (set by agent.py) are bare-listed on ClaudeAgentOptions
+        as minimal-privilege practice, but the real guardrail is the PreToolUse
+        hook (_gate_hook) -- it fires for every tool call regardless of
+        allowed_tools content (M4, design.md D3/D4). The SDK manages its
+        internal tool loop; Axiom writes no tool-execution harness.
 
         M2: When an OTel Act span is current (KIND-B observability active), acquires
         the tracer and act_span references and passes them into the async helper so
@@ -356,7 +426,21 @@ class ClaudeAdapter(PraoAdapterBase):
             f"you already know the answer, and never merely offer to search. "
             f"Instruction: {instruction}"
         )
-        options = ClaudeAgentOptions(allowed_tools=self._allowed_tools)
+        options = ClaudeAgentOptions(
+            allowed_tools=self._allowed_tools,
+            hooks={"PreToolUse": [HookMatcher(hooks=[self._gate_hook])]},
+            # permission_mode="bypassPermissions" is required, not just belt-and-
+            # suspenders: live verification found that with the SDK's default
+            # permission_mode, a hook returning {} ("no objection, fall through")
+            # does NOT result in the call executing -- it silently fails to run
+            # even though the hook approved it. bypassPermissions makes {} mean
+            # "actually allow," while a hook deny still overrides bypassPermissions
+            # (confirmed both ways empirically -- see spikes/m4-tools/spike-result.md
+            # "permission_mode is load-bearing" addendum). This supersedes design.md
+            # D5's original (incorrect) reasoning that permission_mode wasn't
+            # load-bearing for the gate.
+            permission_mode="bypassPermissions",
+        )
 
         # Resolve OTel tracer + current Act span for KIND-B child span minting.
         # This import is lazy and guarded: if OTel is not initialized (observability

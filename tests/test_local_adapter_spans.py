@@ -41,14 +41,21 @@ from opentelemetry.sdk.trace import TracerProvider
 
 # ---------------------------------------------------------------------------
 # Inject mock smolagents BEFORE importing LocalAdapter so the deferred import
-# inside __init__ resolves to mocks.  setdefault leaves an existing mock alone
-# if test_local_adapter.py already registered one in the same process.
+# inside __init__ resolves to mocks. If test_local_adapter.py already
+# registered a mock in this process, sys.modules["smolagents"] is reassigned
+# here anyway (not setdefault) -- both files build an equivalent mock (M4:
+# including a real, subclassable Tool -- see test_local_adapter.py for why
+# a bare MagicMock auto-attribute doesn't work as a base class), so which one
+# "wins" doesn't matter functionally.
 # ---------------------------------------------------------------------------
+import smolagents as _real_smolagents_module  # noqa: E402 -- real import, captures Tool before the mock replaces sys.modules["smolagents"]
+
 _mock_smolagents = MagicMock()
 _mock_litellm_instance = MagicMock()
 _mock_smolagents.LiteLLMModel.return_value = _mock_litellm_instance
 _mock_smolagents.CodeAgent = MagicMock()
-sys.modules.setdefault("smolagents", _mock_smolagents)
+_mock_smolagents.Tool = _real_smolagents_module.Tool
+sys.modules["smolagents"] = _mock_smolagents
 
 from axiom.providers.local_adapter import LocalAdapter  # noqa: E402
 
@@ -93,7 +100,17 @@ def _make_provider_with_capture() -> tuple[TracerProvider, CaptureSink]:
 
 def _make_adapter(model_id: str = "ollama_chat/qwen2.5:7b") -> LocalAdapter:
     """Construct a LocalAdapter with the mocked smolagents."""
-    return LocalAdapter(persona="test-persona", model_id=model_id)
+    import tempfile
+    from pathlib import Path
+
+    from axiom.tools.guardrails import GuardrailsGate
+
+    return LocalAdapter(
+        persona="test-persona",
+        working_dir=Path(tempfile.gettempdir()),
+        gate=GuardrailsGate(auto_approve=True),
+        model_id=model_id,
+    )
 
 
 def _make_chat_message_mock(

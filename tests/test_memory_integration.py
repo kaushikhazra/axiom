@@ -261,6 +261,7 @@ class TestTurnIndexMonotonic:
         # Use mock ports so we don't need a real Claude adapter
         from axiom.interfaces import RespondIntent
         from axiom.loop import PraoLoop
+        from tests.fake_adapter import FakeSkills
 
         units_appended: list[ConversationUnit] = []
 
@@ -295,6 +296,7 @@ class TestTurnIndexMonotonic:
             act=None,
             observe=None,
             memory=_FakeMemory(),
+            skills=FakeSkills(),
         )
 
         loop.run("turn one")
@@ -458,7 +460,7 @@ class TestLoopEpisodicStorePersists:
         """(a) After a RespondIntent turn, loop calls store() with episodic type."""
         from axiom.interfaces import RespondIntent
         from axiom.loop import PraoLoop
-        from tests.fake_adapter import FakeMemory
+        from tests.fake_adapter import FakeMemory, FakeSkills
 
         memory = FakeMemory()
 
@@ -476,6 +478,7 @@ class TestLoopEpisodicStorePersists:
             act=None,
             observe=None,
             memory=memory,
+            skills=FakeSkills(),
         )
 
         loop.run("What is the capital of France?")
@@ -499,7 +502,7 @@ class TestLoopEpisodicStorePersists:
         """FinishIntent produces no agent text — loop skips store()."""
         from axiom.interfaces import FinishIntent
         from axiom.loop import PraoLoop
-        from tests.fake_adapter import FakeMemory
+        from tests.fake_adapter import FakeMemory, FakeSkills
 
         memory = FakeMemory()
 
@@ -517,6 +520,7 @@ class TestLoopEpisodicStorePersists:
             act=None,
             observe=None,
             memory=memory,
+            skills=FakeSkills(),
         )
 
         loop.run("goodbye")
@@ -529,6 +533,7 @@ class TestLoopEpisodicStorePersists:
         """(b) Real adapter: exchange stored by loop is retrievable in a fresh adapter."""
         from axiom.interfaces import RespondIntent
         from axiom.loop import PraoLoop
+        from tests.fake_adapter import FakeSkills
 
         with tempfile.TemporaryDirectory() as td:
             db_path = os.path.join(td, "test_loop_store.surrealkv")
@@ -571,6 +576,7 @@ class TestLoopEpisodicStorePersists:
                 act=None,
                 observe=None,
                 memory=_RecordingMemory(),
+                skills=FakeSkills(),
             )
 
             loop.run("What is Kaushik's code review preference?")

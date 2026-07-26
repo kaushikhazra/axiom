@@ -20,9 +20,15 @@ from axiom.interfaces import (
     Intent,
     RespondIntent,
     RunState,
+    UseSkillIntent,
 )
 
 logger = logging.getLogger("axiom.providers")
+
+# M5: caps [ACTIVE SKILL: ...] body rendering -- matches
+# axiom.tools.filesystem.MAX_READ_CHARS's precedent for bounding what an
+# uncapped file (here, skill body) can inject into the reasoning prompt.
+MAX_SKILL_BODY_CHARS: int = 8000
 
 # ---------------------------------------------------------------------------
 # Intent format instructions — injected verbatim into every reason() prompt
@@ -39,16 +45,22 @@ No explanation before or after. Only the JSON object.
 Choose ONE of:
   {"intent": "RESPOND", "text": "<your response to the user>"}
   {"intent": "ACT", "instruction": "<one bounded instruction for the executor>"}
+  {"intent": "USE_SKILL", "skill_name": "<name of a skill from AVAILABLE SKILLS>"}
   {"intent": "FINISH"}
 
 Rules:
-- "intent" must be exactly "RESPOND", "ACT", or "FINISH" (case-sensitive).
+- "intent" must be exactly "RESPOND", "ACT", "USE_SKILL", or "FINISH" (case-sensitive).
 - "RESPOND" requires a "text" field (string). Use ONLY for requests answerable from
   the conversation context or established general knowledge — no tools needed.
 - "ACT" requires an "instruction" field (string). You MUST use ACT (never RESPOND)
   whenever the request requires: web search, real-time or current data, file access,
   running commands, or any side effect. Do NOT attempt to answer such requests from
   memory or training data — you have zero tools; route to ACT so the executor can act.
+- "USE_SKILL" requires a "skill_name" field (string) that MUST exactly match a name
+  from the [AVAILABLE SKILLS] catalog below. Use it when a skill's description
+  indicates it is relevant to the current request, BEFORE attempting the task from
+  general knowledge or via ACT. If no available skill's description matches, do not
+  guess a name — proceed with RESPOND or ACT instead.
 - STALENESS RULE: Your training knowledge may be months or years out of date. For ANY
   fact that changes over time — software/library versions, prices, who currently holds
   a role or record, news, standings, or anything phrased "latest / current / newest /
@@ -188,6 +200,12 @@ def _parse_intent(raw: str) -> tuple[Intent | None, str | None]:
     if intent_str == "FINISH":
         return FinishIntent(), None
 
+    if intent_str == "USE_SKILL":
+        name = data.get("skill_name")
+        if not isinstance(name, str) or not name:
+            return None, f"USE_SKILL missing or invalid 'skill_name' field: {data!r}"
+        return UseSkillIntent(skill_name=name), None
+
     return None, f"unknown intent value: {intent_str!r}"
 
 
@@ -227,6 +245,26 @@ class PraoAdapterBase:
         sections: list[str] = []
         sections.append(f"[PERSONA]\n{self._persona}")
 
+        # M5: render the skills discovery catalog and any activated skill
+        # bodies as background context, alongside the memory sections below
+        # (both are "what the Conductor already knows," not "what just
+        # happened" -- the latter is skill_activation_note, rendered later
+        # near [TOOL EXECUTION RESULTS]).
+        if run_state.skills_catalog:
+            skill_lines = [
+                f"  - {s.name}: {s.description}" for s in run_state.skills_catalog
+            ]
+            sections.append("[AVAILABLE SKILLS]\n" + "\n".join(skill_lines))
+
+        for skill in run_state.active_skills:
+            skill_body = skill.body
+            if len(skill_body) > MAX_SKILL_BODY_CHARS:
+                skill_body = (
+                    skill_body[:MAX_SKILL_BODY_CHARS]
+                    + f"\n... [truncated {len(skill_body) - MAX_SKILL_BODY_CHARS} chars]"
+                )
+            sections.append(f"[ACTIVE SKILL: {skill.name}]\n{skill_body}")
+
         # M3 B1 fix: render assembled memory context into the prompt so the model
         # reasons over recalled knowledge and prior conversation turns.
         ctx = run_state.memory_context
@@ -262,6 +300,14 @@ class PraoAdapterBase:
                 "You now have the data you need. "
                 "Use RESPOND to deliver the answer to the user — do NOT request another ACT unless there is clearly something missing.]"
             )
+
+        # M5: one-shot skill-activation status -- its own section, deliberately
+        # NOT merged into [TOOL EXECUTION RESULTS] above (that section's
+        # instructional text tells the Conductor "you now have the data you
+        # need, use RESPOND," which is wrong guidance immediately after a
+        # skill activation -- see design.md D5a).
+        if run_state.skill_activation_note:
+            sections.append(f"[SKILL ACTIVATION]\n{run_state.skill_activation_note}")
 
         sections.append(f"[CURRENT REQUEST]\n{run_state.user_input}")
         sections.append(INTENT_FORMAT_INSTRUCTIONS)

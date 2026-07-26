@@ -534,8 +534,13 @@ def step6_claude_adapter_smoke() -> str:
         return FAIL
     ok(f"Persona loaded ({len(persona_text)} chars)")
 
-    # Same allowed tools as agent.py's M1_ALLOWED_TOOLS
+    # Same allowed tools as agent.py's CLAUDE_SAFE_TOOLS (M4 renamed M1_ALLOWED_TOOLS)
     M1_ALLOWED_TOOLS: list[str] = ["Bash", "WebSearch"]
+    from axiom.tools.guardrails import GuardrailsGate
+
+    # M4: gate is a required ClaudeAdapter param; auto_approve=True so this
+    # script runs unattended (best-effort file -- see design.md Files Changed).
+    gate = GuardrailsGate(auto_approve=True)
 
     with tempfile.TemporaryDirectory() as tmp:
         trace_dir = Path(tmp)
@@ -552,7 +557,7 @@ def step6_claude_adapter_smoke() -> str:
 
         try:
             adapter = ClaudeAdapter(
-                persona=persona_text, allowed_tools=M1_ALLOWED_TOOLS
+                persona=persona_text, allowed_tools=M1_ALLOWED_TOOLS, gate=gate
             )
             loop = PraoLoop(
                 perceive=adapter,
@@ -669,9 +674,7 @@ def step6_claude_adapter_smoke() -> str:
             r for r in records if r.get("span_source") == "provider-streamed"
         ]
         if provider_streamed:
-            ok(
-                f"KIND-B provider-streamed child spans found: {len(provider_streamed)}"
-            )
+            ok(f"KIND-B provider-streamed child spans found: {len(provider_streamed)}")
             for ps in provider_streamed:
                 pid = ps.get("parent_span_id")
                 if pid != act_span_id:
