@@ -134,6 +134,16 @@ class TestSelectWorkerPolicyDriven:
         assert s1.provider_name == "claude"
         assert s2.provider_name == "local"
 
+    def test_empty_factories_raises_router_error_not_stop_iteration(self) -> None:
+        """dryrun-code-1 W2: the degrade-gracefully fallthrough must raise
+        RouterError (like every other Router failure mode), not a bare
+        StopIteration from an unguarded next(iter(...))."""
+        policy = RoutePolicy(bulk_threshold_chars=0)  # forces CONDUCTOR_DEFAULT
+        router = Router(policy, {}, forced_provider=None)
+        router._conductor_provider = "claude"  # bypass select_conductor() for this test
+        with pytest.raises(RouterError, match="no adapter factories configured"):
+            router.select_worker("a long instruction over the threshold")
+
     def test_privacy_match_with_no_local_factory_raises_router_error(self) -> None:
         policy = RoutePolicy(privacy_patterns=["*secret*"])
         router = Router(policy, {"claude": lambda: _FakeRoutableAdapter("KIND_B")})

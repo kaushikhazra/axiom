@@ -124,7 +124,12 @@ class Router:
             # hard-failing (only reachable if a session is configured with
             # exactly one factory -- e.g. an explicit single-provider setup
             # without --provider forcing).
-            provider_name = next(iter(self._factories))
+            provider_name = next(iter(self._factories), None)
+            if provider_name is None:
+                # dryrun-code-1 W2: an empty adapter_factories dict must raise
+                # RouterError like every other Router failure mode -- not a
+                # bare StopIteration from an unguarded next().
+                raise RouterError("no adapter factories configured for this session")
 
         adapter = self._get(provider_name)
         fallback_allowed = (

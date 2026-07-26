@@ -23,7 +23,7 @@ from axiom.loop import PraoLoop
 from axiom.observability import timing
 from axiom.providers.claude_adapter import ClaudeAdapter
 from axiom.router.policy import RoutePolicy
-from axiom.router.router import Router
+from axiom.router.router import Router, RouterError
 from axiom.tools.guardrails import GuardrailsGate
 
 # Tool allowlist for act() queries — single source of truth (§7.3).
@@ -143,6 +143,12 @@ class Agent:
         """
         if debug:
             _configure_debug_logging()
+
+        # dryrun-code-1 W1: restore the input validation the old if/elif
+        # block used to provide -- an invalid provider string should fail
+        # loudly and immediately here, not deep inside Router construction.
+        if provider is not None and provider not in ("claude", "local"):
+            raise ValueError(f"unknown provider: {provider!r}")
 
         persona_text = persona_pkg.load()
 
@@ -266,6 +272,12 @@ class Agent:
         except MaxCyclesExceededError as e:
             return f"[Error: max cycles exceeded — {e}]"
         except AdapterError as e:
+            return f"[Error: {e}]"
+        except RouterError as e:
+            # dryrun-code-1 B1: RouterError is a sibling of AdapterError (both
+            # derive directly from Exception, not from each other) -- without
+            # this branch it propagated uncaught, crashing the CLI with a raw
+            # traceback instead of RT-4's promised "clear, typed error."
             return f"[Error: {e}]"
         finally:
             if self._faculty is not None:
