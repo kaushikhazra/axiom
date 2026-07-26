@@ -153,8 +153,20 @@ class LocalAdapter(PraoAdapterBase):
         """
         # Defect-A: detect post-act context (history present) and prepend a strong
         # RESPOND-forcing framing block for qwen2.5:7b.
+        #
+        # M5 / dryrun-code-1 B2: history (and therefore this sentinel) never
+        # clears once populated -- so without the second check below, this
+        # would still hard-force RESPOND on the cycle immediately after a
+        # skill activation that happens to follow an earlier ACT in the same
+        # run, silently re-triggering the exact failure class
+        # dryrun-design-1's C3 fixed (Conductor pushed to respond instead of
+        # using the skill it just activated) via this LocalAdapter-only code
+        # path. [SKILL ACTIVATION] is one-shot (design.md D5a) -- its
+        # presence means "something new just happened that the Conductor
+        # should act on," so the forcing is suppressed for that one cycle.
         _POST_ACT_SENTINEL = "[TOOL EXECUTION RESULTS"
-        if _POST_ACT_SENTINEL in context:
+        _SKILL_ACTIVATION_SENTINEL = "[SKILL ACTIVATION]"
+        if _POST_ACT_SENTINEL in context and _SKILL_ACTIVATION_SENTINEL not in context:
             # Extract the act result(s) from the context for an explicit summary.
             # The perceive() format is:
             #   [TOOL EXECUTION RESULTS — read these carefully]

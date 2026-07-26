@@ -278,6 +278,52 @@ class TestLocalAdapterReason:
         assert "SYSTEM INSTRUCTION (highest priority" not in sent_text
         assert sent_text == plain_context
 
+    def test_no_framing_block_when_skill_activation_present(self) -> None:
+        """M5 / dryrun-code-1 B2 regression: [TOOL EXECUTION RESULTS from an
+        earlier ACT is still present (history never clears), but a skill was
+        JUST activated -- the hard RESPOND-forcing framing must be suppressed
+        so the Conductor can actually use the skill instead of being pushed
+        to respond immediately (the exact failure class dryrun-design-1's C3
+        fixed, reproduced here via LocalAdapter's own Defect-A mechanism)."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "ACT", "instruction": "use the skill instructions"}'
+        )
+        post_act_and_skill_context = (
+            "[PERSONA]\nTest persona\n\n"
+            "[ACTIVE SKILL: csv-summarizer]\nStep 1: read the CSV.\n\n"
+            "[TOOL EXECUTION RESULTS — read these carefully]\n"
+            "Step 1: file1.csv\n\n"
+            "[SKILL ACTIVATION]\n[SKILL ACTIVATED] csv-summarizer\n\n"
+            "[CURRENT REQUEST]\nSummarize the csv"
+        )
+        adapter.reason(post_act_and_skill_context)
+        call_args = mock_model.call_args
+        sent_text = call_args[0][0][0]["content"][0]["text"]
+        assert "SYSTEM INSTRUCTION (highest priority" not in sent_text
+        assert sent_text == post_act_and_skill_context
+
+    def test_framing_block_returns_after_skill_activation_note_clears(self) -> None:
+        """Once skill_activation_note is cleared (the cycle after activation,
+        per design.md D5a's one-shot rendering), [TOOL EXECUTION RESULTS
+        alone is enough to re-trigger the forcing -- suppression is scoped
+        to exactly the one cycle the note is visible for."""
+        adapter, mock_model = _make_adapter()
+        mock_model.return_value = _make_model_response(
+            '{"intent": "RESPOND", "text": "done"}'
+        )
+        post_act_context_no_skill_note = (
+            "[PERSONA]\nTest persona\n\n"
+            "[ACTIVE SKILL: csv-summarizer]\nStep 1: read the CSV.\n\n"
+            "[TOOL EXECUTION RESULTS — read these carefully]\n"
+            "Step 1: file1.csv\n\n"
+            "[CURRENT REQUEST]\nSummarize the csv"
+        )
+        adapter.reason(post_act_context_no_skill_note)
+        call_args = mock_model.call_args
+        sent_text = call_args[0][0][0]["content"][0]["text"]
+        assert "SYSTEM INSTRUCTION (highest priority" in sent_text
+
     def test_post_act_context_returns_respond_intent(self) -> None:
         """Defect-A integration: reason() returns RESPOND when history is present
         and model correctly returns RESPOND intent (main scenario for loop termination)."""

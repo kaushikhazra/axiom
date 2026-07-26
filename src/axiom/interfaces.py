@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol, Union
 
+from axiom.skills.port import SkillContent, SkillSpec  # noqa: F401 -- referenced only in RunState's annotations below; PEP 563 (postponed evaluation) makes this invisible to naive unused-import checks, but typing.get_type_hints(RunState) requires it to be resolvable (dryrun-code-1 B1).
+
 
 # ---------------------------------------------------------------------------
 # Intent type system
