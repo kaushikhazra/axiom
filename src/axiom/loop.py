@@ -41,9 +41,11 @@ from axiom.interfaces import (
     ReasonPort,
     RespondIntent,
     RunState,
+    UseSkillIntent,
 )
 from axiom.memory.models import ConversationUnit
 from axiom.memory.port import MemoryPort
+from axiom.skills.port import SkillNotFoundError, SkillsPort
 
 MAX_CYCLES: int = 10  # module-level constant; overridable via constructor
 
@@ -84,6 +86,7 @@ class PraoLoop:
         act: ActPort,
         observe: ObservePort,
         memory: MemoryPort,
+        skills: SkillsPort,
         max_cycles: int = MAX_CYCLES,
     ) -> None:
         self._perceive = perceive
@@ -92,6 +95,7 @@ class PraoLoop:
         self._observe = observe
         self._max_cycles = max_cycles
         self._memory = memory
+        self._skills = skills
         # B4 fix: session-scoped monotonically increasing turn counter.
         # Incremented at Observe (after append_unit) on every RespondIntent or FinishIntent.
         # Never reset between run() calls so turn_index is unique across the session.
@@ -164,10 +168,22 @@ class PraoLoop:
 
         with _maybe_record("run", run_id, provider_kind):
             while True:
+                # M5: discovery catalog refreshed every cycle (not once per
+                # turn like memory_context) so a skill authored mid-run via
+                # ACT is picked up on the very next Perceive (design.md D3).
+                run_state.skills_catalog = await asyncio.to_thread(
+                    self._skills.list_skills
+                )
+
                 with _maybe_record("perceive", run_id, provider_kind):
                     context = await asyncio.to_thread(
                         self._perceive.perceive, run_state
                     )
+
+                # M5: skill_activation_note is one-shot -- rendered into the
+                # context just built, then cleared so it doesn't repeat on
+                # subsequent cycles (design.md D5a).
+                run_state.skill_activation_note = None
 
                 with _maybe_record("reason", run_id, provider_kind):
                     run_state.spawn_count += 1
@@ -209,6 +225,45 @@ class PraoLoop:
                     await self._memory.append_unit(unit)
                     self._turn_index += 1
                     return ("", run_state)
+
+                if isinstance(intent, UseSkillIntent):
+                    # M5: skill activation is loop-owned bookkeeping, not a
+                    # provider Act call -- own phase label ("use_skill", not
+                    # "act"), own result channel (skill_activation_note, not
+                    # run_state.history -- see design.md D5a for why), own
+                    # dedup check, and cycle_count incremented directly (no
+                    # ObservePort.observe() call: that contract is
+                    # specifically "append an ACT result to history," which
+                    # this deliberately does not do). spawn_count is
+                    # deliberately NOT incremented here -- it tracks provider
+                    # query() dispatches, and skill activation makes none.
+                    with _maybe_record("use_skill", run_id, provider_kind):
+                        already_active_names = {s.name for s in run_state.active_skills}
+                        if intent.skill_name in already_active_names:
+                            run_state.skill_activation_note = (
+                                f"[SKILL ALREADY ACTIVE] {intent.skill_name}"
+                            )
+                        else:
+                            try:
+                                content = await asyncio.to_thread(
+                                    self._skills.get_skill, intent.skill_name
+                                )
+                                run_state.active_skills.append(content)
+                                run_state.skill_activation_note = (
+                                    f"[SKILL ACTIVATED] {intent.skill_name} -- "
+                                    "its full instructions are now available "
+                                    f"below under [ACTIVE SKILL: {intent.skill_name}]. "
+                                    "Use them to inform your next ACT or RESPOND."
+                                )
+                            except SkillNotFoundError as exc:
+                                run_state.skill_activation_note = f"[SKILL ERROR] {exc}"
+                        run_state.cycle_count += 1
+
+                    if run_state.cycle_count >= self._max_cycles:
+                        raise MaxCyclesExceededError(
+                            f"max cycles ({self._max_cycles}) exceeded without terminal intent"
+                        )
+                    continue
 
                 # intent == ACT — execute, observe, then loop back to perceive
                 if not isinstance(intent, ActIntent):

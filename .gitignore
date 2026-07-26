@@ -6,3 +6,8 @@ __pycache__/
 dist/
 build/
 /hello*.py
+
+# Scratch/verification directories (live-CLI verification working dirs, ad-hoc
+# package installs) -- never intended for commit.
+**/verify-scratch/
+**/*-scratch/

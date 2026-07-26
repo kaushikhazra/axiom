@@ -209,22 +209,41 @@ def test_e2e_create_and_run_python_file() -> None:
     - A .py file exists on disk in the current working directory after the run
       (confirming real file creation, not just in-memory execution).
 
-    The CodeAgent's generated Python writes a real .py file via open(..., 'w')
-    and executes it via subprocess.run(), capturing stdout. 'subprocess' is in
-    additional_authorized_imports (W3/O5 resolution).
+    M4 update: the CodeAgent's generated code can no longer call bare open()
+    or subprocess directly -- 'subprocess' was removed from
+    additional_authorized_imports and open() is no longer pre-injected
+    (design.md AC-04.4/AC-05.4). This scenario now depends on the model
+    choosing to call the gated WriteFileTool/RunShellTool instead (both
+    auto-approved for this test via gate=GuardrailsGate(auto_approve=True)).
+    Both tools are advertised to the model via smolagents' own tool-listing
+    in the system prompt, the same way DuckDuckGoSearchTool already is.
 
     Note: wired directly via LocalAdapter + PraoLoop (not via Agent convenience
     class) to allow max_steps=8. qwen2.5:7b typically needs 4-6 steps for this
     task; the default max_steps=5 is too tight for the write+execute+report flow.
     """
+    from pathlib import Path
+
+    from axiom.tools.guardrails import GuardrailsGate
+
     persona_text = persona_pkg.load()
-    adapter = LocalAdapter(persona=persona_text, max_steps=8)
+    # M4: gate=auto_approve=True -- this test's entire point is verifying a
+    # real write+execute happens, so it must auto-approve the DESTRUCTIVE
+    # write_file/run_shell calls rather than hang/deny on non-interactive
+    # stdin (design.md D11).
+    adapter = LocalAdapter(
+        persona=persona_text,
+        working_dir=Path(os.getcwd()),
+        gate=GuardrailsGate(auto_approve=True),
+        max_steps=8,
+    )
     loop = PraoLoop(
         perceive=adapter,
         reason=adapter,
         act=adapter,
         observe=adapter,
         max_cycles=10,
+        skills=SkillsRegistry(skills_dir=Path(os.getcwd()) / "skills"),
     )
 
     # Test-isolation: remove any stale hello*.py artifacts left by prior runs so

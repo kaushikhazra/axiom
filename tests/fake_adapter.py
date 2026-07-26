@@ -20,6 +20,7 @@ from axiom.interfaces import (
     RespondIntent,
     RunState,
 )
+from axiom.skills.port import SkillContent, SkillNotFoundError, SkillSpec
 
 
 class FakeAdapter:
@@ -136,3 +137,43 @@ class FakeMemory:
             {"content": content, "memory_type": memory_type, "id": mid}
         )
         return mid
+
+
+class FakeSkills:
+    """In-memory stub satisfying SkillsPort -- for tests that wire PraoLoop
+    directly without a real SkillsRegistry.
+
+    Args:
+        skills: Pre-populated {name: SkillContent} map served by
+                list_skills()/get_skill()/search(). Empty by default (no
+                skills present) -- matches SkillsRegistry's own behavior
+                for a missing/empty skills_dir (SK-6).
+    """
+
+    def __init__(self, skills: dict[str, SkillContent] | None = None) -> None:
+        self._skills = skills or {}
+        self.list_skills_calls: int = 0
+        self.get_skill_calls: list[str] = []
+        self.search_calls: list[str] = []
+
+    def list_skills(self) -> list[SkillSpec]:
+        self.list_skills_calls += 1
+        return [
+            SkillSpec(name=c.name, description=c.description)
+            for c in self._skills.values()
+        ]
+
+    def get_skill(self, name: str) -> SkillContent:
+        self.get_skill_calls.append(name)
+        if name not in self._skills:
+            raise SkillNotFoundError(f"no such skill: {name!r}")
+        return self._skills[name]
+
+    def search(self, query: str) -> list[SkillSpec]:
+        self.search_calls.append(query)
+        q = query.lower()
+        return [
+            SkillSpec(name=c.name, description=c.description)
+            for c in self._skills.values()
+            if q in c.name.lower() or q in c.description.lower()
+        ]
