@@ -78,6 +78,7 @@ class Agent:
         ollama_host: str | None = None,
         working_dir: str | Path | None = None,
         auto_approve_tools: bool = False,
+        skills_dir: str | Path | None = None,
     ) -> None:
         """Wire the composition root.
 
@@ -103,6 +104,9 @@ class Agent:
                                  returns True unconditionally instead of prompting.
                                  Off by default — the safe, prompting behavior is
                                  the default (AC-07.3).
+            skills_dir: M5 — root directory SkillsRegistry discovers SKILL.md
+                        directories under. Defaults to {working_dir}/skills
+                        when None (SK-6).
         """
         if debug:
             _configure_debug_logging()
@@ -114,6 +118,13 @@ class Agent:
         # (design.md D2).
         resolved_working_dir = (
             Path(working_dir) if working_dir is not None else Path.cwd()
+        )
+        # M5: skills_dir defaults to {working_dir}/skills (SK-6) — mirrors
+        # working_dir's own default-resolution pattern.
+        resolved_skills_dir = (
+            Path(skills_dir)
+            if skills_dir is not None
+            else resolved_working_dir / "skills"
         )
         gate = GuardrailsGate(auto_approve=auto_approve_tools)
 
@@ -145,6 +156,11 @@ class Agent:
         _mem_cfg = memory_config if memory_config is not None else MemoryConfig()
         self._memory_adapter = CognitiveMemoryAdapter(_mem_cfg)
 
+        # M5 skills — loop-level port, constructed here the same way memory is.
+        from axiom.skills.registry import SkillsRegistry  # noqa: PLC0415
+
+        skills_registry = SkillsRegistry(skills_dir=resolved_skills_dir)
+
         self._loop = PraoLoop(
             perceive=adapter,
             reason=adapter,
@@ -152,6 +168,7 @@ class Agent:
             observe=adapter,
             max_cycles=10,
             memory=self._memory_adapter,
+            skills=skills_registry,
         )
 
         self._provider_kind: str = _PROVIDER_KIND.get(provider, "KIND_A")

@@ -1,11 +1,11 @@
-- [ ] **Implementer** creates `src/axiom/skills/port.py` — SkillSpec, SkillContent, SkillNotFoundError, SkillsPort Protocol. _SK-1_
-- [ ] **Implementer** creates `src/axiom/skills/parser.py` — parse_skill_md(), SkillValidationError, frontmatter validation. _SK-2_
-- [ ] **Implementer** creates `src/axiom/skills/registry.py` — SkillsRegistry(SkillsPort), discovery, exclusion, search. _SK-1, SK-2, SK-5, SK-6_
-- [ ] **Implementer** updates `src/axiom/interfaces.py` — IntentKind.USE_SKILL, UseSkillIntent, RunState.skills_catalog/active_skills. _SK-3_
-- [ ] **Implementer** updates `src/axiom/loop.py` — PraoLoop takes skills: SkillsPort; per-cycle catalog refresh; UseSkillIntent handling. _SK-1, SK-3, SK-4_
-- [ ] **Implementer** updates `src/axiom/providers/base.py` — USE_SKILL wire format, _parse_intent branch, perceive() rendering. _SK-3_
-- [ ] **Implementer** updates `src/axiom/agent.py` — skills_dir constructor param, SkillsRegistry construction, PraoLoop wiring. _SK-6_
-- [ ] **Implementer** creates `tests/test_skills_parser.py` — frontmatter validation cases. _SK-2_
-- [ ] **Implementer** creates `tests/test_skills_registry.py` — discovery, exclusion, get_skill/SkillNotFoundError, search, empty dir. _SK-1, SK-2, SK-5, SK-6_
-- [ ] **Implementer** extends `tests/test_loop.py` — UseSkillIntent success/unknown-skill paths, per-cycle catalog refresh timing. _SK-3, SK-4_
-- [ ] **Implementer** updates existing `PraoLoop(...)` construction call sites (tests + agent.py) to pass `skills=`. _SK-1_
+- [x] **Implementer** creates `src/axiom/skills/port.py` — SkillSpec, SkillContent, SkillNotFoundError, SkillsPort Protocol. _SK-1_
+- [x] **Implementer** creates `src/axiom/skills/parser.py` — parse_skill_md(), SkillValidationError, frontmatter validation. _SK-2_
+- [x] **Implementer** creates `src/axiom/skills/registry.py` — SkillsRegistry(SkillsPort), discovery, exclusion, search. _SK-1, SK-2, SK-5, SK-6_
+- [x] **Implementer** updates `src/axiom/interfaces.py` — IntentKind.USE_SKILL, UseSkillIntent, RunState.skills_catalog/active_skills. _SK-3_
+- [x] **Implementer** updates `src/axiom/loop.py` — PraoLoop takes skills: SkillsPort; per-cycle catalog refresh; UseSkillIntent handling. _SK-1, SK-3, SK-4_
+- [x] **Implementer** updates `src/axiom/providers/base.py` — USE_SKILL wire format, _parse_intent branch, perceive() rendering. _SK-3_
+- [x] **Implementer** updates `src/axiom/agent.py` — skills_dir constructor param, SkillsRegistry construction, PraoLoop wiring. _SK-6_
+- [x] **Implementer** creates `tests/test_skills_parser.py` — frontmatter validation cases. _SK-2_
+- [x] **Implementer** creates `tests/test_skills_registry.py` — discovery, exclusion, get_skill/SkillNotFoundError, search, empty dir. _SK-1, SK-2, SK-5, SK-6_
+- [x] **Implementer** extends `tests/test_contracts.py` (actual loop-contract test file; `test_loop.py` named in design.md does not exist in this repo) — UseSkillIntent success/already-active/unknown-skill paths, per-cycle catalog refresh timing, spawn_count/cycle_count semantics. _SK-3, SK-4_
+- [x] **Implementer** updates existing `PraoLoop(...)` construction call sites (`tests/test_contracts.py`, `tests/test_local_e2e.py`, `tests/test_memory_integration.py` x4, `src/axiom/agent.py`) to pass `skills=`. _SK-1_

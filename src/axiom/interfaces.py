@@ -26,6 +26,7 @@ class IntentKind(Enum):
     RESPOND = auto()  # trivial / terminal: return text to user, end loop
     ACT = auto()  # action required: call act() with instruction
     FINISH = auto()  # explicit done signal: end loop, no response text
+    USE_SKILL = auto()  # M5: activate a skill by name
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,14 @@ class FinishIntent:
     kind: IntentKind = field(init=False, default=IntentKind.FINISH)
 
 
-Intent = Union[RespondIntent, ActIntent, FinishIntent]
+@dataclass(frozen=True)
+class UseSkillIntent:
+    skill_name: str = ""
+    # kind is excluded from __init__ so UseSkillIntent("x") sets skill_name, not kind.
+    kind: IntentKind = field(init=False, default=IntentKind.USE_SKILL)
+
+
+Intent = Union[RespondIntent, ActIntent, FinishIntent, UseSkillIntent]
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +86,15 @@ class RunState:
     memory_context: object = (
         None  # M3: AssembledContext | None (typed as object to avoid memory import)
     )
+    # M5: discovery catalog, refreshed every Perceive call (not once per turn,
+    # unlike memory_context) so a skill authored mid-run is picked up
+    # immediately -- see loop.py._run_async and design.md D3.
+    skills_catalog: list[SkillSpec] = field(default_factory=list)
+    # M5: activated skill bodies, accumulate for the run, never evicted mid-run.
+    active_skills: list[SkillContent] = field(default_factory=list)
+    # M5: one-shot status set by loop.py on a UseSkillIntent cycle, rendered
+    # once by perceive() on the immediately following cycle, then cleared.
+    skill_activation_note: str | None = None
 
 
 # ---------------------------------------------------------------------------

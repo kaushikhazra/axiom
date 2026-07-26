@@ -243,6 +243,7 @@ def test_e2e_create_and_run_python_file() -> None:
         act=adapter,
         observe=adapter,
         max_cycles=10,
+        skills=SkillsRegistry(skills_dir=Path(os.getcwd()) / "skills"),
     )
 
     # Test-isolation: remove any stale hello*.py artifacts left by prior runs so
