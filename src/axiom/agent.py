@@ -117,11 +117,15 @@ class Agent:
                    to stderr. Constructor parameter — not an env-var or global mutation.
             provider: M6 — "claude"/"local" explicitly FORCES that provider for
                       both Conductor and every Worker dispatch, bypassing Router's
-                      policy evaluation entirely (RT-8). None (default) means "no
-                      preference" — Router's policy engine (privacy/cost/capability,
-                      RT-4/5/6) actually decides. LocalAdapter is imported lazily so
-                      Claude-only installs never pay the litellm import cost unless
-                      a local adapter is actually needed.
+                      policy evaluation entirely (RT-8). M7 — "committee" FORCES
+                      every Worker dispatch to every configured provider at once
+                      (the Conductor itself still resolves to "claude", the
+                      capability-preferred default -- committee mode only ever
+                      affects Worker selection, OR-1). None (default) means "no
+                      preference" — Router's policy engine (privacy/cost/capability/
+                      consortium, RT-4/5/6, OR-2) actually decides. LocalAdapter is
+                      imported lazily so Claude-only installs never pay the litellm
+                      import cost unless a local adapter is actually needed.
             ollama_host: Optional Ollama API base URL, e.g. "http://192.168.0.235:11434".
                          Only used when provider="local"; ignored otherwise. Defaults to
                          LocalAdapter's own localhost default when None.
@@ -147,7 +151,9 @@ class Agent:
         # dryrun-code-1 W1: restore the input validation the old if/elif
         # block used to provide -- an invalid provider string should fail
         # loudly and immediately here, not deep inside Router construction.
-        if provider is not None and provider not in ("claude", "local"):
+        # M7 (dryrun-design-1 C1): "committee" added -- without it here,
+        # --provider committee would raise before Router is even constructed.
+        if provider is not None and provider not in ("claude", "local", "committee"):
             raise ValueError(f"unknown provider: {provider!r}")
 
         persona_text = persona_pkg.load()

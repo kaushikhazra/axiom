@@ -204,6 +204,15 @@ class FakeRouter:
                              select_fallback_worker() -- None means "no
                              fallback available" (RT-9's propagate-original-
                              error path).
+        committee_selections: M7 -- scripted sequence of
+                               list[WorkerSelection] | None objects returned
+                               from select_committee() in order (mirrors
+                               worker_selections). When exhausted/not
+                               provided, select_committee() returns None
+                               (committee mode not triggered) -- matches
+                               select_worker()'s existing pattern of "no
+                               script configured" defaulting to the
+                               unremarkable case.
     """
 
     def __init__(
@@ -211,6 +220,7 @@ class FakeRouter:
         default_worker: object | None = None,
         worker_selections: list[WorkerSelection] | None = None,
         fallback_selection: WorkerSelection | None = None,
+        committee_selections: list[list[WorkerSelection] | None] | None = None,
     ) -> None:
         adapter = default_worker if default_worker is not None else FakeAdapter()
         self._default_selection = WorkerSelection(
@@ -221,9 +231,13 @@ class FakeRouter:
         )
         self._worker_selections: deque[WorkerSelection] = deque(worker_selections or [])
         self._fallback_selection = fallback_selection
+        self._committee_selections: deque[list[WorkerSelection] | None] = deque(
+            committee_selections or []
+        )
 
         self.select_worker_calls: list[str] = []
         self.select_fallback_worker_calls: list[str] = []
+        self.select_committee_calls: list[str] = []
 
     def select_worker(self, instruction: str) -> WorkerSelection:
         self.select_worker_calls.append(instruction)
@@ -234,3 +248,9 @@ class FakeRouter:
     def select_fallback_worker(self, excluded_provider: str) -> WorkerSelection | None:
         self.select_fallback_worker_calls.append(excluded_provider)
         return self._fallback_selection
+
+    def select_committee(self, instruction: str) -> list[WorkerSelection] | None:
+        self.select_committee_calls.append(instruction)
+        if self._committee_selections:
+            return self._committee_selections.popleft()
+        return None

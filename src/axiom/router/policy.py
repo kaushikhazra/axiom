@@ -18,6 +18,10 @@ class RoutePolicy:
     privacy_patterns: list[str] = field(default_factory=list)  # RT-4
     bulk_threshold_chars: int = 200  # RT-5
     capability_patterns: list[str] = field(default_factory=list)  # RT-6
+    consortium_patterns: list[str] = field(default_factory=list)  # OR-2 (M7)
+    max_committee_size: int | None = None  # OR-8 (M7) -- None = "use however
+    # many adapters are configured"; a RoutePolicy is constructed independently
+    # of any Router, so it can't know the adapter count in advance (design.md D4).
 
 
 def _matches_any(instruction: str, patterns: list[str]) -> bool:
@@ -40,6 +44,8 @@ class RoutingDecision:
     CAPABILITY = "capability"
     BULK_DEFAULT = "bulk_default"
     CONDUCTOR_DEFAULT = "conductor_default"
+    CONSORTIUM = "consortium"  # M7 -- not returned by evaluate() (unmodified);
+    # used by Router.select_committee() for its own logging/tracing only.
 
 
 def evaluate(instruction: str, policy: RoutePolicy) -> tuple[str, str]:
@@ -57,3 +63,20 @@ def evaluate(instruction: str, policy: RoutePolicy) -> tuple[str, str]:
     if len(instruction) <= policy.bulk_threshold_chars:
         return "local", RoutingDecision.BULK_DEFAULT
     return "__conductor__", RoutingDecision.CONDUCTOR_DEFAULT
+
+
+def should_form_committee(
+    instruction: str, policy: RoutePolicy, forced_provider: str | None
+) -> bool:
+    """M7 (OR-2/OR-5): decides whether this ACT dispatch is committee-mode,
+    entirely independent of evaluate() (which stays single-provider-only,
+    unmodified). Precedence: single-provider override > privacy > explicit
+    committee override > consortium_patterns match.
+    """
+    if forced_provider is not None and forced_provider != "committee":
+        return False  # RT-8's single-provider override always wins
+    if _matches_any(instruction, policy.privacy_patterns):
+        return False  # OR-5: privacy is absolute, even over a committee override
+    if forced_provider == "committee":
+        return True
+    return _matches_any(instruction, policy.consortium_patterns)

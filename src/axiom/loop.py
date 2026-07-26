@@ -279,54 +279,105 @@ class PraoLoop:
                         "expected ActIntent"
                     )
 
-                # M6: Router selects the Worker fresh for this dispatch (RT-3)
-                # -- may differ from the Conductor (self._reason's provider).
-                selection = self._router.select_worker(intent.instruction)
-                with _maybe_record("act", run_id, provider_kind) as act_span:
-                    if act_span is not None:
-                        # Record what was ATTEMPTED before dispatch so a hard
-                        # failure (no fallback, or fallback also fails) still
-                        # carries routing attribution in the trace.
-                        act_span.set_attribute(
-                            "axiom.control_level", selection.control_level
-                        )
-                        act_span.set_attribute(
-                            "axiom.router.provider", selection.provider_name
+                # M7: Router checks committee mode first (OR-1/OR-2) -- None
+                # means "not triggered", falls through to M6's single-dispatch
+                # path below, completely unmodified.
+                committee = self._router.select_committee(intent.instruction)
+
+                if committee is not None:
+                    # M7: committee dispatch -- OR-3/OR-4/OR-6/OR-7.
+                    with _maybe_record("act", run_id, provider_kind) as act_span:
+                        if act_span is not None:
+                            act_span.set_attribute(
+                                "axiom.router.committee_size", len(committee)
+                            )
+                            act_span.set_attribute(
+                                "axiom.router.providers",
+                                ",".join(m.provider_name for m in committee),
+                            )
+
+                        run_state.spawn_count += len(
+                            committee
+                        )  # OR-3: one real dispatch per member
+                        parts: list[str] = []
+                        any_succeeded = False
+                        for member in committee:
+                            try:
+                                member_result = await asyncio.to_thread(
+                                    member.adapter.act, intent.instruction
+                                )
+                                parts.append(
+                                    f"[{member.provider_name}]: {member_result}"
+                                )
+                                any_succeeded = True
+                            except AdapterError as exc:
+                                # OR-6: note the failure, keep going -- no
+                                # fallback substitution (OR-7).
+                                parts.append(
+                                    f"[{member.provider_name}]: FAILED — {exc}"
+                                )
+
+                        if not any_succeeded:
+                            # OR-6: a committee where nobody answered is not success.
+                            raise AdapterError(
+                                f"all {len(committee)} committee members failed"
+                            )
+                        result = "\n".join(parts)
+
+                    with _maybe_record("observe", run_id, provider_kind):
+                        run_state = await asyncio.to_thread(
+                            self._observe.observe, result, run_state
                         )
 
-                    run_state.spawn_count += 1
-                    try:
-                        result = await asyncio.to_thread(
-                            selection.adapter.act, intent.instruction
-                        )
-                        final_selection = selection
-                    except AdapterError:
-                        if not selection.fallback_allowed:
-                            raise
-                        fallback = self._router.select_fallback_worker(
-                            selection.provider_name
-                        )
-                        if fallback is None:
-                            raise
-                        run_state.spawn_count += 1  # a second loop-dispatched call
-                        result = await asyncio.to_thread(
-                            fallback.adapter.act, intent.instruction
-                        )
-                        final_selection = fallback
+                else:
+                    # M6: Router selects the Worker fresh for this dispatch (RT-3)
+                    # -- may differ from the Conductor (self._reason's provider).
+                    selection = self._router.select_worker(intent.instruction)
+                    with _maybe_record("act", run_id, provider_kind) as act_span:
+                        if act_span is not None:
+                            # Record what was ATTEMPTED before dispatch so a hard
+                            # failure (no fallback, or fallback also fails) still
+                            # carries routing attribution in the trace.
+                            act_span.set_attribute(
+                                "axiom.control_level", selection.control_level
+                            )
+                            act_span.set_attribute(
+                                "axiom.router.provider", selection.provider_name
+                            )
 
-                    if act_span is not None and final_selection is not selection:
-                        # A fallback occurred -- overwrite with the ACTUAL outcome.
-                        act_span.set_attribute(
-                            "axiom.control_level", final_selection.control_level
-                        )
-                        act_span.set_attribute(
-                            "axiom.router.provider", final_selection.provider_name
-                        )
+                        run_state.spawn_count += 1
+                        try:
+                            result = await asyncio.to_thread(
+                                selection.adapter.act, intent.instruction
+                            )
+                            final_selection = selection
+                        except AdapterError:
+                            if not selection.fallback_allowed:
+                                raise
+                            fallback = self._router.select_fallback_worker(
+                                selection.provider_name
+                            )
+                            if fallback is None:
+                                raise
+                            run_state.spawn_count += 1  # a second loop-dispatched call
+                            result = await asyncio.to_thread(
+                                fallback.adapter.act, intent.instruction
+                            )
+                            final_selection = fallback
 
-                with _maybe_record("observe", run_id, provider_kind):
-                    run_state = await asyncio.to_thread(
-                        self._observe.observe, result, run_state
-                    )
+                        if act_span is not None and final_selection is not selection:
+                            # A fallback occurred -- overwrite with the ACTUAL outcome.
+                            act_span.set_attribute(
+                                "axiom.control_level", final_selection.control_level
+                            )
+                            act_span.set_attribute(
+                                "axiom.router.provider", final_selection.provider_name
+                            )
+
+                    with _maybe_record("observe", run_id, provider_kind):
+                        run_state = await asyncio.to_thread(
+                            self._observe.observe, result, run_state
+                        )
 
                 if run_state.cycle_count >= self._max_cycles:
                     raise MaxCyclesExceededError(
