@@ -24,27 +24,38 @@ from axiom.interfaces import (
     UseSkillIntent,
 )
 from axiom.loop import PraoLoop
+from axiom.router.router import WorkerSelection
 from axiom.skills.port import SkillContent
-from tests.fake_adapter import FakeAdapter, FakeMemory, FakeSkills
+from tests.fake_adapter import FakeAdapter, FakeMemory, FakeRouter, FakeSkills
 
 
 def _make_loop(
-    adapter: FakeAdapter, max_cycles: int = 10, skills: FakeSkills | None = None
+    adapter: FakeAdapter,
+    max_cycles: int = 10,
+    skills: FakeSkills | None = None,
+    router: FakeRouter | None = None,
 ) -> PraoLoop:
-    """Helper: wire all four slots with the same FakeAdapter instance.
+    """Helper: wire perceive/reason/observe to the same FakeAdapter instance.
 
     M3: memory is constitutive — always wired. FakeMemory is a no-op stub that
     satisfies MemoryPort without touching real storage or embeddings.
     M5: skills is constitutive too — FakeSkills defaults to an empty catalog
     (matching SkillsRegistry's own behavior for a missing/empty skills_dir).
+    M6: router is constitutive too — defaults to a FakeRouter whose
+    select_worker() always returns `adapter` itself, so every pre-M6 test
+    asserting on adapter.act_calls keeps working unchanged; tests that need
+    to exercise Router-specific behavior (per-cycle provider switching,
+    fallback) pass their own FakeRouter.
     """
+    if router is None:
+        router = FakeRouter(default_worker=adapter)
     return PraoLoop(
         perceive=adapter,
         reason=adapter,
-        act=adapter,
         observe=adapter,
         memory=FakeMemory(),
         skills=skills if skills is not None else FakeSkills(),
+        router=router,
         max_cycles=max_cycles,
     )
 
@@ -393,3 +404,303 @@ class TestUseSkillIntentMaxCyclesBreach:
         # last one raises after incrementing cycle_count but before another
         # get_skill call, so exactly MAX skills were successfully activated.
         assert len(self.skills.get_skill_calls) == self.MAX
+
+
+# ---------------------------------------------------------------------------
+# (g) Router-driven ACT dispatch (M6)
+# ---------------------------------------------------------------------------
+
+
+class TestRouterSelectsWorkerPerCycle:
+    """RT-3: select_worker() is called once per ACT dispatch, with the
+    instruction from that cycle's ActIntent."""
+
+    def test_select_worker_called_with_instruction(self) -> None:
+        adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")],
+            act_results=["x result"],
+        )
+        router = FakeRouter(default_worker=adapter)
+        loop = _make_loop(adapter, router=router)
+        loop.run("go")
+        assert router.select_worker_calls == ["do x"]
+
+    def test_two_act_cycles_call_select_worker_twice_with_different_instructions(
+        self,
+    ) -> None:
+        adapter = FakeAdapter(
+            intents=[
+                ActIntent(instruction="step one"),
+                ActIntent(instruction="step two"),
+                RespondIntent(text="done"),
+            ],
+            act_results=["r1", "r2"],
+        )
+        router = FakeRouter(default_worker=adapter)
+        loop = _make_loop(adapter, router=router)
+        loop.run("go")
+        assert router.select_worker_calls == ["step one", "step two"]
+
+    def test_worker_can_differ_from_the_conductor_adapter(self) -> None:
+        """A different adapter instance than perceive/reason/observe's can
+        serve as the Worker -- proves the loop dispatches to whatever
+        Router hands back, not always the same bound adapter."""
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        worker_adapter = FakeAdapter(act_results=["worker result"])
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=worker_adapter,
+                    provider_name="local",
+                    control_level="KIND_A",
+                    fallback_allowed=True,
+                )
+            ]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        loop.run("go")
+        assert worker_adapter.act_calls == ["do x"]
+        assert (
+            conductor_adapter.act_calls == []
+        )  # never dispatched to the Conductor's own adapter
+
+
+class TestRouterFallback:
+    """RT-9: primary Worker fails with AdapterError -> loop retries once via
+    select_fallback_worker() when fallback_allowed; no fallback otherwise."""
+
+    def test_fallback_succeeds_after_primary_failure(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["fallback result"])
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=WorkerSelection(
+                adapter=healthy_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        text, state = loop.run("go")
+        assert text == "done"
+        assert healthy_adapter.act_calls == ["do x"]
+        assert router.select_fallback_worker_calls == ["claude"]
+
+    def test_spawn_count_counts_both_dispatch_attempts_on_fallback(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["fallback result"])
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=WorkerSelection(
+                adapter=healthy_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        loop = _make_loop(conductor_adapter, router=router)
+        _text, state = loop.run("go")
+        # 1 reason (ActIntent) + 1 reason (final RESPOND) + 2 act dispatches
+        # (primary failure + fallback success) = 4.
+        assert state.spawn_count == 4
+
+    def test_no_fallback_when_fallback_not_allowed(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=False,  # e.g. override- or privacy-forced
+                )
+            ]
+        )
+        conductor_adapter = FakeAdapter(intents=[ActIntent(instruction="do x")])
+        loop = _make_loop(conductor_adapter, router=router)
+        with pytest.raises(AdapterError):
+            loop.run("go")
+        assert router.select_fallback_worker_calls == []
+
+    def test_error_propagates_when_no_fallback_available(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=None,  # no other provider configured
+        )
+        conductor_adapter = FakeAdapter(intents=[ActIntent(instruction="do x")])
+        loop = _make_loop(conductor_adapter, router=router)
+        with pytest.raises(AdapterError):
+            loop.run("go")
+        assert router.select_fallback_worker_calls == ["claude"]
+
+    def test_error_propagates_when_fallback_also_fails(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        also_failing_adapter = FakeAdapter(raise_on_act=True)
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=WorkerSelection(
+                adapter=also_failing_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        conductor_adapter = FakeAdapter(intents=[ActIntent(instruction="do x")])
+        loop = _make_loop(conductor_adapter, router=router)
+        with pytest.raises(AdapterError):
+            loop.run("go")
+
+
+class TestActSpanRoutingAttributes:
+    """RT-7: the act phase span carries axiom.control_level /
+    axiom.router.provider, set from the selection that actually ran."""
+
+    def _run_with_mocked_span(self, adapter, router):
+        """Patches record_phase (the lazy-imported name inside
+        _maybe_record) with a context manager yielding a MagicMock span,
+        so we can assert on set_attribute calls without a real OTel
+        TracerProvider."""
+        from unittest.mock import MagicMock, patch
+
+        mock_span = MagicMock()
+
+        class _FakeRecordPhaseCM:
+            def __enter__(self):
+                return mock_span
+
+            def __exit__(self, *exc):
+                return False
+
+        with patch(
+            "axiom.observability.record.record_phase",
+            return_value=_FakeRecordPhaseCM(),
+        ):
+            loop = _make_loop(adapter, router=router)
+            loop.run("go", run_id="fake-run-id", provider_kind="KIND_B")
+        return mock_span
+
+    def test_attributes_set_from_selection_on_success(self) -> None:
+        adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")],
+            act_results=["x result"],
+        )
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=adapter,
+                    provider_name="local",
+                    control_level="KIND_A",
+                    fallback_allowed=True,
+                )
+            ]
+        )
+        mock_span = self._run_with_mocked_span(adapter, router)
+        calls = {c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list}
+        assert calls["axiom.control_level"] == "KIND_A"
+        assert calls["axiom.router.provider"] == "local"
+
+    def test_attributes_reflect_fallback_provider_on_success(self) -> None:
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        healthy_adapter = FakeAdapter(act_results=["fallback result"])
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=True,
+                )
+            ],
+            fallback_selection=WorkerSelection(
+                adapter=healthy_adapter,
+                provider_name="local",
+                control_level="KIND_A",
+                fallback_allowed=False,
+            ),
+        )
+        conductor_adapter = FakeAdapter(
+            intents=[ActIntent(instruction="do x"), RespondIntent(text="done")]
+        )
+        mock_span = self._run_with_mocked_span(conductor_adapter, router)
+        calls = [c.args for c in mock_span.set_attribute.call_args_list]
+        # The LAST value set for each key must reflect the fallback outcome
+        # (local/KIND_A), not the failed primary (claude/KIND_B).
+        control_level_calls = [v for k, v in calls if k == "axiom.control_level"]
+        provider_calls = [v for k, v in calls if k == "axiom.router.provider"]
+        assert control_level_calls[-1] == "KIND_A"
+        assert provider_calls[-1] == "local"
+
+    def test_attributes_present_on_hard_failure(self) -> None:
+        """dryrun-design-2 W1: a failed dispatch with no fallback must still
+        carry routing attribution (what was attempted), not be silent."""
+        from unittest.mock import MagicMock, patch
+
+        mock_span = MagicMock()
+
+        class _FakeRecordPhaseCM:
+            def __enter__(self):
+                return mock_span
+
+            def __exit__(self, *exc):
+                return False
+
+        failing_adapter = FakeAdapter(raise_on_act=True)
+        router = FakeRouter(
+            worker_selections=[
+                WorkerSelection(
+                    adapter=failing_adapter,
+                    provider_name="claude",
+                    control_level="KIND_B",
+                    fallback_allowed=False,
+                )
+            ]
+        )
+        conductor_adapter = FakeAdapter(intents=[ActIntent(instruction="do x")])
+        with patch(
+            "axiom.observability.record.record_phase",
+            return_value=_FakeRecordPhaseCM(),
+        ):
+            loop = _make_loop(conductor_adapter, router=router)
+            with pytest.raises(AdapterError):
+                loop.run("go", run_id="fake-run-id", provider_kind="KIND_B")
+        calls = {c.args[0]: c.args[1] for c in mock_span.set_attribute.call_args_list}
+        assert calls["axiom.control_level"] == "KIND_B"
+        assert calls["axiom.router.provider"] == "claude"

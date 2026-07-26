@@ -61,6 +61,10 @@ class LocalAdapter(PraoAdapterBase):
     never pay the import cost.
     """
 
+    control_level: str = (
+        "KIND_A"  # M6 RT-7: our loop can inspect and veto each action step
+    )
+
     def __init__(
         self,
         persona: str,
