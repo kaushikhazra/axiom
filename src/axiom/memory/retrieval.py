@@ -67,6 +67,31 @@ class RetrievalPipeline:
             semantic_coro, keyword_coro, temporal_coro
         )
 
+        # type_filter is only enforced by vector_search's own query (semantic
+        # strategy) -- fulltext_search/get_by_recency have no type awareness.
+        # Re-apply it here so a type_filter caller never sees another type's
+        # memory compete for or win a final ranked slot (M8 finding: an
+        # untyped keyword/temporal hit was crowding out real type_filter="lesson"
+        # results in RRF fusion, silently and without error).
+        if type_filter is not None:
+            memories_for_filter: dict[str, Memory] = {}
+
+            async def _keep(mid: str) -> bool:
+                m = memories_for_filter.get(mid)
+                if m is None:
+                    m = await self._storage.get_memory(mid)
+                    if m is None:
+                        return False
+                    memories_for_filter[mid] = m
+                return m.memory_type == type_filter
+
+            keyword_results = [
+                (mid, score) for mid, score in keyword_results if await _keep(mid)
+            ]
+            temporal_results = [
+                (mid, score) for mid, score in temporal_results if await _keep(mid)
+            ]
+
         # RRF fusion
         rrf_scores: dict[str, float] = {}
         found_by: dict[str, list[str]] = {}

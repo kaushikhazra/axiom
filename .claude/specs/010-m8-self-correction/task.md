@@ -23,7 +23,11 @@
   - [x] Fixed 2 pre-existing tests whose exact spawn_count/act_calls assertions were affected by CAPTURE's new (correct) extra dispatch on fallback/max-cycles: `TestMaxCyclesBreach::test_act_called_max_cycles_times` (isolated via a separate extraction adapter), `TestRouterFallback::test_spawn_count_counts_both_dispatch_attempts_on_fallback` (updated 4→5, documented why).
   - [x] dryrun-code-1 B1 fix: committee partial-failure detection now tracks real per-member dispatch outcomes (`outcomes: list[bool]`), not a fragile substring match on formatted text. Regression test added.
 
-## 5. Tests
+## 5. Live-verification fix
+
+- [x] **Implementer** updates `src/axiom/memory/retrieval.py` — `recall()`'s keyword/temporal strategy results are re-filtered to `memory_type == type_filter` before RRF fusion, closing a pre-existing M3 gap where `type_filter` only constrained the semantic strategy (surfaced by M8's own live verification: real lessons could be silently crowded out of ranked results by untyped keyword/temporal hits). _SC-2_ (D10)
+
+## 6. Tests
 
 - [x] **Implementer** extends `tests/test_router.py` — `select_extraction_worker()` prefers local, falls back, raises `RouterError` on zero adapters. _SC-1_
 - [x] **Implementer** extends `tests/test_contracts.py` — `correction_signal` set correctly on fallback/partial committee failure/max-cycles breach; `_capture_lesson()` fires exactly once per triggering cycle, never on a clean cycle; `run_state.lessons` populated from a scripted `recall()`. _SC-1, SC-2, SC-3_
