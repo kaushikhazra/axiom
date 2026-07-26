@@ -154,7 +154,7 @@ if run_state.cycle_count >= self._max_cycles:
     )
 ```
 
-`correction_signal: str | None = None` is initialized once, immediately before the `committee = self._router.select_committee(...)` line (so it's in scope regardless of which branch runs). Set inside each branch:
+`correction_signal: str | None = None` is (re-)declared at the top of the ACT-intent-handling section, immediately before the `committee = self._router.select_committee(...)` line — this section runs fresh on every loop iteration that processes an `ActIntent`, so `correction_signal` is freshly reset every time, never carried over from a prior cycle (including across a `USE_SKILL` cycle's `continue`, which skips this section entirely and loops back to `perceive()` without ever touching `correction_signal`). Set inside each branch (dryrun-design-1 W1 — reworded for clarity):
 
 - **Committee branch** (D5b): after the per-member dispatch loop, before the `if not any_succeeded: raise ...` check —
   ```python

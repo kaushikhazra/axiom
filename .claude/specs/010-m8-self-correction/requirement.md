@@ -49,6 +49,7 @@ This resolution was reasoned through directly against existing project documenta
 - CAPTURE fires exactly once per ACT cycle that matches a trigger signal (fallback occurred, committee member failed, `MAX_CYCLES` breached) — not on ordinary clean cycles (SC-3's own AC covers the negative case explicitly).
 - The extracted lesson is written via the existing `MemoryPort.store()` call with `memory_type="lesson"` — no new Memory port method, matching the existing episodic-store pattern (M3) exactly in mechanism, differing only in `memory_type` and content (a distilled correction, not the raw exchange).
 - The lesson's content names what failed and what the resolution was (e.g., "local provider failed on X; claude succeeded" — not a verbatim dump of the raw error/result already stored separately by M3's own episodic path).
+- The extraction dispatch uses the cheapest configured provider (preferring `local`), bypassing `RoutePolicy` entirely — this is an internal system task, not a user-facing ACT dispatch, so privacy/capability/bulk-threshold evaluation does not apply to it (dryrun-design-1 C1).
 - **[behavioral]** A live `axiom-cli` turn that triggers RT-9's fallback (e.g., a deliberately unreachable `--ollama-host`, mirroring M7's own OR-6 live-verification method) results in a new `memory_type="lesson"` entry queryable via the existing `recall(query, type_filter="lesson")` call in a fresh follow-up turn — proving the lesson was genuinely written and is genuinely retrievable, not just constructed in memory and dropped.
 
 ---
