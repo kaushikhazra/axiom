@@ -33,7 +33,7 @@ from typing import Generator
 
 from axiom.interfaces import (
     ActIntent,
-    ActPort,
+    AdapterError,
     FinishIntent,
     MaxCyclesExceededError,
     ObservePort,
@@ -45,6 +45,7 @@ from axiom.interfaces import (
 )
 from axiom.memory.models import ConversationUnit
 from axiom.memory.port import MemoryPort
+from axiom.router.router import Router
 from axiom.skills.port import SkillNotFoundError, SkillsPort
 
 MAX_CYCLES: int = 10  # module-level constant; overridable via constructor
@@ -55,20 +56,26 @@ def _maybe_record(
     phase: str,
     run_id: str | None,
     provider_kind: str,
-) -> Generator[None, None, None]:
+) -> Generator[object, None, None]:
     """Wrap a PRAO phase in record_phase() when run_id is provided; else no-op.
 
     Keeps loop.py's core flow readable without duplicating if-guards at every phase.
+
+    M6: yields the underlying Span (was bare `yield` before) so callers can
+    set attributes discovered after the phase starts (e.g. RT-7's
+    axiom.control_level, known only once the Router has selected a Worker).
+    Yields None when run_id is omitted (no-op path) or when observability
+    isn't wired -- callers must guard with `if span is not None`.
     """
     if run_id is None:
-        yield
+        yield None
         return
 
     # Lazy import — OTel never loaded if observability is not wired
     from axiom.observability.record import record_phase  # noqa: PLC0415
 
-    with record_phase(phase=phase, run_id=run_id, provider_kind=provider_kind):
-        yield
+    with record_phase(phase=phase, run_id=run_id, provider_kind=provider_kind) as span:
+        yield span
 
 
 class PraoLoop:
@@ -83,19 +90,19 @@ class PraoLoop:
         self,
         perceive: PerceivePort,
         reason: ReasonPort,
-        act: ActPort,
         observe: ObservePort,
         memory: MemoryPort,
         skills: SkillsPort,
+        router: Router,
         max_cycles: int = MAX_CYCLES,
     ) -> None:
         self._perceive = perceive
         self._reason = reason
-        self._act = act
         self._observe = observe
         self._max_cycles = max_cycles
         self._memory = memory
         self._skills = skills
+        self._router = router
         # B4 fix: session-scoped monotonically increasing turn counter.
         # Incremented at Observe (after append_unit) on every RespondIntent or FinishIntent.
         # Never reset between run() calls so turn_index is unique across the session.
@@ -272,9 +279,49 @@ class PraoLoop:
                         "expected ActIntent"
                     )
 
-                with _maybe_record("act", run_id, provider_kind):
+                # M6: Router selects the Worker fresh for this dispatch (RT-3)
+                # -- may differ from the Conductor (self._reason's provider).
+                selection = self._router.select_worker(intent.instruction)
+                with _maybe_record("act", run_id, provider_kind) as act_span:
+                    if act_span is not None:
+                        # Record what was ATTEMPTED before dispatch so a hard
+                        # failure (no fallback, or fallback also fails) still
+                        # carries routing attribution in the trace.
+                        act_span.set_attribute(
+                            "axiom.control_level", selection.control_level
+                        )
+                        act_span.set_attribute(
+                            "axiom.router.provider", selection.provider_name
+                        )
+
                     run_state.spawn_count += 1
-                    result = await asyncio.to_thread(self._act.act, intent.instruction)
+                    try:
+                        result = await asyncio.to_thread(
+                            selection.adapter.act, intent.instruction
+                        )
+                        final_selection = selection
+                    except AdapterError:
+                        if not selection.fallback_allowed:
+                            raise
+                        fallback = self._router.select_fallback_worker(
+                            selection.provider_name
+                        )
+                        if fallback is None:
+                            raise
+                        run_state.spawn_count += 1  # a second loop-dispatched call
+                        result = await asyncio.to_thread(
+                            fallback.adapter.act, intent.instruction
+                        )
+                        final_selection = fallback
+
+                    if act_span is not None and final_selection is not selection:
+                        # A fallback occurred -- overwrite with the ACTUAL outcome.
+                        act_span.set_attribute(
+                            "axiom.control_level", final_selection.control_level
+                        )
+                        act_span.set_attribute(
+                            "axiom.router.provider", final_selection.provider_name
+                        )
 
                 with _maybe_record("observe", run_id, provider_kind):
                     run_state = await asyncio.to_thread(

@@ -22,6 +22,8 @@ from axiom.interfaces import AdapterError, MaxCyclesExceededError
 from axiom.loop import PraoLoop
 from axiom.observability import timing
 from axiom.providers.claude_adapter import ClaudeAdapter
+from axiom.router.policy import RoutePolicy
+from axiom.router.router import Router, RouterError
 from axiom.tools.guardrails import GuardrailsGate
 
 # Tool allowlist for act() queries — single source of truth (§7.3).
@@ -35,6 +37,34 @@ _PROVIDER_KIND: dict[str, str] = {
 }
 
 _axiom_logger = logging.getLogger("axiom")
+
+
+def _make_claude_adapter(persona_text: str, gate: GuardrailsGate) -> ClaudeAdapter:
+    """M6: Router adapter factory -- zero-arg callable, called lazily at most
+    once per session (Router caches the result)."""
+    return ClaudeAdapter(
+        persona=persona_text, allowed_tools=CLAUDE_SAFE_TOOLS, gate=gate
+    )
+
+
+def _make_local_adapter(
+    persona_text: str,
+    working_dir: Path,
+    gate: GuardrailsGate,
+    ollama_host: str | None,
+):
+    """M6: Router adapter factory. Imports LocalAdapter lazily (deferred,
+    same as the pre-M6 if/elif branch) so Claude-only installs never pay
+    the smolagents/litellm import cost unless Router actually needs a
+    local adapter (policy match, or explicit --provider local)."""
+    from axiom.providers.local_adapter import LocalAdapter  # noqa: PLC0415 (lazy)
+
+    kwargs = {}
+    if ollama_host is not None:
+        kwargs["ollama_api_base"] = ollama_host
+    return LocalAdapter(
+        persona=persona_text, working_dir=working_dir, gate=gate, **kwargs
+    )
 
 
 def _configure_debug_logging() -> None:
@@ -72,7 +102,7 @@ class Agent:
     def __init__(
         self,
         debug: bool = False,
-        provider: str = "claude",
+        provider: str | None = None,
         observe: bool = False,
         memory_config: object = None,
         ollama_host: str | None = None,
@@ -85,10 +115,13 @@ class Agent:
         Args:
             debug: When True, configures the 'axiom' logger to emit DEBUG records
                    to stderr. Constructor parameter — not an env-var or global mutation.
-            provider: Which adapter to use — "claude" (default, M1 behaviour) or
-                      "local" (LiteLLM + Ollama via LocalAdapter). LocalAdapter is
-                      imported lazily inside the "local" branch so that Claude-only
-                      installs never pay the litellm import cost.
+            provider: M6 — "claude"/"local" explicitly FORCES that provider for
+                      both Conductor and every Worker dispatch, bypassing Router's
+                      policy evaluation entirely (RT-8). None (default) means "no
+                      preference" — Router's policy engine (privacy/cost/capability,
+                      RT-4/5/6) actually decides. LocalAdapter is imported lazily so
+                      Claude-only installs never pay the litellm import cost unless
+                      a local adapter is actually needed.
             ollama_host: Optional Ollama API base URL, e.g. "http://192.168.0.235:11434".
                          Only used when provider="local"; ignored otherwise. Defaults to
                          LocalAdapter's own localhost default when None.
@@ -111,6 +144,12 @@ class Agent:
         if debug:
             _configure_debug_logging()
 
+        # dryrun-code-1 W1: restore the input validation the old if/elif
+        # block used to provide -- an invalid provider string should fail
+        # loudly and immediately here, not deep inside Router construction.
+        if provider is not None and provider not in ("claude", "local"):
+            raise ValueError(f"unknown provider: {provider!r}")
+
         persona_text = persona_pkg.load()
 
         # M4: GuardrailsGate is shared by whichever adapter is constructed below
@@ -128,24 +167,22 @@ class Agent:
         )
         gate = GuardrailsGate(auto_approve=auto_approve_tools)
 
-        if provider == "local":
-            from axiom.providers.local_adapter import LocalAdapter  # noqa: PLC0415 (lazy)
-
-            local_kwargs = {}
-            if ollama_host is not None:
-                local_kwargs["ollama_api_base"] = ollama_host
-            adapter = LocalAdapter(
-                persona=persona_text,
-                working_dir=resolved_working_dir,
-                gate=gate,
-                **local_kwargs,
-            )
-        elif provider == "claude":
-            adapter = ClaudeAdapter(
-                persona=persona_text, allowed_tools=CLAUDE_SAFE_TOOLS, gate=gate
-            )
-        else:
-            raise ValueError(f"unknown provider: {provider!r}")
+        # M6: Router replaces the pre-M6 if/elif provider-selection block.
+        # `provider` (None by default) maps directly to forced_provider --
+        # None means "no preference, let policy decide" (RT-4/5/6 active);
+        # "claude"/"local" forces that provider everywhere, unchanged CLI
+        # contract for explicit usage (RT-8).
+        router = Router(
+            policy=RoutePolicy(),
+            adapter_factories={
+                "claude": lambda: _make_claude_adapter(persona_text, gate),
+                "local": lambda: _make_local_adapter(
+                    persona_text, resolved_working_dir, gate, ollama_host
+                ),
+            },
+            forced_provider=provider,
+        )
+        conductor_adapter = router.select_conductor()  # RT-2: called exactly once
 
         # M3 memory — constitutive: always wired, never optional.
         # Lazy imports so installs without sentence-transformers still start when
@@ -162,16 +199,21 @@ class Agent:
         skills_registry = SkillsRegistry(skills_dir=resolved_skills_dir)
 
         self._loop = PraoLoop(
-            perceive=adapter,
-            reason=adapter,
-            act=adapter,
-            observe=adapter,
+            perceive=conductor_adapter,
+            reason=conductor_adapter,
+            observe=conductor_adapter,
             max_cycles=10,
             memory=self._memory_adapter,
             skills=skills_registry,
+            router=router,
         )
 
-        self._provider_kind: str = _PROVIDER_KIND.get(provider, "KIND_A")
+        # M6: derived from Router's chosen Conductor (public conductor_provider
+        # property), not the raw `provider` string -- same value as before for
+        # the common case, since Router's Conductor default is "claude" too.
+        self._provider_kind: str = _PROVIDER_KIND.get(
+            router.conductor_provider, "KIND_A"
+        )
 
         # M2 observability — off by default; wired only when observe=True.
         # OTel imports are confined to the faculty; nothing leaks into this module.
@@ -230,6 +272,12 @@ class Agent:
         except MaxCyclesExceededError as e:
             return f"[Error: max cycles exceeded — {e}]"
         except AdapterError as e:
+            return f"[Error: {e}]"
+        except RouterError as e:
+            # dryrun-code-1 B1: RouterError is a sibling of AdapterError (both
+            # derive directly from Exception, not from each other) -- without
+            # this branch it propagated uncaught, crashing the CLI with a raw
+            # traceback instead of RT-4's promised "clear, typed error."
             return f"[Error: {e}]"
         finally:
             if self._faculty is not None:

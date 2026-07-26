@@ -30,6 +30,7 @@ from axiom.agent import Agent
 from axiom.loop import PraoLoop
 from axiom.observability import timing
 from axiom.providers.local_adapter import LocalAdapter
+from axiom.skills.registry import SkillsRegistry
 
 # ---------------------------------------------------------------------------
 # Prerequisite checks — evaluated once at module load (collection) time.
@@ -237,13 +238,19 @@ def test_e2e_create_and_run_python_file() -> None:
         gate=GuardrailsGate(auto_approve=True),
         max_steps=8,
     )
+    router = Router(
+        policy=RoutePolicy(),
+        adapter_factories={"local": lambda: adapter},
+        forced_provider="local",  # this test exercises LocalAdapter exclusively
+    )
     loop = PraoLoop(
         perceive=adapter,
         reason=adapter,
-        act=adapter,
         observe=adapter,
         max_cycles=10,
+        memory=FakeMemory(),
         skills=SkillsRegistry(skills_dir=Path(os.getcwd()) / "skills"),
+        router=router,
     )
 
     # Test-isolation: remove any stale hello*.py artifacts left by prior runs so
