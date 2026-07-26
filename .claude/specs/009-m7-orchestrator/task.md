@@ -27,3 +27,7 @@
   - [x] 9 new tests in `TestCommitteeDispatch`, all green.
 - [x] **Implementer** updates `tests/fake_adapter.py` — `FakeRouter` gains `committee_selections` option. _OR-3, OR-4, OR-6_
 - [x] **Implementer** fixes pre-existing missing imports (`Router`, `RoutePolicy`, `FakeMemory`) in `tests/test_local_e2e.py` — _untraced, found while verifying "full suite green" DoD item 6; pre-dates M7 (confirmed via git stash), root-caused and fixed rather than left broken._ <!-- ⚠ not in Pass 9 skeleton — pre-existing bug found during verification, not part of design.md's Files Changed -->
+
+## 6. Live verification (OR-9)
+
+- [x] **Implementer** live-verifies OR-1 (default single-provider unchanged), OR-3+OR-4 (genuine independent dispatch, combined-result synthesis), OR-6 (per-slot failure tolerance) via `axiom-cli` and a direct-construction script; recorded in `sign-off.md`. _OR-1, OR-3, OR-4, OR-6, OR-9_
