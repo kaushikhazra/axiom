@@ -140,7 +140,7 @@ M7's roadmap line is far thinner than M4/M5/M6's — a single sentence, no elabo
 **so that** future growth in the number of configured providers doesn't silently and unboundedly increase per-ACT cost.
 
 **Acceptance Criteria:**
-- `RoutePolicy` gains `max_committee_size: int`, defaulting to the count of configured `adapter_factories` at `Router` construction time (today: 2 — a no-op cap; becomes a real limit once more providers are configured).
+- `RoutePolicy` gains `max_committee_size: int | None`, where `None` (the default) means "use however many adapters are configured" — resolved against the actual `adapter_factories` count wherever `Router` evaluates it (today: 2 — a no-op cap; becomes a real limit once more providers are configured). A `RoutePolicy` is constructed independently of any `Router`, so it cannot itself know the adapter count in advance — `None` is how it defers that resolution rather than guessing a concrete number.
 - `select_committee()` never returns more than `max_committee_size` `WorkerSelection`s, even if more adapters are configured — selection among available adapters when capped is deterministic (documented in `design.md`, not left to iteration-order chance).
 
 ---
@@ -173,7 +173,7 @@ M7's roadmap line is far thinner than M4/M5/M6's — a single sentence, no elabo
 
 ```
 consortium_patterns: list[str] = []   # OR-2 — same glob/regex mechanism as privacy/capability
-max_committee_size: int = <count of configured adapter_factories>   # OR-8
+max_committee_size: int | None = None   # OR-8 — None = "use however many adapters are configured"
 ```
 
 ### CLI
