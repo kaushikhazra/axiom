@@ -144,6 +144,14 @@ class RetrievalPipeline:
                     m = await self._storage.get_memory(nid)
                     if m is None:
                         continue
+                    if type_filter is not None and m.memory_type != type_filter:
+                        # Neighbours are edge-based, not type-scoped -- a
+                        # type_filter="lesson" seed can have an untyped
+                        # (e.g. episodic) neighbour. Without this check that
+                        # neighbour re-enters the type_filter'd result set
+                        # here, after Phase 1's own filtering already
+                        # excluded it (M8 finding, deeper than the Phase-1 fix).
+                        continue
                     memories[nid] = m
                     graph_rank = len(final_scores)
                     graph_score = W_GRAPH / (RRF_K + graph_rank)

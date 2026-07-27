@@ -179,3 +179,108 @@ class TestContradictionAttachment:
         pipeline = _make_pipeline(storage)
         results = asyncio.run(pipeline.recall("test", limit=5))
         assert results[0].contradictions == ["contra1", "contra2"]
+
+
+class TestTypeFilter:
+    """M8 (D10): type_filter must exclude other-typed memories at every
+    stage recall() can introduce them -- not just the semantic strategy
+    vector_search itself already constrains."""
+
+    def test_keyword_and_temporal_strategies_are_filtered_by_type(self):
+        """An untyped-strategy hit of the wrong type must not appear in a
+        type_filter'd result, even though fulltext_search/get_by_recency
+        themselves have no type awareness."""
+        storage = MagicMock()
+        lesson = _memory("lesson1", memory_type="lesson")
+        episodic = _memory("episodic1", memory_type="episodic")
+
+        storage.vector_search = AsyncMock(return_value=[("lesson1", 0.9)])
+        storage.fulltext_search = AsyncMock(return_value=[("episodic1", 1.0)])
+        storage.get_by_recency = AsyncMock(return_value=[("episodic1", 0.8)])
+        storage.get_memory = AsyncMock(
+            side_effect=lambda mid: lesson if mid == "lesson1" else episodic
+        )
+        storage.get_neighbours_bulk = AsyncMock(return_value=[])
+        storage.get_contradictions = AsyncMock(return_value={})
+
+        pipeline = _make_pipeline(storage)
+        results = asyncio.run(
+            pipeline.recall("test query", type_filter="lesson", limit=5)
+        )
+        ids = [r.id for r in results]
+        assert ids == ["lesson1"]
+
+    def test_graph_neighbours_of_the_wrong_type_are_excluded(self):
+        """Phase 2 (graph traversal) must also respect type_filter -- a
+        type_filter'd seed's neighbour can be a different type via an
+        unrelated edge, and must not re-enter the filtered result set."""
+        storage = MagicMock()
+        lesson = _memory("lesson1", memory_type="lesson")
+        episodic_neighbour = _memory("neighbour1", memory_type="episodic")
+
+        storage.vector_search = AsyncMock(return_value=[("lesson1", 0.9)])
+        storage.fulltext_search = AsyncMock(return_value=[])
+        storage.get_by_recency = AsyncMock(return_value=[])
+        storage.get_memory = AsyncMock(
+            side_effect=lambda mid: lesson if mid == "lesson1" else episodic_neighbour
+        )
+        storage.get_neighbours_bulk = AsyncMock(return_value=[("neighbour1", 1, 0.9)])
+        storage.get_contradictions = AsyncMock(return_value={})
+
+        pipeline = _make_pipeline(storage)
+        results = asyncio.run(
+            pipeline.recall("test query", type_filter="lesson", limit=5)
+        )
+        ids = [r.id for r in results]
+        assert ids == ["lesson1"]
+
+    def test_graph_neighbours_of_the_matching_type_are_still_included(self):
+        """The Phase 2 type check must not become a blanket exclusion --
+        a same-typed neighbour is legitimate graph-expansion and belongs
+        in the result set."""
+        storage = MagicMock()
+        lesson = _memory("lesson1", memory_type="lesson")
+        lesson_neighbour = _memory("neighbour1", memory_type="lesson")
+
+        storage.vector_search = AsyncMock(return_value=[("lesson1", 0.9)])
+        storage.fulltext_search = AsyncMock(return_value=[])
+        storage.get_by_recency = AsyncMock(return_value=[])
+        storage.get_memory = AsyncMock(
+            side_effect=lambda mid: lesson if mid == "lesson1" else lesson_neighbour
+        )
+        storage.get_neighbours_bulk = AsyncMock(return_value=[("neighbour1", 1, 0.9)])
+        storage.get_contradictions = AsyncMock(return_value={})
+
+        pipeline = _make_pipeline(storage)
+        results = asyncio.run(
+            pipeline.recall("test query", type_filter="lesson", limit=5)
+        )
+        ids = {r.id for r in results}
+        assert ids == {"lesson1", "neighbour1"}
+
+    def test_no_type_filter_leaves_all_strategies_and_graph_unconstrained(self):
+        """type_filter=None (the default) must not change existing
+        no-filter behavior -- every strategy and graph neighbours flow
+        through unfiltered, as before D10."""
+        storage = MagicMock()
+        lesson = _memory("lesson1", memory_type="lesson")
+        episodic = _memory("episodic1", memory_type="episodic")
+        neighbour = _memory("neighbour1", memory_type="semantic")
+
+        storage.vector_search = AsyncMock(return_value=[("lesson1", 0.9)])
+        storage.fulltext_search = AsyncMock(return_value=[("episodic1", 1.0)])
+        storage.get_by_recency = AsyncMock(return_value=[])
+        storage.get_memory = AsyncMock(
+            side_effect=lambda mid: {
+                "lesson1": lesson,
+                "episodic1": episodic,
+                "neighbour1": neighbour,
+            }[mid]
+        )
+        storage.get_neighbours_bulk = AsyncMock(return_value=[("neighbour1", 1, 0.9)])
+        storage.get_contradictions = AsyncMock(return_value={})
+
+        pipeline = _make_pipeline(storage)
+        results = asyncio.run(pipeline.recall("test query", limit=5))
+        ids = {r.id for r in results}
+        assert ids == {"lesson1", "episodic1", "neighbour1"}

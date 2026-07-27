@@ -25,7 +25,9 @@
 
 ## 5. Live-verification fix
 
-- [x] **Implementer** updates `src/axiom/memory/retrieval.py` — `recall()`'s keyword/temporal strategy results are re-filtered to `memory_type == type_filter` before RRF fusion, closing a pre-existing M3 gap where `type_filter` only constrained the semantic strategy (surfaced by M8's own live verification: real lessons could be silently crowded out of ranked results by untyped keyword/temporal hits). _SC-2_ (D10)
+- [x] **Implementer** updates `src/axiom/memory/retrieval.py` — `recall()`'s keyword/temporal strategy results are re-filtered to `memory_type == type_filter` before RRF fusion (Phase 1), closing a pre-existing M3 gap where `type_filter` only constrained the semantic strategy (surfaced by M8's own live verification: real lessons could be silently crowded out of ranked results by untyped keyword/temporal hits). _SC-2_ (D10)
+- [x] **Implementer** extends the same D10 fix to Phase 2 (graph traversal) — a type-filtered seed's graph neighbour (edge-based, not type-scoped) could still re-enter a `type_filter`'d result set after the Phase 1 fix; added a type check inside the neighbour-scoring loop, same-typed neighbours remain included. _SC-2_ (D10)
+- [x] **Implementer** adds `tests/test_memory_retrieval.py::TestTypeFilter` (4 tests) — Phase 1 exclusion, Phase 2 exclusion, Phase 2 same-type inclusion, `type_filter=None` no-op. _SC-2_
 
 ## 6. Tests
 
