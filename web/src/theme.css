@@ -1,0 +1,457 @@
+/* design.md D2 §9 (AC-07.4) -- dark dev-tool aesthetic: dark-first, monospace
+   on technical surfaces, dense spacing, minimal chrome. No light-theme
+   toggle shipped in M10. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --bg-raised: #161b22;
+  --bg-inset: #010409;
+  --fg: #c9d1d9;
+  --fg-muted: #8b949e;
+  --border: #30363d;
+  --accent: #e3b341;
+  --accent-glow: rgba(227, 179, 65, 0.5);
+  --danger: #f85149;
+  --ok: #3fb950;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular",
+    Menlo, Consolas, monospace;
+  --font-ui: var(--font-mono);
+  --space-unit: 4px;
+  --chrome-height: 40px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Dark, thin scrollbars matching the page instead of the OS default --
+   color-scheme: dark alone doesn't always win on Windows (a classic,
+   light, arrow-button scrollbar can still render). Explicit styling for
+   both engines: Firefox (scrollbar-width/-color) and Chromium
+   (::-webkit-scrollbar-*), plus hiding the up/down spinner buttons. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--bg);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.chrome-bar {
+  height: var(--chrome-height);
+  min-height: var(--chrome-height);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+  padding: 0 calc(var(--space-unit) * 3);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.chrome-title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: auto;
+}
+
+.chrome-toggle,
+.provider-select {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  background: var(--bg-inset);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
+  cursor: pointer;
+}
+
+.chrome-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* -- Chat pane (US-01, US-02) -- first-party component, replacing the
+   stock CopilotChat's own styles.css theme-token overrides entirely. -- */
+
+.chat-pane {
+  flex: 1.6;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.msg-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.msg-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-unit) * 6);
+  padding: calc(var(--space-unit) * 8) calc(var(--space-unit) * 6)
+    calc(var(--space-unit) * 4);
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.msg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-width: 90%;
+}
+
+.msg-row.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.msg-row.assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.msg-meta {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.msg-row.user .msg-meta .who {
+  color: var(--accent);
+}
+
+.msg-meta .phase {
+  color: var(--accent);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px 2px var(--accent-glow);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.msg-row.assistant .content {
+  border-left: 2px solid var(--accent);
+  background: var(--bg-raised);
+  border-radius: 0 5px 5px 0;
+  padding: 9px 13px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.msg-row.user .content {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 9px 13px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.content code {
+  background: var(--bg-inset);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+
+.cursor {
+  display: inline-block;
+  color: var(--accent);
+  animation: pulse 0.9s step-end infinite;
+}
+
+.composer {
+  border-top: 1px solid var(--border);
+  padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 6)
+    calc(var(--space-unit) * 5);
+}
+
+.composer-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.composer-field {
+  flex: 1;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  resize: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.composer-field::placeholder {
+  color: var(--fg-muted);
+}
+
+.composer-field:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.composer-field:disabled {
+  opacity: 0.6;
+}
+
+.send-btn {
+  background: var(--accent);
+  color: #1a1204;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.composer-hint {
+  font-size: 10px;
+  color: var(--fg-muted);
+  display: flex;
+  justify-content: space-between;
+}
+
+.composer-hint .status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .cursor {
+    animation: none;
+  }
+}
+
+/* -- Approval prompt (US-03) -------------------------------------------- */
+
+.approval-prompt {
+  margin: calc(var(--space-unit) * 2);
+  padding: calc(var(--space-unit) * 3);
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.approval-prompt pre {
+  font-family: var(--font-mono);
+  background: var(--bg-inset);
+  padding: calc(var(--space-unit) * 2);
+  border-radius: 3px;
+  overflow-x: auto;
+  margin: calc(var(--space-unit) * 2) 0;
+}
+
+.approval-actions {
+  display: flex;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.approval-actions button {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 3);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+
+.approval-actions .approve {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.approval-actions .deny {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* -- Canvas pane (US-06) -------------------------------------------------- */
+
+.canvas-pane {
+  flex: 1.4;
+  min-width: 0;
+  overflow-y: auto;
+  padding: calc(var(--space-unit) * 3);
+  border-right: 1px solid var(--border);
+}
+
+.canvas-block {
+  margin-bottom: calc(var(--space-unit) * 3);
+}
+
+.canvas-block-header {
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: calc(var(--space-unit) * 1);
+}
+
+.canvas-block pre {
+  font-family: var(--font-mono);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 2);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+
+.canvas-empty {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* -- Trace pane (US-04) ---------------------------------------------------- */
+
+.trace-pane {
+  flex: 1;
+  min-width: 220px;
+  overflow-y: auto;
+  padding: calc(var(--space-unit) * 3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.trace-node {
+  margin-left: calc(var(--space-unit) * 3);
+  border-left: 1px solid var(--border);
+  padding-left: calc(var(--space-unit) * 2);
+}
+
+.trace-node.root {
+  margin-left: 0;
+  border-left: none;
+  padding-left: 0;
+}
+
+.trace-phase {
+  color: var(--accent);
+}
+
+.trace-status-ERROR {
+  color: var(--danger);
+}
+
+.trace-gap {
+  color: var(--danger);
+  font-style: italic;
+}
+
+.trace-empty {
+  color: var(--fg-muted);
+}

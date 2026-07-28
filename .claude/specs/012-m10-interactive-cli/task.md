@@ -1,0 +1,23 @@
+- [x] **Implementer** updates `src/axiom/agent.py` — adds TurnResult, run_turn/end_session/set_provider, ConductorProxy + tool-output-collector wiring. _US-01, US-05, US-06_
+- [x] **Implementer** updates `src/axiom/router/router.py` — adds set_forced_provider(). _US-05_
+- [x] **Implementer** creates `src/axiom/router/conductor_proxy.py` — ConductorProxy class. _US-05_
+- [x] **Implementer** updates `src/axiom/tools/registry.py` — adds on_result callback for write_file/run_shell. _US-06_
+- [x] **Implementer** updates `src/axiom/providers/local_adapter.py` — threads on_result to ToolRegistry. _US-06_
+- [x] **Implementer** creates `src/axiom/interface/web/__init__.py` — package init. _US-07_
+- [x] **Implementer** creates `src/axiom/interface/web/server.py` — FastAPI app, routes, empty-input validation. _US-02, US-03, US-04, US-05_
+- [x] **Implementer** creates `src/axiom/interface/web/session_manager.py` — WebSession multi-turn wrapper + event queue. _US-01, US-03_
+- [x] **Implementer** creates `src/axiom/interface/web/agui_bridge.py` — concurrent turn-task/queue drain, canvas emission, chunked delivery. _US-02, US-03, US-06_
+- [x] **Implementer** creates `src/axiom/interface/web/approval_bridge.py` — UI-backed approval_fn. _US-03_
+- [x] **Implementer** creates `src/axiom/interface/web/canvas_routing.py` — CanvasBlock, split_for_canvas, from_tool_result. _US-06_
+- [x] **Implementer** creates `src/axiom/interface/web_cli.py` — axiom-web entry point. _US-07_
+- [x] **Implementer** updates `pyproject.toml` — adds axiom-web script and web dependencies. _US-07_
+- [x] **Implementer** creates `src/axiom/interface/tray_launcher.py` — pystray background launcher, `axiom-ui` entry point. _US-07_
+- [x] **Implementer** creates `web/package.json` — Vite+React+TS+CopilotKit project. _US-07_
+- [x] **Implementer** creates `web/vite.config.ts` — Vite config with PWA plugin. _US-07_
+- [x] **Implementer** creates `web/public/manifest.json` — PWA manifest. _US-07_
+- [x] **Implementer** creates `web/src/App.tsx` — CopilotKit provider, chat+canvas layout. _US-01, US-06, US-07_
+- [x] **Implementer** creates `web/src/theme.css` — dark/monospace/density design tokens. _US-07_
+- [x] **Implementer** creates `web/src/components/ApprovalPrompt.tsx` — direct agent.subscribe(onCustomEvent) HITL rendering (D22). _US-03_
+- [x] **Implementer** creates `web/src/components/TracePane.tsx` — direct WS trace consumer. _US-04_
+- [x] **Implementer** creates `web/src/components/CanvasPane.tsx` — read-only canvas renderer. _US-06_
+- [x] **Implementer** creates `web/src/components/ProviderSelector.tsx` — provider dropdown. _US-05_

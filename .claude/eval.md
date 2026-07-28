@@ -4,3 +4,5 @@
 - [x] `C:/Projects/second-brain/.claude/plans/dryrun-plan-1.md` changed (2026-07-05) - run /dryrun-plan (stale path — project renamed to axiom; this IS dryrun-plan-1.md, no separate eval needed)
 - [x] `C:/Projects/axiom/.claude/plans/dryrun-plan-1.md` changed (2026-07-07) - run /dryrun-plan (this IS the evaluation artifact — complete)
 - [x] `C:/Projects/axiom/.claude/plans/002-m2-observability-brief.md` (2026-07-13) - REMOVED. K clarified this was V's design *understanding*, not a plan; it never belonged in plans/. Understanding relocated to CM (semantic memory 81298396). Both the brief and its dryrun-plan-2.md report deleted — no plan artifact to evaluate.
+- [x] `c:/Projects/axiom/.claude/plans/001-agent-core-roadmap.md` changed (2026-07-27) - run /dryrun-plan (evaluated → dryrun-plan-2.md, FAIL: 2 criticals carried forward unresolved from Report #1 (M1 Router claim, "think" vs "reason" naming), unrelated to today's M10 addition which is itself clean aside from 1 new warning)
+- [x] `c:/Projects/axiom/.claude/plans/dryrun-plan-2.md` changed (2026-07-27) - run /dryrun-plan (this IS the evaluation artifact — complete)

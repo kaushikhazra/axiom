@@ -1,0 +1,322 @@
+<title>axiom — chat page preview</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --bg-raised: #161b22;
+    --bg-inset: #010409;
+    --fg: #c9d1d9;
+    --fg-muted: #8b949e;
+    --border: #30363d;
+    --danger: #f85149;
+    --ok: #3fb950;
+    --accent: #e3b341;
+    --accent-glow: rgba(227, 179, 65, 0.5);
+    --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --space-unit: 4px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+
+  /* Dark, thin scrollbars matching the page instead of the OS default --
+     color-scheme: dark alone doesn't always win on Windows (a classic,
+     light, arrow-button scrollbar can still render). Explicit styling for
+     both engines: Firefox (scrollbar-width/-color) and Chromium
+     (::-webkit-scrollbar-*), plus hiding the up/down spinner buttons. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) var(--bg);
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 5px;
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--fg-muted); }
+  ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  ::-webkit-scrollbar-corner { background: var(--bg); }
+
+  /* ---------------------------------------------------------------------
+     Messages + composer, full screen. No chrome, no side panels.
+     --------------------------------------------------------------------- */
+
+  .page {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Scroll container spans the full window -- its scrollbar must hug the
+     real window edge. Only the content INSIDE it (.msg-list-inner) is
+     capped/centered for readability. Keeping max-width on the scrolling
+     element itself (the earlier bug) strands the scrollbar in the middle
+     of a wide viewport instead of at its right edge. */
+  .msg-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .msg-list {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space-unit) * 6);
+    padding: calc(var(--space-unit) * 8) calc(var(--space-unit) * 6) calc(var(--space-unit) * 4);
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  .composer {
+    border-top: 1px solid var(--border);
+    padding: calc(var(--space-unit) * 3) calc(var(--space-unit) * 6) calc(var(--space-unit) * 5);
+  }
+
+  .composer-inner {
+    max-width: 760px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .composer-row { display: flex; gap: 8px; align-items: flex-end; }
+
+  .composer-field {
+    flex: 1;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.4;
+    resize: none;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .composer-field::placeholder { color: var(--fg-muted); }
+  .composer-field:focus { outline: none; border-color: var(--accent); }
+
+  .send-btn {
+    background: var(--accent);
+    color: #1a1204;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .composer-hint {
+    font-size: 10px;
+    color: var(--fg-muted);
+    display: flex;
+    justify-content: space-between;
+  }
+  .composer-hint .status { display: flex; align-items: center; gap: 5px; }
+  .status-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
+
+  .msg-row { display: flex; flex-direction: column; gap: 5px; max-width: 90%; }
+  .msg-row.user { align-self: flex-end; align-items: flex-end; }
+  .msg-row.assistant { align-self: flex-start; align-items: flex-start; }
+
+  .msg-meta {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .msg-row.user .msg-meta .who { color: var(--accent); }
+  .msg-meta .time { font-variant-numeric: tabular-nums; opacity: 0.65; text-transform: none; letter-spacing: 0; }
+  .msg-meta .phase { color: var(--accent); text-transform: none; letter-spacing: 0; }
+
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px 2px var(--accent-glow);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .msg-row.assistant .content {
+    border-left: 2px solid var(--accent);
+    background: var(--bg-raised);
+    border-radius: 0 5px 5px 0;
+    padding: 9px 13px;
+    font-size: 13px;
+    color: var(--fg);
+  }
+  .msg-row.user .content {
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 9px 13px;
+    font-size: 13px;
+    color: var(--fg);
+  }
+
+  .content code {
+    background: var(--bg-inset);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+  }
+
+  .code-block {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .code-block-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 8px;
+    background: var(--bg-inset);
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .code-block-head .copy { cursor: pointer; }
+  .code-block-head .copy:hover { color: var(--accent); }
+  .code-block pre { margin: 0; padding: 8px 10px; background: var(--bg-inset); font-size: 11px; overflow-x: auto; color: var(--fg); }
+
+  .cursor { display: inline-block; color: var(--accent); animation: pulse 0.9s step-end infinite; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .live-dot, .cursor { animation: none; }
+  }
+</style>
+
+<div class="page">
+  <div class="msg-scroll">
+    <div class="msg-list">
+      <div class="msg-row user">
+        <div class="msg-meta"><span class="who">you</span><span class="time">10:41</span></div>
+        <div class="content">Refactor the retry logic in router.py to use exponential backoff.</div>
+      </div>
+
+      <div class="msg-row assistant">
+        <div class="msg-meta"><span class="who">axiom</span><span class="time">10:41</span></div>
+        <div class="content">
+          Found the linear retry in <code>select_worker()</code>. Rewriting with capped exponential backoff.
+          <div class="code-block">
+            <div class="code-block-head"><span>router.py</span><span class="copy">copy</span></div>
+            <pre><span style="color:var(--danger)">- time.sleep(RETRY_DELAY)</span>
+<span style="color:var(--ok)">+ time.sleep(min(BASE_DELAY * 2 ** attempt, MAX_DELAY))</span></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="msg-row user">
+        <div class="msg-meta"><span class="who">you</span><span class="time">10:42</span></div>
+        <div class="content">Looks good, run the tests.</div>
+      </div>
+
+      <div class="msg-row assistant">
+        <div class="msg-meta"><span class="live-dot"></span><span class="who">axiom</span><span class="phase">[reason]</span></div>
+        <div class="content">Re-running the router test<span class="cursor">▍</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer">
+    <div class="composer-inner">
+      <div class="composer-row">
+        <textarea id="composer-field" class="composer-field" rows="1" placeholder="Message axiom…" autofocus></textarea>
+        <button id="send-btn" class="send-btn">Send</button>
+      </div>
+      <div class="composer-hint">
+        <span>Enter to send · Shift+Enter for newline</span>
+        <span class="status"><span class="status-dot"></span>connected</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const field = document.getElementById('composer-field')
+  const msgList = document.querySelector('.msg-list')
+  const msgScroll = document.querySelector('.msg-scroll')
+
+  function autoGrow() {
+    field.style.height = 'auto'
+    field.style.height = field.scrollHeight + 'px'
+  }
+  field.addEventListener('input', autoGrow)
+
+  function nowLabel() {
+    const now = new Date()
+    return now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0')
+  }
+
+  function send() {
+    const text = field.value.trim()
+    if (!text) return
+    const row = document.createElement('div')
+    row.className = 'msg-row user'
+    row.innerHTML = `<div class="msg-meta"><span class="who">you</span><span class="time">${nowLabel()}</span></div><div class="content"></div>`
+    row.querySelector('.content').textContent = text
+    msgList.appendChild(row)
+    field.value = ''
+    autoGrow()
+    msgScroll.scrollTop = msgScroll.scrollHeight
+    processTurn()
+  }
+
+  // Simulates the PRAO loop's own phase progression instead of a generic
+  // spinner/dots -- perceive -> reason -> act -> observe, then resolves
+  // into the assistant's reply. Purely a mock timeline for the preview;
+  // the real component drives this off actual AG-UI events.
+  const PHASES = ['perceive', 'reason', 'act', 'observe']
+  const PHASE_MS = 550
+
+  function processTurn() {
+    const row = document.createElement('div')
+    row.className = 'msg-row assistant'
+    row.innerHTML = `<div class="msg-meta"><span class="live-dot"></span><span class="who">axiom</span><span class="phase"></span></div><div class="content"></div>`
+    msgList.appendChild(row)
+    msgScroll.scrollTop = msgScroll.scrollHeight
+    const phaseEl = row.querySelector('.phase')
+
+    let i = 0
+    phaseEl.textContent = `[${PHASES[i]}]`
+    const tick = setInterval(() => {
+      i += 1
+      if (i >= PHASES.length) {
+        clearInterval(tick)
+        row.querySelector('.msg-meta').innerHTML = `<span class="who">axiom</span><span class="time">${nowLabel()}</span>`
+        row.querySelector('.content').textContent = 'Done. Tests pass, 12 assertions.'
+        msgScroll.scrollTop = msgScroll.scrollHeight
+        return
+      }
+      phaseEl.textContent = `[${PHASES[i]}]`
+    }, PHASE_MS)
+  }
+
+  field.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send()
+    }
+  })
+  document.getElementById('send-btn').addEventListener('click', send)
+</script>
