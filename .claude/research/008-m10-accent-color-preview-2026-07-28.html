@@ -1,0 +1,443 @@
+<title>axiom — accent color preview</title>
+<style>
+  /* Base tokens copied verbatim from web/src/theme.css — this page previews
+     the REAL product surface, so the system is inherited, not reinvented. */
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --bg-raised: #161b22;
+    --bg-inset: #010409;
+    --fg: #c9d1d9;
+    --fg-muted: #8b949e;
+    --border: #30363d;
+    --danger: #f85149;
+    --ok: #3fb950;
+    --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --space-unit: 4px;
+    --chrome-height: 40px;
+
+    /* Page chrome (this artifact's own wrapper, not axiom's) reuses the same
+       dark ground — the point is to look at the product, not a frame around it. */
+    --page-bg: #090c10;
+    --page-fg: #c9d1d9;
+    --page-fg-muted: #6e7681;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    background: var(--page-bg);
+    color: var(--page-fg);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 64px;
+    gap: 28px;
+  }
+
+  .intro {
+    max-width: 720px;
+    width: 100%;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--page-fg-muted);
+    margin: 0 0 8px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    text-wrap: balance;
+    letter-spacing: 0.01em;
+  }
+
+  .intro p {
+    margin: 0 0 10px;
+    color: var(--page-fg-muted);
+    font-size: 13px;
+    max-width: 66ch;
+  }
+
+  .intro a {
+    color: inherit;
+    text-decoration-color: var(--page-fg-muted);
+  }
+
+  /* -- Toggle ------------------------------------------------------------ */
+
+  .switcher {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px;
+    background: var(--bg-raised);
+    gap: 3px;
+  }
+
+  .switcher button {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--page-fg-muted);
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    padding: 7px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+
+  .switcher button .swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .switcher button[aria-pressed="true"] {
+    background: var(--bg-inset);
+    color: var(--fg);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  .switcher button:focus-visible {
+    outline: 2px solid #58a6ff;
+    outline-offset: 2px;
+  }
+
+  .hexline {
+    font-size: 11px;
+    color: var(--page-fg-muted);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .hexline b {
+    color: var(--fg);
+    font-weight: 600;
+  }
+
+  /* ======================================================================
+     Everything below is axiom's REAL app-shell markup + classes, lifted
+     from web/src/App.tsx + theme.css, driven by [data-accent] instead of
+     the fixed --accent token so both variants render off one source.
+     ====================================================================== */
+
+  .mock-shell[data-accent="blue"]  { --accent: #58a6ff; --accent-glow: rgba(88, 166, 255, 0.45); }
+  .mock-shell[data-accent="amber"] { --accent: #e3b341; --accent-glow: rgba(227, 179, 65, 0.5); }
+
+  .mock-shell {
+    width: 100%;
+    max-width: 900px;
+    height: 480px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+  }
+
+  .chrome-bar {
+    height: var(--chrome-height);
+    min-height: var(--chrome-height);
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space-unit) * 3);
+    padding: 0 calc(var(--space-unit) * 3);
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .chrome-title {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-right: auto;
+    font-size: 13px;
+    color: var(--fg);
+  }
+
+  .chrome-toggle,
+  .provider-select {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg-inset);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
+    cursor: pointer;
+  }
+
+  .chrome-toggle[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .app-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+
+  .chat-pane {
+    flex: 1.5;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    padding: calc(var(--space-unit) * 3);
+    gap: calc(var(--space-unit) * 3);
+    overflow-y: auto;
+  }
+
+  .msg { font-size: 12.5px; max-width: 92%; }
+  .msg .role {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin-bottom: 3px;
+  }
+  .msg.user { align-self: flex-end; text-align: right; }
+  .msg.user .role { color: var(--accent); }
+  .msg .bubble {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--fg);
+  }
+  .msg.user .bubble { background: var(--bg-inset); }
+
+  .approval-prompt {
+    margin: 0;
+    padding: calc(var(--space-unit) * 3);
+    background: var(--bg-raised);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-size: 12px;
+    box-shadow: 0 0 0 1px var(--accent-glow);
+  }
+
+  .approval-prompt .head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .approval-prompt pre {
+    font-family: var(--font-mono);
+    background: var(--bg-inset);
+    padding: calc(var(--space-unit) * 2);
+    border-radius: 3px;
+    overflow-x: auto;
+    margin: calc(var(--space-unit) * 2) 0;
+    font-size: 11px;
+    color: var(--fg-muted);
+  }
+
+  .approval-actions { display: flex; gap: calc(var(--space-unit) * 2); }
+  .approval-actions button {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    border-radius: 3px;
+    padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 3);
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg-inset);
+    color: var(--fg);
+  }
+  .approval-actions .approve { border-color: var(--ok); color: var(--ok); }
+  .approval-actions .deny { border-color: var(--danger); color: var(--danger); }
+
+  .canvas-pane {
+    flex: 1.3;
+    min-width: 0;
+    overflow-y: auto;
+    padding: calc(var(--space-unit) * 3);
+    border-right: 1px solid var(--border);
+  }
+
+  .canvas-block-header {
+    font-size: 11px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: calc(var(--space-unit) * 1);
+  }
+
+  .canvas-block pre {
+    font-family: var(--font-mono);
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: calc(var(--space-unit) * 2);
+    overflow-x: auto;
+    white-space: pre;
+    margin: 0;
+    font-size: 11px;
+    color: var(--fg);
+  }
+
+  .canvas-block pre .plus { color: var(--ok); }
+  .canvas-block pre .minus { color: var(--danger); }
+
+  .trace-pane {
+    flex: 1;
+    min-width: 180px;
+    overflow-y: auto;
+    padding: calc(var(--space-unit) * 3);
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  .trace-node {
+    margin-left: calc(var(--space-unit) * 3);
+    border-left: 1px solid var(--border);
+    padding-left: calc(var(--space-unit) * 2);
+  }
+  .trace-node.root { margin-left: 0; border-left: none; padding-left: 0; }
+
+  .trace-phase { color: var(--accent); }
+
+  .trace-live {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px 2px var(--accent-glow);
+    margin-right: 5px;
+  }
+
+  .trace-dur { color: var(--fg-muted); }
+
+  footer {
+    max-width: 720px;
+    font-size: 11px;
+    color: var(--page-fg-muted);
+    text-align: center;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .trace-live { animation: pulse 1.8s ease-in-out infinite; }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+</style>
+
+<div class="intro">
+  <p class="eyebrow">axiom · web ui · accent color review</p>
+  <h1>Current blue vs. an amber/gold accent</h1>
+  <p>
+    Same shell, same tokens (<code>theme.css</code>), one variable changed —
+    <code>--accent</code>. Everything below is axiom's real chrome bar, chat
+    pane, tool-approval card, canvas, and trace pane, not a redesign.
+  </p>
+  <p>
+    Reference point: <a href="https://factory.ai" target="_blank" rel="noopener">factory.ai</a>'s
+    dashboard uses the same formula axiom already has — near-black ground,
+    Geist Mono for technical text, dense card treatment — with a single warm
+    accent (<code>#EE6018</code>) doing double duty as brand color and a
+    glowing "live" indicator on their status dot. The amber variant below
+    borrows that glow technique, tuned lighter/yellower to read as gold
+    rather than factory.ai's orange.
+  </p>
+</div>
+
+<div class="switcher" role="group" aria-label="Accent variant">
+  <button id="btn-blue" aria-pressed="true" onclick="setAccent('blue')">
+    <span class="swatch" style="background:#58a6ff"></span>Current — Blue
+  </button>
+  <button id="btn-amber" aria-pressed="false" onclick="setAccent('amber')">
+    <span class="swatch" style="background:#e3b341"></span>Proposal — Amber/Gold
+  </button>
+</div>
+
+<div class="hexline" id="hexline"><b>--accent: #58a6ff</b> on <b>--bg: #0d1117</b></div>
+
+<div class="mock-shell" id="shell" data-accent="blue">
+  <div class="chrome-bar">
+    <span class="chrome-title">axiom</span>
+    <select class="provider-select" disabled>
+      <option>Auto (Router default)</option>
+    </select>
+    <button class="chrome-toggle" aria-pressed="true">canvas</button>
+    <button class="chrome-toggle" aria-pressed="false">trace</button>
+  </div>
+
+  <div class="app-body">
+    <div class="chat-pane">
+      <div class="msg user">
+        <div class="role">you</div>
+        <div class="bubble">Refactor the retry logic in router.py to use exponential backoff.</div>
+      </div>
+      <div class="msg assistant">
+        <div class="role">axiom</div>
+        <div class="bubble">Found the linear retry in <code>select_worker()</code>. Rewriting with capped exponential backoff and re-running the router tests now.</div>
+      </div>
+
+      <div class="approval-prompt">
+        <div class="head">⚠ Tool approval requested</div>
+        <div>write_file · <code>src/axiom/router/router.py</code></div>
+        <pre>{
+  "path": "src/axiom/router/router.py",
+  "diff": "+12 -3 lines"
+}</pre>
+        <div class="approval-actions">
+          <button class="approve">Approve</button>
+          <button class="deny">Deny</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="canvas-pane">
+      <div class="canvas-block-header">write_file · tool_output</div>
+      <div class="canvas-block">
+        <pre><span class="minus">- time.sleep(RETRY_DELAY)</span>
+<span class="plus">+ time.sleep(min(BASE_DELAY * 2 ** attempt, MAX_DELAY))</span></pre>
+      </div>
+    </div>
+
+    <div class="trace-pane">
+      <div class="trace-node root"><span class="trace-live"></span><span class="trace-phase">[run]</span></div>
+      <div class="trace-node"><span class="trace-phase">[perceive]</span> <span class="trace-dur">(1.0ms)</span></div>
+      <div class="trace-node"><span class="trace-phase">[reason]</span> <span class="trace-dur">(412ms)</span></div>
+      <div class="trace-node"><span class="trace-phase">[act]</span> <span class="trace-dur">(88ms)</span></div>
+      <div class="trace-node"><span class="trace-phase">[observe]</span> <span class="trace-dur">(3.2ms)</span></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Toggle to compare live. No files changed — this is a static preview only.
+</footer>
+
+<script>
+  function setAccent(which) {
+    document.getElementById('shell').setAttribute('data-accent', which);
+    document.getElementById('btn-blue').setAttribute('aria-pressed', String(which === 'blue'));
+    document.getElementById('btn-amber').setAttribute('aria-pressed', String(which === 'amber'));
+    document.getElementById('hexline').innerHTML = which === 'blue'
+      ? '<b>--accent: #58a6ff</b> on <b>--bg: #0d1117</b>'
+      : '<b>--accent: #e3b341</b> on <b>--bg: #0d1117</b>';
+  }
+</script>

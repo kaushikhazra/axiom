@@ -1,25 +1,21 @@
 import { useMemo, useRef, useState } from 'react'
 import { CopilotKit } from '@copilotkit/react-core'
-import { CopilotChat } from '@copilotkit/react-ui'
 import { HttpAgent } from '@ag-ui/client'
-import '@copilotkit/react-ui/styles.css'
 import './theme.css'
-import ApprovalPrompt from './components/ApprovalPrompt'
+import ChatPane from './components/ChatPane'
 import TracePane from './components/TracePane'
 import CanvasPane from './components/CanvasPane'
 import ProviderSelector from './components/ProviderSelector'
 
 // design.md D18: direct-agent wiring via @ag-ui/client's HttpAgent, passed
-// as selfManagedAgents. <CopilotKit> (not the /v2 CopilotKitProvider
-// directly) -- confirmed via Playwright browser verification that
-// CopilotChat's useCopilotContext() requires the legacy context <CopilotKit>
-// sets up around CopilotKitProvider; CopilotKitProvider alone left
-// CopilotChat throwing "wrap your app in a <CopilotKit>" at runtime, a
-// failure invisible to tsc (compatible prop types) and to curl (backend-only).
-// selfManagedAgents is still a valid prop -- CopilotKitProps extends
-// CopilotKitProviderProps. Registered under "default" (CopilotKit's own
-// DEFAULT_AGENT_ID) so CopilotChat/useAgent resolve it with no extra
-// agentId wiring.
+// as selfManagedAgents, registered under "default" (CopilotKit's own
+// DEFAULT_AGENT_ID) so every component's useAgent({agentId: 'default'})
+// resolves it with no extra wiring. <CopilotKit> (main entry, not the /v2
+// CopilotKitProvider directly) is still used even though ChatPane replaced
+// the stock <CopilotChat> that originally required its legacy context --
+// selfManagedAgents is still a valid prop (CopilotKitProps extends
+// CopilotKitProviderProps), and switching to the leaner provider isn't
+// worth it for the enableInspector/showDevConsole props already tuned here.
 
 function App() {
   const threadId = useRef(crypto.randomUUID()).current
@@ -58,13 +54,7 @@ function App() {
           </button>
         </header>
         <div className="app-body">
-          <section className="chat-pane">
-            <ApprovalPrompt />
-            <CopilotChat
-              className="axiom-chat"
-              labels={{ title: 'axiom', initial: 'Ready.' }}
-            />
-          </section>
+          <ChatPane threadId={threadId} />
           {/* CanvasPane stays mounted across toggles -- unmounting would
               discard its accumulated blocks (it has no external state to
               restore from on remount), unlike TracePane below, which
