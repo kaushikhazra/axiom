@@ -69,6 +69,15 @@ class Router:
             None  # set once by select_conductor (RT-2)
         )
 
+    def set_forced_provider(self, provider: str | None) -> None:
+        """M10 (D4): runtime provider switching. Caller (agent.py) validates
+        provider against the known choices before calling this -- Router
+        itself does not re-validate. select_worker()/select_committee()
+        already re-read self._forced_provider fresh on every call, so
+        Worker-side switching takes effect immediately; the Conductor
+        needs a fresh select_conductor() call after this (see ConductorProxy)."""
+        self._forced_provider = provider
+
     @property
     def conductor_provider(self) -> str | None:
         """Public accessor for whichever provider select_conductor() picked

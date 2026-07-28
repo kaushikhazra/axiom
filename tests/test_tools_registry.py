@@ -18,6 +18,77 @@ def _make_registry(tmp_path: Path, auto_approve: bool = True) -> ToolRegistry:
     return ToolRegistry(working_dir=tmp_path, gate=gate)
 
 
+class TestOnResultCallback:
+    """M10 (design.md D13, D15): on_result fires once per execute() call,
+    unconditionally (every tool, every outcome) -- filtering to
+    write_file/run_shell and canvas-worthiness is the interface layer's
+    job, not the registry's."""
+
+    def test_fires_with_tool_name_and_result_on_success(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("hi", encoding="utf-8")
+        calls: list = []
+        gate = GuardrailsGate(auto_approve=True)
+        registry = ToolRegistry(
+            working_dir=tmp_path,
+            gate=gate,
+            on_result=lambda name, result: calls.append((name, result)),
+        )
+        registry.execute("read_file", {"path": "a.txt"})
+        assert len(calls) == 1
+        name, result = calls[0]
+        assert name == "read_file"
+        assert result.output == "hi"
+
+    def test_fires_on_denied_calls_too(self, tmp_path: Path) -> None:
+        calls: list = []
+        gate = GuardrailsGate(auto_approve=False, approval_fn=lambda *_: False)
+        registry = ToolRegistry(
+            working_dir=tmp_path,
+            gate=gate,
+            on_result=lambda name, result: calls.append((name, result)),
+        )
+        registry.execute("write_file", {"path": "a.txt", "content": "x"})
+        assert len(calls) == 1
+        name, result = calls[0]
+        assert name == "write_file"
+        assert result.denied is True
+
+    def test_fires_on_error_calls_too(self, tmp_path: Path) -> None:
+        calls: list = []
+        gate = GuardrailsGate(auto_approve=True)
+        registry = ToolRegistry(
+            working_dir=tmp_path,
+            gate=gate,
+            on_result=lambda name, result: calls.append((name, result)),
+        )
+        registry.execute("read_file", {"path": "does_not_exist.txt"})
+        assert len(calls) == 1
+        name, result = calls[0]
+        assert name == "read_file"
+        assert result.error is not None
+
+    def test_fires_on_unknown_tool(self, tmp_path: Path) -> None:
+        calls: list = []
+        gate = GuardrailsGate(auto_approve=True)
+        registry = ToolRegistry(
+            working_dir=tmp_path,
+            gate=gate,
+            on_result=lambda name, result: calls.append((name, result)),
+        )
+        registry.execute("no_such_tool", {})
+        assert len(calls) == 1
+        assert calls[0][0] == "no_such_tool"
+
+    def test_no_callback_by_default_does_not_raise(self, tmp_path: Path) -> None:
+        """Default on_result=None -- every existing caller (LocalAdapter
+        pre-M10, and any direct ToolRegistry construction without the
+        param) must keep working unchanged."""
+        gate = GuardrailsGate(auto_approve=True)
+        registry = ToolRegistry(working_dir=tmp_path, gate=gate)
+        result = registry.execute("list_dir", {})
+        assert result.error is None
+
+
 class TestListTools:
     def test_returns_four_specs(self, tmp_path: Path) -> None:
         registry = _make_registry(tmp_path)

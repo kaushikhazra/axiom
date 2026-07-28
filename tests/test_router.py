@@ -90,6 +90,36 @@ class TestSelectConductor:
         assert router.conductor_provider is None
 
 
+class TestSetForcedProvider:
+    """M10 (design.md D4): runtime provider switching -- select_worker()/
+    select_committee() already re-read _forced_provider fresh on every
+    call, so this is a thin setter, but its effect must be observable."""
+
+    def test_switches_worker_selection_immediately(self) -> None:
+        router = Router(RoutePolicy(), _factories([], []))
+        router.set_forced_provider("local")
+        selection = router.select_worker("anything")
+        assert selection.provider_name == "local"
+
+    def test_switching_back_to_none_restores_policy_driven_routing(self) -> None:
+        policy = RoutePolicy(bulk_threshold_chars=1000)
+        router = Router(policy, _factories([], []), forced_provider="local")
+        router.set_forced_provider(None)
+        # A short instruction with no policy match falls through to
+        # bulk-default (RT-5) -- proves override was genuinely lifted, not
+        # just re-forced to a different fixed value.
+        selection = router.select_worker("short")
+        assert selection.fallback_allowed is True  # override forcing sets False
+
+    def test_conductor_reflects_new_forced_provider_after_reselection(self) -> None:
+        router = Router(RoutePolicy(), _factories([], []))
+        router.select_conductor()
+        assert router.conductor_provider == "claude"
+        router.set_forced_provider("local")
+        router.select_conductor()  # caller (Agent.set_provider) re-resolves
+        assert router.conductor_provider == "local"
+
+
 class TestSelectWorkerPolicyDriven:
     def test_privacy_pattern_routes_local(self) -> None:
         policy = RoutePolicy(privacy_patterns=["*secret*"])

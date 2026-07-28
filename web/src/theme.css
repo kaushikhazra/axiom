@@ -1,0 +1,233 @@
+/* design.md D2 §9 (AC-07.4) -- dark dev-tool aesthetic: dark-first, monospace
+   on technical surfaces, dense spacing, minimal chrome. No light-theme
+   toggle shipped in M10. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --bg-raised: #161b22;
+  --bg-inset: #010409;
+  --fg: #c9d1d9;
+  --fg-muted: #8b949e;
+  --border: #30363d;
+  --accent: #58a6ff;
+  --danger: #f85149;
+  --ok: #3fb950;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular",
+    Menlo, Consolas, monospace;
+  --font-ui: var(--font-mono);
+  --space-unit: 4px;
+  --chrome-height: 40px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.chrome-bar {
+  height: var(--chrome-height);
+  min-height: var(--chrome-height);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-unit) * 3);
+  padding: 0 calc(var(--space-unit) * 3);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.chrome-title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-right: auto;
+}
+
+.chrome-toggle,
+.provider-select {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  background: var(--bg-inset);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
+  cursor: pointer;
+}
+
+.chrome-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.chat-pane {
+  flex: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  border-right: 1px solid var(--border);
+}
+
+.axiom-chat {
+  height: 100%;
+  /* CopilotKit's own theme tokens (@copilotkit/react-ui/styles.css) default
+     to a light theme -- overridden here so the chat surface matches
+     AC-07.4's dark aesthetic instead of a light box on a dark page. */
+  --copilot-kit-background-color: var(--bg);
+  --copilot-kit-secondary-color: var(--bg-raised);
+  --copilot-kit-primary-color: var(--accent);
+  --copilot-kit-contrast-color: var(--fg);
+  --copilot-kit-secondary-contrast-color: var(--fg);
+  --copilot-kit-input-background-color: var(--bg-inset);
+  --copilot-kit-separator-color: var(--border);
+  --copilot-kit-muted-color: var(--fg-muted);
+}
+
+/* -- Approval prompt (US-03) -------------------------------------------- */
+
+.approval-prompt {
+  margin: calc(var(--space-unit) * 2);
+  padding: calc(var(--space-unit) * 3);
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.approval-prompt pre {
+  font-family: var(--font-mono);
+  background: var(--bg-inset);
+  padding: calc(var(--space-unit) * 2);
+  border-radius: 3px;
+  overflow-x: auto;
+  margin: calc(var(--space-unit) * 2) 0;
+}
+
+.approval-actions {
+  display: flex;
+  gap: calc(var(--space-unit) * 2);
+}
+
+.approval-actions button {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 3);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+
+.approval-actions .approve {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.approval-actions .deny {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* -- Canvas pane (US-06) -------------------------------------------------- */
+
+.canvas-pane {
+  flex: 1.4;
+  min-width: 0;
+  overflow-y: auto;
+  padding: calc(var(--space-unit) * 3);
+  border-right: 1px solid var(--border);
+}
+
+.canvas-block {
+  margin-bottom: calc(var(--space-unit) * 3);
+}
+
+.canvas-block-header {
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: calc(var(--space-unit) * 1);
+}
+
+.canvas-block pre {
+  font-family: var(--font-mono);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 2);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0;
+}
+
+.canvas-empty {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+/* -- Trace pane (US-04) ---------------------------------------------------- */
+
+.trace-pane {
+  flex: 1;
+  min-width: 220px;
+  overflow-y: auto;
+  padding: calc(var(--space-unit) * 3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.trace-node {
+  margin-left: calc(var(--space-unit) * 3);
+  border-left: 1px solid var(--border);
+  padding-left: calc(var(--space-unit) * 2);
+}
+
+.trace-node.root {
+  margin-left: 0;
+  border-left: none;
+  padding-left: 0;
+}
+
+.trace-phase {
+  color: var(--accent);
+}
+
+.trace-status-ERROR {
+  color: var(--danger);
+}
+
+.trace-gap {
+  color: var(--danger);
+  font-style: italic;
+}
+
+.trace-empty {
+  color: var(--fg-muted);
+}

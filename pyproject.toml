@@ -8,10 +8,15 @@ dependencies = [
     "anyio>=4.0",
     "smolagents",          # was: "litellm" -- smolagents depends on litellm transitively
     "websockets>=10.0",    # WsBridgeSink — optional at runtime (ws_port=None disables it)
+    "fastapi>=0.116.0",    # M10: axiom-web backend
+    "uvicorn>=0.35.0",     # M10: axiom-web ASGI server (design.md D11)
+    "ag-ui-protocol>=0.1.9",  # M10: hand-emitted AG-UI events (design.md D1)
+    "pystray>=0.19.0",     # M10: tray launcher (design.md US-07, scripts/tray_launcher.py)
 ]
 
 [project.scripts]
 axiom-cli = "axiom.interface.cli:main"
+axiom-web = "axiom.interface.web_cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -23,6 +28,7 @@ packages = ["src/axiom"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+asyncio_mode = "auto"  # M10: async def test_* run without per-test @pytest.mark.asyncio
 markers = [
     "e2e_local: marks tests requiring a running Ollama instance (deselect with '-m not e2e_local')",
 ]
@@ -36,4 +42,5 @@ dev = [
 test = [
     "pytest>=7.0",
     "httpx",
+    "pytest-asyncio>=0.23.0",  # M10: async web-backend tests (session_manager, agui_bridge)
 ]

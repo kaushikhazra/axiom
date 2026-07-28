@@ -6,6 +6,7 @@ GuardrailsGate; dispatches by name to filesystem.py / shell.py functions.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 from axiom.tools.filesystem import ToolError, list_dir, read_file, write_file
 from axiom.tools.guardrails import Classification, GuardrailsGate
@@ -23,9 +24,23 @@ _SPECS: dict[str, str] = {
 class ToolRegistry:
     """Implements ToolsPort (structurally -- Protocol, no explicit inheritance)."""
 
-    def __init__(self, working_dir: Path, gate: GuardrailsGate) -> None:
+    def __init__(
+        self,
+        working_dir: Path,
+        gate: GuardrailsGate,
+        on_result: Callable[[str, ToolResult], None] | None = None,
+    ) -> None:
+        """
+        on_result: M10 (design.md D13, D15) -- optional callback invoked once
+        per execute() call with (tool_name, result), for EVERY tool (not just
+        write_file/run_shell, and regardless of denied/error/success) --
+        deciding what's canvas-worthy is the interface layer's job
+        (axiom.interface.web.agui_bridge.stream_turn()), not the registry's.
+        Fired unconditionally so that job has complete information.
+        """
         self._working_dir = working_dir
         self._gate = gate
+        self._on_result = on_result
 
     def list_tools(self) -> list[ToolSpec]:
         return [
@@ -38,6 +53,12 @@ class ToolRegistry:
         ]
 
     def execute(self, name: str, arguments: dict) -> ToolResult:
+        result = self._execute_inner(name, arguments)
+        if self._on_result is not None:
+            self._on_result(name, result)
+        return result
+
+    def _execute_inner(self, name: str, arguments: dict) -> ToolResult:
         if name not in _SPECS:
             return ToolResult(output="", error=f"unknown tool: {name}")
 

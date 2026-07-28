@@ -1,0 +1,12 @@
+/* Minimal reset -- design.md theme.css (AC-07.4) owns all real styling. */
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}

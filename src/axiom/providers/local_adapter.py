@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from axiom.interfaces import (
     AdapterError,
@@ -26,6 +27,7 @@ from axiom.interfaces import (
 )
 from axiom.providers.base import PraoAdapterBase, _parse_intent
 from axiom.tools.guardrails import GuardrailsGate
+from axiom.tools.port import ToolResult
 from axiom.tools.registry import ToolRegistry
 
 logger = logging.getLogger("axiom.providers")
@@ -74,6 +76,7 @@ class LocalAdapter(PraoAdapterBase):
         ollama_api_base: str = "http://localhost:11434",
         max_steps: int = 5,
         additional_authorized_imports: list[str] | None = None,
+        on_result: Callable[[str, ToolResult], None] | None = None,
     ) -> None:
         super().__init__(persona=persona)
 
@@ -83,7 +86,12 @@ class LocalAdapter(PraoAdapterBase):
         # (design.md D6, D11).
         self._working_dir = working_dir
         self._gate = gate
-        self._registry = ToolRegistry(working_dir=working_dir, gate=gate)
+        # M10 (design.md D13): on_result threaded straight through to
+        # ToolRegistry -- LocalAdapter has no logic of its own here, it's
+        # purely a passthrough from Agent's constructor.
+        self._registry = ToolRegistry(
+            working_dir=working_dir, gate=gate, on_result=on_result
+        )
 
         # Deferred import: pay smolagents import cost only when LocalAdapter is used.
         try:
