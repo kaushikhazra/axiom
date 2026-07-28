@@ -18,7 +18,7 @@ from pathlib import Path
 import pystray
 from PIL import Image, ImageDraw
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _WEB_DIR = _REPO_ROOT / "web"
 _FRONTEND_URL = "http://localhost:5173"
 

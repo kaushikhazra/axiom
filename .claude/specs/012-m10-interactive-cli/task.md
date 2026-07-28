@@ -11,7 +11,7 @@
 - [x] **Implementer** creates `src/axiom/interface/web/canvas_routing.py` — CanvasBlock, split_for_canvas, from_tool_result. _US-06_
 - [x] **Implementer** creates `src/axiom/interface/web_cli.py` — axiom-web entry point. _US-07_
 - [x] **Implementer** updates `pyproject.toml` — adds axiom-web script and web dependencies. _US-07_
-- [x] **Implementer** creates `scripts/tray_launcher.py` — pystray background launcher. _US-07_
+- [x] **Implementer** creates `src/axiom/interface/tray_launcher.py` — pystray background launcher, `axiom-ui` entry point. _US-07_
 - [x] **Implementer** creates `web/package.json` — Vite+React+TS+CopilotKit project. _US-07_
 - [x] **Implementer** creates `web/vite.config.ts` — Vite config with PWA plugin. _US-07_
 - [x] **Implementer** creates `web/public/manifest.json` — PWA manifest. _US-07_

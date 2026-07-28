@@ -49,6 +49,7 @@ src/axiom/interface/
         approval_bridge.py    # UI-backed GuardrailsGate approval_fn (D5, D6)
         canvas_routing.py     # chat-vs-canvas content predicate (D8, D13)
     web_cli.py                # `axiom-web` entry point (uvicorn launcher)
+    tray_launcher.py          # `axiom-ui` entry point (pystray background launcher)
 
 src/axiom/agent.py            # +run_turn(), +end_session(), +set_provider(),
                                # +TurnResult, +approval_fn/on-tool-output wiring (D3,D4,D15,D16)
@@ -59,9 +60,6 @@ src/axiom/tools/
     registry.py                # +on_result callback param                    (D13, D15)
 src/axiom/providers/
     local_adapter.py            # threads on_result through to ToolRegistry    (D13)
-
-scripts/
-    tray_launcher.py           # pystray background launcher                  (US-07)
 
 web/                            # new top-level frontend (Vite+React+TS)
     package.json
@@ -529,8 +527,8 @@ Binds `127.0.0.1` by default (LAN exposure is an explicit `--host 0.0.0.0`-style
 | `src/axiom/interface/web/approval_bridge.py` | New — UI-backed `approval_fn` + pending-`Future` registry (D5, D6). | US-03 |
 | `src/axiom/interface/web/canvas_routing.py` | New — `CanvasBlock`, `split_for_canvas()`, `from_tool_result()` (D8, D13). | US-06 |
 | `src/axiom/interface/web_cli.py` | New — `axiom-web` entry point (single-process uvicorn launcher). | US-07 (D11) |
-| `pyproject.toml` | Add `axiom-web` script entry; add `fastapi`, `uvicorn`, `ag-ui-protocol`, `pystray` dependencies. | US-07 |
-| `scripts/tray_launcher.py` | New — `pystray` background launcher. | US-07 |
+| `pyproject.toml` | Add `axiom-web`/`axiom-ui` script entries; add `fastapi`, `uvicorn`, `ag-ui-protocol`, `pystray` dependencies. | US-07 |
+| `src/axiom/interface/tray_launcher.py` | New — `pystray` background launcher, `axiom-ui` entry point. | US-07 |
 | `web/package.json` | New — Vite + React + TS + `@copilotkit/react-core`/`@copilotkit/react-ui` project. | US-07 (D2) |
 | `web/vite.config.ts` | New — Vite config + `vite-plugin-pwa` + dev-server `/api` proxy to `http://127.0.0.1:8420` (D20, no CORS middleware needed). | US-07 |
 | `web/public/manifest.json` | New — PWA manifest. | US-07 (AC-07.2) |

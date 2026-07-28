@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 axiom-cli = "axiom.interface.cli:main"
 axiom-web = "axiom.interface.web_cli:main"
+axiom-ui = "axiom.interface.tray_launcher:main"
 
 [build-system]
 requires = ["hatchling"]
