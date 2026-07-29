@@ -92,10 +92,12 @@ class TestDelegation:
         session.close()
         assert _FakeAgent.last_instance.end_session_called is True
 
-    async def test_set_provider_delegates_to_agent(self) -> None:
+    async def test_set_provider_no_longer_exposed(self) -> None:
+        """WebSession.set_provider() went with POST /api/provider (#19); it had
+        no other caller. Agent.set_provider() itself remains -- it still backs
+        the --provider flag on both entry points."""
         session = WebSession()
-        session.set_provider("local")
-        assert _FakeAgent.last_instance.set_provider_calls == ["local"]
+        assert not hasattr(session, "set_provider")
 
 
 class TestSentinel:

@@ -34,7 +34,7 @@ class ToolRegistry:
         on_result: M10 (design.md D13, D15) -- optional callback invoked once
         per execute() call with (tool_name, result), for EVERY tool (not just
         write_file/run_shell, and regardless of denied/error/success) --
-        deciding what's canvas-worthy is the interface layer's job
+        deciding what to do with them is the interface layer's job
         (axiom.interface.web.agui_bridge.stream_turn()), not the registry's.
         Fired unconditionally so that job has complete information.
         """

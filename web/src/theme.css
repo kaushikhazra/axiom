@@ -101,23 +101,6 @@ body {
   margin-right: auto;
 }
 
-.chrome-toggle,
-.provider-select {
-  font-family: var(--font-ui);
-  font-size: 12px;
-  background: var(--bg-inset);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
-  cursor: pointer;
-}
-
-.chrome-toggle[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .app-body {
   flex: 1;
   display: flex;
@@ -127,12 +110,15 @@ body {
 /* -- Chat pane (US-01, US-02) -- first-party component, replacing the
    stock CopilotChat's own styles.css theme-token overrides entirely. -- */
 
+/* Chat is the only pane now (#17). The old `flex: 1.6` was its share of a
+   split against the canvas, and `border-right` was the divider between them --
+   both meaningless with nothing beside it. Line length stays readable via
+   .msg-list's own max-width, not by leaving dead space to the right. */
 .chat-pane {
-  flex: 1.6;
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   min-height: 0;
 }
 
@@ -534,82 +520,4 @@ body {
 .approval-actions .deny {
   border-color: var(--danger);
   color: var(--danger);
-}
-
-/* -- Canvas pane (US-06) -------------------------------------------------- */
-
-.canvas-pane {
-  flex: 1.4;
-  min-width: 0;
-  overflow-y: auto;
-  padding: calc(var(--space-unit) * 3);
-  border-right: 1px solid var(--border);
-}
-
-.canvas-block {
-  margin-bottom: calc(var(--space-unit) * 3);
-}
-
-.canvas-block-header {
-  font-size: 11px;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: calc(var(--space-unit) * 1);
-}
-
-.canvas-block pre {
-  font-family: var(--font-mono);
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: calc(var(--space-unit) * 2);
-  overflow-x: auto;
-  white-space: pre;
-  margin: 0;
-}
-
-.canvas-empty {
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-
-/* -- Trace pane (US-04) ---------------------------------------------------- */
-
-.trace-pane {
-  flex: 1;
-  min-width: 220px;
-  overflow-y: auto;
-  padding: calc(var(--space-unit) * 3);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.trace-node {
-  margin-left: calc(var(--space-unit) * 3);
-  border-left: 1px solid var(--border);
-  padding-left: calc(var(--space-unit) * 2);
-}
-
-.trace-node.root {
-  margin-left: 0;
-  border-left: none;
-  padding-left: 0;
-}
-
-.trace-phase {
-  color: var(--accent);
-}
-
-.trace-status-ERROR {
-  color: var(--danger);
-}
-
-.trace-gap {
-  color: var(--danger);
-  font-style: italic;
-}
-
-.trace-empty {
-  color: var(--fg-muted);
 }
