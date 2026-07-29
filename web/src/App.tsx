@@ -1,11 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef } from 'react'
 import { CopilotKit } from '@copilotkit/react-core'
 import { HttpAgent } from '@ag-ui/client'
 import './theme.css'
 import ChatPane from './components/ChatPane'
-import TracePane from './components/TracePane'
-import CanvasPane from './components/CanvasPane'
-import ProviderSelector from './components/ProviderSelector'
 
 // design.md D18: direct-agent wiring via @ag-ui/client's HttpAgent, passed
 // as selfManagedAgents, registered under "default" (CopilotKit's own
@@ -23,9 +20,6 @@ function App() {
     () => new HttpAgent({ url: '/api/agent/run', threadId }),
     [threadId],
   )
-  const [canvasOpen, setCanvasOpen] = useState(true)
-  const [traceOpen, setTraceOpen] = useState(false)
-
   return (
     <CopilotKit
       selfManagedAgents={{ default: httpAgent }}
@@ -33,34 +27,16 @@ function App() {
       showDevConsole={false}
     >
       <div className="app-shell">
+        {/* Canvas and trace panes removed (#17); provider dropdown removed
+            (#19) -- provider is the Router's policy decision now. Chat is the
+            whole surface. ChatPane still talks to the M2 trace bridge for its
+            in-chat PRAO phase tag, which is why /api/trace-endpoint and
+            WsBridgeSink deliberately survive. */}
         <header className="chrome-bar">
           <span className="chrome-title">axiom</span>
-          <ProviderSelector threadId={threadId} />
-          <button
-            type="button"
-            className="chrome-toggle"
-            aria-pressed={canvasOpen}
-            onClick={() => setCanvasOpen((v) => !v)}
-          >
-            canvas
-          </button>
-          <button
-            type="button"
-            className="chrome-toggle"
-            aria-pressed={traceOpen}
-            onClick={() => setTraceOpen((v) => !v)}
-          >
-            trace
-          </button>
         </header>
         <div className="app-body">
           <ChatPane threadId={threadId} />
-          {/* CanvasPane stays mounted across toggles -- unmounting would
-              discard its accumulated blocks (it has no external state to
-              restore from on remount), unlike TracePane below, which
-              legitimately closes its WebSocket when hidden. */}
-          <CanvasPane hidden={!canvasOpen} />
-          {traceOpen && <TracePane threadId={threadId} />}
         </div>
       </div>
     </CopilotKit>

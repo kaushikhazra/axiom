@@ -46,5 +46,5 @@ class WebSession:
     def close(self) -> None:
         self._agent.end_session()
 
-    def set_provider(self, provider: str | None) -> None:
-        self._agent.set_provider(provider)
+    # set_provider() removed with the provider dropdown (#19) -- it existed
+    # solely to serve POST /api/provider. Agent.set_provider() itself remains.

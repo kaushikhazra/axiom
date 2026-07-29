@@ -44,11 +44,12 @@ def main() -> None:
         action="store_true",
         default=False,
         help=(
-            "Disable the M2 WebSocket trace bridge (US-04). On by default "
-            "-- unlike axiom-cli, where --observe defaults off -- since a "
-            "UI with an always-available-but-empty trace toggle is a worse "
-            "experience than always running the (non-blocking) trace sink "
-            "(design.md §6)."
+            "Disable the M2 WebSocket trace bridge. On by default. NOTE: this "
+            "also removes the in-chat PRAO phase indicator ([reason], [act]), "
+            "which reads from the same bridge -- since the trace pane was "
+            "removed (#17), that indicator is now the bridge's only consumer "
+            "in the UI. Traces are still written to disk by the file sink "
+            "either way."
         ),
     )
     parser.add_argument(

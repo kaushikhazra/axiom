@@ -32,13 +32,15 @@ from axiom.tools.port import ToolResult
 
 
 # M10 (design.md D15): the multi-turn-safe return value of run_turn().
-# Core-only types -- ToolResult lives in axiom/tools/port.py, already part
-# of this module's import graph. Deliberately does NOT reference CanvasBlock
-# (axiom/interface/web/canvas_routing.py, an interface-layer type) -- a core
-# module importing from the interface layer would invert this project's
-# core/interface dependency direction (dryrun-design-3 C1). Filtering to
-# write_file/run_shell and any canvas-worthiness decision is the interface
-# layer's job (axiom.interface.web.agui_bridge.stream_turn()), not Agent's.
+# Core-only types -- ToolResult lives in axiom/tools/port.py, already part of
+# this module's import graph. Core deliberately never referenced the canvas's
+# own types, keeping the core/interface dependency direction intact
+# (dryrun-design-3 C1) -- which is why removing the canvas pane (#17) did not
+# reach into this module at all.
+#
+# tool_outputs currently has NO consumer: the canvas was its only reader.
+# Retained as legitimate core data (what the turn did is worth carrying)
+# rather than deleted, so a future surface can render it.
 @dataclass
 class TurnResult:
     text: str
@@ -78,9 +80,10 @@ def _make_local_adapter(
     local adapter (policy match, or explicit --provider local).
 
     on_result: M10 (design.md D13) -- threaded through to ToolRegistry so
-    write_file/run_shell results can be collected for canvas routing.
-    KIND-A (local) only; there is no equivalent for ClaudeAdapter (D13's
-    explicit descope)."""
+    write_file/run_shell results can be collected onto TurnResult. KIND-A
+    (local) only; there is no equivalent for ClaudeAdapter (D13's explicit
+    descope). Note these results are no longer displayed anywhere since the
+    canvas pane was removed (#17)."""
     from axiom.providers.local_adapter import LocalAdapter  # noqa: PLC0415 (lazy)
 
     kwargs = {}
@@ -257,8 +260,8 @@ class Agent:
         # M10 (design.md D13, D15): collects (tool_name, ToolResult) for every
         # write_file/run_shell call on the local (KIND-A) provider this turn.
         # Populated via on_result below; snapshotted+cleared per turn in
-        # _execute_turn(). Core-only data -- the interface layer (not Agent)
-        # decides what's canvas-worthy.
+        # _execute_turn(). Core-only data -- what the interface layer does with
+        # it is its own business. Nothing consumes it today (#17).
         self._tool_outputs: list[tuple[str, ToolResult]] = []
 
         # M6: Router replaces the pre-M6 if/elif provider-selection block.

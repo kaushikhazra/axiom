@@ -151,23 +151,14 @@ class TestApproval:
             approval_bridge._pending.pop("dup-id", None)
 
 
-class TestProvider:
-    def test_valid_provider_returns_200(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/provider", json={"threadId": "t1", "provider": "local"}
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"provider": "local"}
+class TestProviderRouteRemoved:
+    """POST /api/provider went with the provider dropdown (#19) -- provider is
+    the Router's policy decision now. Asserted rather than merely deleted so a
+    future reintroduction is a deliberate act, not an accident."""
 
-    def test_invalid_provider_returns_400(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/provider", json={"threadId": "t1", "provider": "bogus"}
-        )
-        assert resp.status_code == 400
-
-    def test_null_provider_is_valid(self, client: TestClient) -> None:
-        resp = client.post("/api/provider", json={"threadId": "t1", "provider": None})
-        assert resp.status_code == 200
+    def test_provider_route_is_gone(self, client: TestClient) -> None:
+        resp = client.post("/api/provider", json={"threadId": "t1", "provider": "local"})
+        assert resp.status_code == 405 or resp.status_code == 404
 
 
 class TestTraceEndpoint:

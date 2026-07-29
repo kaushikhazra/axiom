@@ -37,11 +37,6 @@ class ApprovalDecision(BaseModel):
     approved: bool
 
 
-class ProviderRequest(BaseModel):
-    threadId: str
-    provider: str | None = None
-
-
 def _latest_user_text(body: RunAgentInput) -> str:
     """D19 -- pull the newest UserMessage's content out of RunAgentInput's
     full messages list. HttpAgent (the JS client, @ag-ui/client) resends
@@ -195,14 +190,10 @@ def create_app(agent_kwargs: dict) -> FastAPI:
             )
         return {"ok": True}
 
-    @app.post("/api/provider")
-    async def set_provider(body: ProviderRequest):
-        session = _get_or_create_session(body.threadId)
-        try:
-            session.set_provider(body.provider)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return {"provider": body.provider}
+    # POST /api/provider removed with the provider dropdown (#19). Provider is
+    # the Router's policy decision now (M6 RT-4/5/6). Agent.set_provider() and
+    # Router.set_forced_provider() deliberately remain -- they still back the
+    # --provider flag on both axiom-web and axiom-cli.
 
     @app.get("/api/trace-endpoint")
     async def trace_endpoint(threadId: str):

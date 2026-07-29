@@ -21,7 +21,7 @@ def _make_registry(tmp_path: Path, auto_approve: bool = True) -> ToolRegistry:
 class TestOnResultCallback:
     """M10 (design.md D13, D15): on_result fires once per execute() call,
     unconditionally (every tool, every outcome) -- filtering to
-    write_file/run_shell and canvas-worthiness is the interface layer's
+    write_file/run_shell and any display decision is the interface layer's
     job, not the registry's."""
 
     def test_fires_with_tool_name_and_result_on_success(self, tmp_path: Path) -> None:

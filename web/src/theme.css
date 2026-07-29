@@ -101,23 +101,6 @@ body {
   margin-right: auto;
 }
 
-.chrome-toggle,
-.provider-select {
-  font-family: var(--font-ui);
-  font-size: 12px;
-  background: var(--bg-inset);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
-  cursor: pointer;
-}
-
-.chrome-toggle[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
 .app-body {
   flex: 1;
   display: flex;
@@ -127,12 +110,15 @@ body {
 /* -- Chat pane (US-01, US-02) -- first-party component, replacing the
    stock CopilotChat's own styles.css theme-token overrides entirely. -- */
 
+/* Chat is the only pane now (#17). The old `flex: 1.6` was its share of a
+   split against the canvas, and `border-right` was the divider between them --
+   both meaningless with nothing beside it. Line length stays readable via
+   .msg-list's own max-width, not by leaving dead space to the right. */
 .chat-pane {
-  flex: 1.6;
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
   min-height: 0;
 }
 
@@ -231,6 +217,164 @@ body {
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 0.92em;
+}
+
+/* #16 -- user messages are not markdown-parsed, so their newlines would be
+   collapsed by HTML. pre-wrap preserves them while still wrapping long lines. */
+.msg-row.user .content {
+  white-space: pre-wrap;
+}
+
+/* #16 -- rendered markdown for assistant messages.
+   Everything inherits font-family deliberately: --font-ui IS --font-mono, so
+   the app is uniformly monospace and any imposed font stack would break it.
+   No highlight.js theme is imported for the same reason. */
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body table {
+  margin: 0 0 calc(var(--space-unit) * 2);
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  font-family: inherit;
+  font-size: 1em;
+  font-weight: 700;
+  color: var(--fg);
+  margin: calc(var(--space-unit) * 3) 0 calc(var(--space-unit) * 1.5);
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: calc(var(--space-unit) * 5);
+}
+
+.markdown-body li {
+  margin: calc(var(--space-unit) * 0.5) 0;
+}
+
+.markdown-body a {
+  color: var(--accent);
+}
+
+.markdown-body blockquote {
+  border-left: 2px solid var(--border);
+  padding-left: calc(var(--space-unit) * 2);
+  color: var(--fg-muted);
+}
+
+/* Browsers apply a generic `monospace` default to pre/code, which OVERRIDES
+   inheritance -- without this the code block silently drops off JetBrains Mono
+   onto the browser's fallback while the surrounding text keeps it. Verified in
+   Chromium: computed font-family was plain "monospace" until this was added. */
+.markdown-body pre,
+.markdown-body code,
+.content code {
+  font-family: var(--font-mono);
+}
+
+/* Fenced blocks: the case #16 was reported for. Scrolls horizontally inside
+   its own box so a long line never makes the chat pane scroll sideways. */
+.markdown-body pre {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: calc(var(--space-unit) * 2);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0 0 calc(var(--space-unit) * 2);
+}
+
+/* Inside a fence the code element must not re-apply the inline-code chip
+   styling (.content code above) -- it would double the background and padding. */
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.92em;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: calc(var(--space-unit) * 1) calc(var(--space-unit) * 2);
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--bg-inset);
+}
+
+.markdown-body hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: calc(var(--space-unit) * 3) 0;
+}
+
+/* Syntax highlighting -- hand-mapped to the existing palette rather than
+   importing a highlight.js stylesheet (those set their own font and
+   background). Deliberately minimal: structure over rainbow. */
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section {
+  color: #ff7b72;
+}
+
+.hljs-string,
+.hljs-attr,
+.hljs-regexp,
+.hljs-addition {
+  color: #a5d6ff;
+}
+
+.hljs-title,
+.hljs-name,
+.hljs-built_in,
+.hljs-function {
+  color: var(--accent);
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: #79c0ff;
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--fg-muted);
+  font-style: italic;
+}
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-type,
+.hljs-params {
+  color: #ffa657;
+}
+
+.hljs-deletion {
+  color: var(--danger);
 }
 
 .cursor {
@@ -376,82 +520,4 @@ body {
 .approval-actions .deny {
   border-color: var(--danger);
   color: var(--danger);
-}
-
-/* -- Canvas pane (US-06) -------------------------------------------------- */
-
-.canvas-pane {
-  flex: 1.4;
-  min-width: 0;
-  overflow-y: auto;
-  padding: calc(var(--space-unit) * 3);
-  border-right: 1px solid var(--border);
-}
-
-.canvas-block {
-  margin-bottom: calc(var(--space-unit) * 3);
-}
-
-.canvas-block-header {
-  font-size: 11px;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: calc(var(--space-unit) * 1);
-}
-
-.canvas-block pre {
-  font-family: var(--font-mono);
-  background: var(--bg-inset);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: calc(var(--space-unit) * 2);
-  overflow-x: auto;
-  white-space: pre;
-  margin: 0;
-}
-
-.canvas-empty {
-  color: var(--fg-muted);
-  font-size: 12px;
-}
-
-/* -- Trace pane (US-04) ---------------------------------------------------- */
-
-.trace-pane {
-  flex: 1;
-  min-width: 220px;
-  overflow-y: auto;
-  padding: calc(var(--space-unit) * 3);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.trace-node {
-  margin-left: calc(var(--space-unit) * 3);
-  border-left: 1px solid var(--border);
-  padding-left: calc(var(--space-unit) * 2);
-}
-
-.trace-node.root {
-  margin-left: 0;
-  border-left: none;
-  padding-left: 0;
-}
-
-.trace-phase {
-  color: var(--accent);
-}
-
-.trace-status-ERROR {
-  color: var(--danger);
-}
-
-.trace-gap {
-  color: var(--danger);
-  font-style: italic;
-}
-
-.trace-empty {
-  color: var(--fg-muted);
 }

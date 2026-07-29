@@ -53,7 +53,7 @@ class TestBasicTurnNoMidTurnEvents:
         assert types[-1] == "RUN_FINISHED"
         assert "TEXT_MESSAGE_START" in types
         assert "TEXT_MESSAGE_END" in types
-        assert "CUSTOM" not in types  # no approval, no canvas
+        assert "CUSTOM" not in types  # no approval events
 
         content_events = [e for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
         reassembled = "".join(e["delta"] for e in content_events)
@@ -164,8 +164,13 @@ class TestMidTurnEventDelivery:
         ]
 
 
-class TestCanvasEmission:
-    async def test_tool_output_canvas_block_emitted_before_text(self) -> None:
+class TestNoCanvasEmission:
+    """The canvas pane was removed (#17), taking split_for_canvas() and the
+    CANVAS_BLOCK events with it. These invert the old TestCanvasEmission
+    assertions: nothing is diverted out of chat any more, and the response text
+    reaches the user whole."""
+
+    async def test_tool_outputs_produce_no_canvas_events(self) -> None:
         def handle_turn(user_input: str) -> TurnResult:
             return TurnResult(
                 text="wrote the file",
@@ -175,69 +180,22 @@ class TestCanvasEmission:
         session = _FakeSession(handle_turn)
         raw = [chunk async for chunk in stream_turn(session, "hi", "t")]
         events = _decode_events(raw)
-        canvas_events = [
-            e for e in events if e["type"] == "CUSTOM" and e["name"] == "CANVAS_BLOCK"
-        ]
-        assert len(canvas_events) == 1
-        assert canvas_events[0]["value"]["source"] == "tool_output"
-        assert canvas_events[0]["value"]["content"] == "3 lines written"
 
-        canvas_index = events.index(canvas_events[0])
-        text_start_index = next(
-            i for i, e in enumerate(events) if e["type"] == "TEXT_MESSAGE_START"
-        )
-        assert canvas_index < text_start_index
-
-    async def test_denied_tool_output_not_routed_to_canvas(self) -> None:
-        def handle_turn(user_input: str) -> TurnResult:
-            return TurnResult(
-                text="denied",
-                tool_outputs=[
-                    (
-                        "write_file",
-                        ToolResult(output="", denied=True, error="denied by user"),
-                    )
-                ],
-            )
-
-        session = _FakeSession(handle_turn)
-        raw = [chunk async for chunk in stream_turn(session, "hi", "t")]
-        events = _decode_events(raw)
         assert not any(
             e["type"] == "CUSTOM" and e["name"] == "CANVAS_BLOCK" for e in events
         )
-
-    async def test_errored_tool_output_not_routed_to_canvas(self) -> None:
-        def handle_turn(user_input: str) -> TurnResult:
-            return TurnResult(
-                text="failed",
-                tool_outputs=[
-                    ("run_shell", ToolResult(output="", error="command not found"))
-                ],
-            )
-
-        session = _FakeSession(handle_turn)
-        raw = [chunk async for chunk in stream_turn(session, "hi", "t")]
-        events = _decode_events(raw)
-        assert not any(
-            e["type"] == "CUSTOM" and e["name"] == "CANVAS_BLOCK" for e in events
+        # tool_outputs is still carried on TurnResult (core data, agent.py D15)
+        # -- it simply has no consumer here now.
+        content = "".join(
+            e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"
         )
+        assert content == "wrote the file"
 
-    async def test_non_canvas_tool_name_not_routed_to_canvas(self) -> None:
-        def handle_turn(user_input: str) -> TurnResult:
-            return TurnResult(
-                text="read it",
-                tool_outputs=[("read_file", ToolResult(output="file contents"))],
-            )
-
-        session = _FakeSession(handle_turn)
-        raw = [chunk async for chunk in stream_turn(session, "hi", "t")]
-        events = _decode_events(raw)
-        assert not any(
-            e["type"] == "CUSTOM" and e["name"] == "CANVAS_BLOCK" for e in events
-        )
-
-    async def test_long_code_fence_in_response_text_routed_to_canvas(self) -> None:
+    async def test_long_code_fence_stays_inline_in_chat(self) -> None:
+        """Directly inverts test_long_code_fence_in_response_text_routed_to_canvas:
+        a >=15-line fence used to be replaced by a '[see canvas: ...]' marker.
+        It must now arrive in chat intact -- #16's markdown rendering is what
+        displays it, which is why that had to land first."""
         long_code = "\n".join(f"line{i}" for i in range(20))
 
         def handle_turn(user_input: str) -> TurnResult:
@@ -246,15 +204,15 @@ class TestCanvasEmission:
         session = _FakeSession(handle_turn)
         raw = [chunk async for chunk in stream_turn(session, "hi", "t")]
         events = _decode_events(raw)
-        canvas_events = [
-            e for e in events if e["type"] == "CUSTOM" and e["name"] == "CANVAS_BLOCK"
-        ]
-        assert len(canvas_events) == 1
-        assert canvas_events[0]["value"]["source"] == "response_text"
-        content_events = [e for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"]
-        reassembled = "".join(e["delta"] for e in content_events)
-        assert long_code not in reassembled
-        assert "[see canvas: python block]" in reassembled
+
+        assert not any(
+            e["type"] == "CUSTOM" and e["name"] == "CANVAS_BLOCK" for e in events
+        )
+        reassembled = "".join(
+            e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT"
+        )
+        assert long_code in reassembled
+        assert "see canvas" not in reassembled
 
 
 class TestTurnTaskExceptionPropagation:

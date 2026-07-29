@@ -32,27 +32,11 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 
 from axiom.agent import TurnResult
-from axiom.interface.web.canvas_routing import CanvasBlock, split_for_canvas
 from axiom.interface.web.session_manager import SENTINEL, WebSession
-
-_CANVAS_TOOL_NAMES = {"write_file", "run_shell"}
 
 
 def _new_id() -> str:
     return uuid.uuid4().hex
-
-
-def _tool_canvas_blocks(turn_result: TurnResult) -> list[CanvasBlock]:
-    """D13: the write_file/run_shell filter lives HERE (interface layer),
-    not in Agent -- TurnResult only carries raw ToolResults (design.md D15),
-    keeping agent.py free of any axiom.interface import (dryrun-design-3 C1).
-    Excludes denied calls and calls that errored -- neither has output worth
-    showing on a canvas."""
-    return [
-        CanvasBlock.from_tool_result(name, result)
-        for name, result in turn_result.tool_outputs
-        if name in _CANVAS_TOOL_NAMES and not result.denied and result.error is None
-    ]
 
 
 async def stream_turn(
@@ -87,11 +71,17 @@ async def stream_turn(
 
     turn_result: TurnResult = turn_task.result()  # re-raises any exception
 
-    # US-06 -- canvas, both halves, only now that the turn has completed.
-    tool_blocks = _tool_canvas_blocks(turn_result)
-    chat_text, text_blocks = split_for_canvas(turn_result.text)  # D8
-    for block in tool_blocks + text_blocks:  # D13, D8
-        yield encoder.encode(CustomEvent(name="CANVAS_BLOCK", value=block.to_dict()))
+    # The whole response goes to chat. The canvas pane was removed (#17), taking
+    # split_for_canvas() and the CANVAS_BLOCK events with it -- long fenced
+    # blocks now render inline in chat, which is why #16 (markdown rendering)
+    # had to land first: the canvas was previously the ONLY path that displayed
+    # them correctly.
+    #
+    # TurnResult.tool_outputs is consequently unread here: write_file/run_shell
+    # results are no longer surfaced anywhere in the UI. The field is retained
+    # as core data (agent.py D15) rather than removed, since core never knew
+    # about the canvas -- only this interface layer did.
+    chat_text = turn_result.text
 
     # One delta, emitted the moment the text exists. The turn has already
     # completed by this point (turn_task.result() above), so chat_text is
