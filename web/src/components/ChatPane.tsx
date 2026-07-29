@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAgent } from '@copilotkit/react-core/v2'
 import type { Message } from '@ag-ui/client'
 import ApprovalPrompt from './ApprovalPrompt'
+import MarkdownMessage from './MarkdownMessage'
 
 // design.md S3/S4 replacement (US-01, US-02): first-party chat surface,
 // replacing CopilotKit's stock <CopilotChat> (dryrun-code-1 was clean on
@@ -130,8 +131,16 @@ export default function ChatPane({ threadId }: { threadId: string }) {
                   <span className="who">{m.role === 'user' ? 'you' : 'axiom'}</span>
                   {isStreaming && phase && <span className="phase">[{phase}]</span>}
                 </div>
+                {/* #16: assistant output is markdown and gets rendered as
+                    such. User messages are shown verbatim (CSS preserves their
+                    newlines) -- what you typed is what you see, no surprise
+                    transformation of your own input. */}
                 <div className="content">
-                  {contentText(m)}
+                  {m.role === 'assistant' ? (
+                    <MarkdownMessage text={contentText(m)} />
+                  ) : (
+                    contentText(m)
+                  )}
                   {isStreaming && <span className="cursor">▍</span>}
                 </div>
               </div>
