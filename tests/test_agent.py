@@ -21,6 +21,7 @@ exercised here -- that's the e2e suite's job, unchanged.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -133,3 +134,81 @@ class TestEndSession:
         agent = _make_agent(tmp_path)
         agent.end_session()
         agent.end_session()  # must not raise
+
+
+class TestBorrowedDependencyOwnership:
+    """Post-M10 -- axiom-web builds ONE CognitiveMemoryAdapter and ONE
+    ObservabilityFaculty per process and injects them into every session's
+    Agent (server.py's _lifespan). Both are process-global resources: the
+    adapter holds the embedding model + SurrealKV handle, the faculty holds
+    the WsBridgeSink's TCP port + OTel's global TracerProvider.
+
+    The load-bearing invariant is that a BORROWED dependency is never torn
+    down by a borrower -- the first session to end would otherwise destroy it
+    for every other live session. These tests pin that invariant; MagicMock
+    stands in so no test pays the ~22s embedding-model load.
+    """
+
+    def test_injected_memory_adapter_is_borrowed_not_owned(
+        self, tmp_path: Path
+    ) -> None:
+        shared = MagicMock()
+        agent = _make_agent(tmp_path, memory_adapter=shared)
+
+        assert agent._owns_memory is False
+        assert agent._memory_adapter is shared
+
+        agent.end_session()
+        # Neither consolidated nor closed: that is the owner's job.
+        assert shared.consolidate.call_count == 0
+        assert shared.close.call_count == 0
+
+    def test_own_memory_adapter_is_consolidated_and_closed(
+        self, tmp_path: Path
+    ) -> None:
+        """Complement of the above -- axiom-cli's path is unchanged: an Agent
+        that BUILT its adapter still tears it down on end_session()."""
+        owned = MagicMock()
+        with patch(
+            "axiom.memory.adapter.CognitiveMemoryAdapter", return_value=owned
+        ):
+            agent = _make_agent(tmp_path)
+
+        assert agent._owns_memory is True
+        agent.end_session()
+        assert owned.consolidate.call_count == 1
+        assert owned.close.call_count == 1
+
+    def test_injected_faculty_is_borrowed_and_never_shut_down(
+        self, tmp_path: Path
+    ) -> None:
+        shared = MagicMock()
+        shared.run_id = "run-abc"
+        shared.config.trace_dir = tmp_path
+
+        agent = _make_agent(tmp_path, faculty=shared)
+
+        assert agent._owns_faculty is False
+        assert agent._run_id == "run-abc"
+        assert agent.observability_config is shared.config
+        # new_run() must NOT be called: it unregisters the live run's sinks and
+        # rebuilds a WsBridgeSink that cannot bind the port this one holds.
+        assert shared.new_run.call_count == 0
+
+        agent.end_session()
+        assert shared.shutdown.call_count == 0
+
+    def test_injected_faculty_wins_over_observe_flag(self, tmp_path: Path) -> None:
+        """server.py pops observe/ws_port before building session_kwargs, but
+        an explicit observe=True must never cause a SECOND faculty alongside an
+        injected one -- that is exactly the port-conflict bug."""
+        shared = MagicMock()
+        shared.run_id = "run-xyz"
+        shared.config.trace_dir = tmp_path
+
+        agent = _make_agent(tmp_path, faculty=shared, observe=True)
+
+        assert agent._faculty is shared
+        assert agent._owns_faculty is False
+        agent.end_session()
+        assert shared.shutdown.call_count == 0

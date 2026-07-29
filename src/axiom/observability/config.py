@@ -36,6 +36,12 @@ class ObservabilityConfig:
     tui_buffer: int = 200  # deque maxlen for TUI display
     tui_enabled: bool = True  # set False for --no-tui / non-interactive
 
+    # --- Turn summary sink ---
+    # One line per completed turn (total + per-PRAO-phase breakdown), printed
+    # to stderr -- independent of tui_enabled (TuiSink is per-span and noisy;
+    # this is per-turn and terse, so it stays on even when Agent disables TUI).
+    turn_summary_enabled: bool = True
+
     # --- WebSocket bridge sink ---
     ws_port: int | None = None  # None = WS sink disabled
     ws_host: str = "127.0.0.1"  # MUST remain localhost-only

@@ -34,6 +34,7 @@ from axiom.observability.processors import (
 from axiom.observability.registry import SinkRegistry
 from axiom.observability.sinks.file_sink import FileSink
 from axiom.observability.sinks.tui_sink import TuiSink
+from axiom.observability.sinks.turn_summary_sink import TurnSummarySink
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ class ObservabilityFaculty:
 
     def __init__(self, config: ObservabilityConfig | None = None) -> None:
         self._config = config or ObservabilityConfig()
+        self._run_id: str | None = None  # set by new_run(); see the run_id property
         self._shutdown_called = threading.Event()
         self._registry = SinkRegistry()
         self._sinks: list = []  # ordered list of registered sinks (for reverse shutdown)
@@ -99,6 +101,23 @@ class ObservabilityFaculty:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    @property
+    def config(self) -> ObservabilityConfig:
+        """The ObservabilityConfig in effect (carries trace_dir, ws_host/port/token)."""
+        return self._config
+
+    @property
+    def run_id(self) -> str | None:
+        """run_id of the most recent new_run(), or None if it hasn't been called.
+
+        Lets a caller that BORROWS a faculty (a shared, process-wide one --
+        axiom-web builds a single faculty at startup) read the active run_id
+        without calling new_run() itself. That distinction matters: new_run()
+        unregisters the previous run's sinks and builds fresh ones, including
+        a new WsBridgeSink that would fail to bind the already-held port.
+        """
+        return self._run_id
 
     def new_run(self) -> str:
         """Generate a run_id, create trace directory, purge stale files.
@@ -142,6 +161,12 @@ class ObservabilityFaculty:
             self._registry.register("trace", tui_sink)
             self._sinks.append(tui_sink)
 
+        # Optionally register TurnSummarySink
+        if self._config.turn_summary_enabled:
+            summary_sink = TurnSummarySink()
+            self._registry.register("trace", summary_sink)
+            self._sinks.append(summary_sink)
+
         # Optionally register WsBridgeSink
         if self._config.ws_port is not None:
             from axiom.observability.sinks.ws_sink import WsBridgeSink
@@ -156,6 +181,7 @@ class ObservabilityFaculty:
                 )
                 # Non-fatal — WS is optional; continue without it
 
+        self._run_id = run_id
         return run_id
 
     def shutdown(self) -> None:
