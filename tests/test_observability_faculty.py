@@ -37,12 +37,16 @@ from axiom.observability.faculty import ObservabilityFaculty
 
 
 def _make_config(
-    tmp_path: Path, tui_enabled: bool = False, ws_port=None
+    tmp_path: Path,
+    tui_enabled: bool = False,
+    ws_port=None,
+    turn_summary_enabled: bool = False,
 ) -> ObservabilityConfig:
     return ObservabilityConfig(
         trace_dir=tmp_path,
         tui_enabled=tui_enabled,
         ws_port=ws_port,
+        turn_summary_enabled=turn_summary_enabled,
         file_fsync_records=1_000_000,
         file_fsync_secs=9999.0,
     )
@@ -174,6 +178,26 @@ class TestFacultySinkRegistration:
         from axiom.observability.sinks.tui_sink import TuiSink
 
         assert any(isinstance(s, TuiSink) for s in sinks)
+
+    def test_turn_summary_sink_not_registered_when_disabled(self, tmp_path):
+        cfg = _make_config(tmp_path, turn_summary_enabled=False)
+        faculty = ObservabilityFaculty(config=cfg)
+        faculty.new_run()
+        sinks = faculty._registry.sinks_for("trace")
+        faculty.shutdown()
+        from axiom.observability.sinks.turn_summary_sink import TurnSummarySink
+
+        assert not any(isinstance(s, TurnSummarySink) for s in sinks)
+
+    def test_turn_summary_sink_registered_when_enabled(self, tmp_path):
+        cfg = _make_config(tmp_path, turn_summary_enabled=True)
+        faculty = ObservabilityFaculty(config=cfg)
+        faculty.new_run()
+        sinks = faculty._registry.sinks_for("trace")
+        faculty.shutdown()
+        from axiom.observability.sinks.turn_summary_sink import TurnSummarySink
+
+        assert any(isinstance(s, TurnSummarySink) for s in sinks)
 
     def test_ws_sink_not_registered_when_port_none(self, tmp_path):
         cfg = _make_config(tmp_path, ws_port=None)
@@ -325,6 +349,39 @@ class TestFacultyEndToEnd:
         assert act_end is not None
         assert act_end["status"] == "ERROR"
         assert "something went wrong" in (act_end["error_message"] or "")
+
+    def test_turn_summary_sink_aggregates_real_nested_spans(self, tmp_path, capsys):
+        """End-to-end: real nested OTel spans (matching loop.py's "run" span
+        wrapping perceive/reason/act/observe) reach TurnSummarySink and
+        produce one aggregated stderr line, not per-hand-crafted-dict
+        (test_observability_turn_summary_sink.py already covers the sink in
+        isolation; this proves parent/child span_id wiring is real)."""
+        cfg = _make_config(tmp_path, turn_summary_enabled=True)
+        faculty = ObservabilityFaculty(config=cfg)
+        run_id = faculty.new_run()
+
+        tracer = faculty._tracer_provider.get_tracer("test")
+        with tracer.start_as_current_span(
+            "axiom.loop.run",
+            attributes={"axiom.run_id": run_id, "axiom.phase": "run"},
+        ):
+            with tracer.start_as_current_span(
+                "axiom.loop.perceive",
+                attributes={"axiom.run_id": run_id, "axiom.phase": "perceive"},
+            ):
+                pass
+            with tracer.start_as_current_span(
+                "axiom.loop.reason",
+                attributes={"axiom.run_id": run_id, "axiom.phase": "reason"},
+            ):
+                pass
+
+        faculty.shutdown()
+
+        captured = capsys.readouterr()
+        assert "[axiom] turn" in captured.err
+        assert "perceive" in captured.err
+        assert "reason" in captured.err
 
     def test_span_start_emitted_before_span_end(self, tmp_path):
         """LiveNotificationProcessor fires span_start before JsonlExportProcessor fires span_end."""

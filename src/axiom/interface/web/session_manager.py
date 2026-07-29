@@ -27,6 +27,10 @@ class WebSession:
         self._loop = asyncio.get_running_loop()
         self.event_queue: asyncio.Queue = asyncio.Queue()
         agent_kwargs["approval_fn"] = make_ui_approval_fn(self.emit_event)
+        # agent_kwargs carries memory_adapter= (server.py builds one shared
+        # adapter at startup) so this Agent borrows it instead of loading the
+        # embedding model itself -- that load is ~22s and would otherwise run
+        # inline in the POST /api/agent/run handler that created this session.
         self._agent = Agent(**agent_kwargs)
 
     def emit_event(self, event: dict) -> None:

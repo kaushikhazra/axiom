@@ -8,9 +8,11 @@ events (currently: tool-approval requests) reach the frontend while the
 turn is still in progress -- the original linear
 "await the whole turn, then yield" shape could never deliver those.
 
-D7: US-02 ships chunked delivery of the already-complete response text, not
-real per-token model streaming (that needs adapter-level changes, out of
-scope for M10 -- see design.md Future Work).
+Response text is emitted as a SINGLE delta, as soon as the turn completes.
+This supersedes design.md D7's chunked delivery: the adapters do not stream
+tokens, so splitting the finished string into fake per-word deltas only added
+latency (10.5s on a 400-word answer) without adding information. Stream only
+when the backend is genuinely streaming -- see the note at the emit site.
 """
 
 from __future__ import annotations
@@ -33,31 +35,11 @@ from axiom.agent import TurnResult
 from axiom.interface.web.canvas_routing import CanvasBlock, split_for_canvas
 from axiom.interface.web.session_manager import SENTINEL, WebSession
 
-# design.md §2 -- default 0.02s.
-_CHUNK_DELAY_SECS = 0.02
-
 _CANVAS_TOOL_NAMES = {"write_file", "run_shell"}
 
 
 def _new_id() -> str:
     return uuid.uuid4().hex
-
-
-def _chunk_response(text: str) -> list[str]:
-    """Word-boundary chunking (D7) -- not real token streaming, just enough
-    granularity for the UI to render incrementally. Splits on whitespace,
-    re-attaching a trailing space to each chunk except the last so the
-    reassembled text matches the original exactly.
-
-    Filters empty chunks (e.g. from double spaces in the source text) --
-    AG-UI's TextMessageContentEvent.delta requires a non-empty string
-    (MinLen(1)); dropping an empty delta loses no information since
-    concatenating with "" is a no-op for the frontend's reassembly."""
-    if not text:
-        return []
-    words = text.split(" ")
-    chunks = [w + " " for w in words[:-1]] + [words[-1]]
-    return [c for c in chunks if c]
 
 
 def _tool_canvas_blocks(turn_result: TurnResult) -> list[CanvasBlock]:
@@ -111,11 +93,29 @@ async def stream_turn(
     for block in tool_blocks + text_blocks:  # D13, D8
         yield encoder.encode(CustomEvent(name="CANVAS_BLOCK", value=block.to_dict()))
 
+    # One delta, emitted the moment the text exists. The turn has already
+    # completed by this point (turn_task.result() above), so chat_text is
+    # whole -- there is nothing left to stream. The previous implementation
+    # re-split it into one delta per word and slept _CHUNK_DELAY_SECS (0.02s)
+    # between them to imitate typing; on a 364-word answer that added 10.5s
+    # of pure latency to a response that was already finished, and the cost
+    # grew linearly with length. Windows made it worse still: the ~15.6ms
+    # timer granularity turned each 0.02s sleep into ~0.029s.
+    #
+    # Superseding design.md D7's chunked delivery: stream only when the
+    # backend actually streams. When the adapters gain real token streaming,
+    # the deltas must come FROM that stream (yielded as tokens arrive, before
+    # the turn completes) rather than being synthesized here from a finished
+    # string -- that is real streaming and belongs above, not in this block.
+    #
+    # Empty text still yields start+end with no content event: AG-UI's
+    # TextMessageContentEvent.delta requires a non-empty string (MinLen(1)).
     message_id = _new_id()
     yield encoder.encode(TextMessageStartEvent(messageId=message_id, role="assistant"))
-    for chunk in _chunk_response(chat_text):  # D7
-        yield encoder.encode(TextMessageContentEvent(messageId=message_id, delta=chunk))
-        await asyncio.sleep(_CHUNK_DELAY_SECS)
+    if chat_text:
+        yield encoder.encode(
+            TextMessageContentEvent(messageId=message_id, delta=chat_text)
+        )
     yield encoder.encode(TextMessageEndEvent(messageId=message_id))
 
     yield encoder.encode(RunFinishedEvent(threadId=thread_id, runId=run_id))

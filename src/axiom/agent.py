@@ -139,6 +139,8 @@ class Agent:
         skills_dir: str | Path | None = None,
         approval_fn: Callable[[str, dict], bool] | None = None,
         ws_port: int | None = None,
+        memory_adapter: object = None,
+        faculty: object = None,
     ) -> None:
         """Wire the composition root.
 
@@ -191,6 +193,32 @@ class Agent:
                      (design.md §6/D12); the resolved host/port/token are
                      readable via the observability_config property once
                      the faculty is constructed.
+            memory_adapter: Optional pre-built CognitiveMemoryAdapter to use
+                            instead of constructing one. Constructing an
+                            adapter loads the sentence-transformers embedding
+                            model (~22s), so a long-lived server (axiom-web)
+                            builds ONE at startup and injects it into every
+                            Agent rather than paying that cost inside a
+                            request handler. When injected, this Agent does
+                            NOT own the adapter: _teardown() skips both
+                            consolidate() and close(), leaving the adapter's
+                            lifecycle to whoever created it. When None
+                            (axiom-cli's path), the Agent constructs and owns
+                            its own adapter exactly as before.
+            faculty: Optional pre-built ObservabilityFaculty to use instead of
+                     constructing one (supersedes observe/ws_port when given).
+                     Both things a faculty owns are PROCESS-global: the
+                     WsBridgeSink's TCP port, and OTel's TracerProvider (whose
+                     global slot silently rejects a second set_tracer_provider).
+                     One per process is the only coherent model -- a
+                     per-session faculty meant every session after the first
+                     failed to bind the port, then handed the browser a token
+                     the live server rejected with 4001, invisibly. When
+                     injected, this Agent does NOT own it: _teardown() skips
+                     shutdown(), and new_run() is NOT called (that would
+                     unregister the live run's sinks and build a
+                     port-conflicting WsBridgeSink) -- run_id is read from the
+                     owner's already-started run.
         """
         if debug:
             _configure_debug_logging()
@@ -266,11 +294,21 @@ class Agent:
         # M3 memory — constitutive: always wired, never optional.
         # Lazy imports so installs without sentence-transformers still start when
         # the memory path is stubbed in tests.
-        from axiom.memory.adapter import CognitiveMemoryAdapter  # noqa: PLC0415
-        from axiom.memory.config import MemoryConfig  # noqa: PLC0415
+        #
+        # An injected memory_adapter is BORROWED, not owned: _owns_memory gates
+        # teardown so a shared adapter (one per axiom-web process) survives any
+        # individual Agent's end_session(). Without that flag the first session
+        # to close would consolidate+close the adapter out from under every
+        # other live session.
+        self._owns_memory = memory_adapter is None
+        if memory_adapter is not None:
+            self._memory_adapter = memory_adapter
+        else:
+            from axiom.memory.adapter import CognitiveMemoryAdapter  # noqa: PLC0415
+            from axiom.memory.config import MemoryConfig  # noqa: PLC0415
 
-        _mem_cfg = memory_config if memory_config is not None else MemoryConfig()
-        self._memory_adapter = CognitiveMemoryAdapter(_mem_cfg)
+            _mem_cfg = memory_config if memory_config is not None else MemoryConfig()
+            self._memory_adapter = CognitiveMemoryAdapter(_mem_cfg)
 
         # M5 skills — loop-level port, constructed here the same way memory is.
         from axiom.skills.registry import SkillsRegistry  # noqa: PLC0415
@@ -301,8 +339,17 @@ class Agent:
         self._trace_path: Path | None = None
 
         self._observability_config = None
+        self._owns_faculty = faculty is None
 
-        if observe:
+        if faculty is not None:
+            # Borrowed, process-wide faculty. Read its already-started run
+            # rather than calling new_run() -- see the `faculty` arg docstring.
+            self._faculty = faculty
+            self._run_id = faculty.run_id
+            self._observability_config = faculty.config
+            if self._run_id is not None:
+                self._trace_path = faculty.config.trace_dir / f"{self._run_id}.jsonl"
+        elif observe:
             from axiom.observability.config import ObservabilityConfig  # noqa: PLC0415
             from axiom.observability.faculty import ObservabilityFaculty  # noqa: PLC0415
 
@@ -435,10 +482,20 @@ class Agent:
         faculty.shutdown() is idempotent — the atexit handler registered at
         construction becomes a no-op after this call.
         """
-        if self._faculty is not None:
+        # A borrowed faculty is shut down by its owner (axiom-web's _lifespan),
+        # not here -- shutdown() flushes and closes the shared sinks, which
+        # would kill tracing for every other live session.
+        if self._faculty is not None and self._owns_faculty:
             self._faculty.shutdown()
         # M3: consolidate + close memory at session end (loop already exited).
         # Memory is constitutive — always present; no None guard.
+        #
+        # Skipped entirely for a borrowed adapter (memory_adapter= was injected):
+        # consolidate() and close() are the OWNER's job. close() tears down the
+        # shared embedding executor and SurrealKV handle, so running it here
+        # would break every other Agent still holding the same adapter.
+        if not self._owns_memory:
+            return
         import asyncio  # noqa: PLC0415
 
         try:
