@@ -1,13 +1,13 @@
 # Action
 
-Cycle 4 produced the evidence for what comes next: a 400,000-character message ran for over five minutes with no output whatsoever. A slow generation is currently indistinguishable from a hang. That is AC 5, and it is now demonstrated rather than assumed.
+One criterion left. AC 19: Ctrl-C while the model is generating cancels that reply and returns to the prompt; Ctrl-C at an idle prompt exits.
 
-Stream the reply instead of waiting for it whole. Tokens appearing as they arrive is what makes generation visibly in progress, and it is the same change that creates the partial-output state AC 15 is about — a stream that dies mid-reply must not leave the user thinking they read a finished answer.
+Streaming, added last cycle, is what makes this reachable — there is now a real generation loop to interrupt, and the interrupt lands inside it rather than inside a single blocking call.
 
-Target AC 5, and settle the two criteria that have been untested since cycle 1: AC 4 and AC 15.
+Two behaviours, and they must not be confused with each other: an interrupt during generation is *not* an exit, and an interrupt at the prompt *is*. The cancelled reply must be treated the way a cut-off stream already is — the partial does not enter history, and the user is told it was cancelled rather than left thinking the model stopped there on its own.
 
-Evidence to produce: a transcript of a deliberately long generation showing output arriving progressively, not in one block at the end · that same long reply shown complete and untruncated, with the tail of it visible · a stream interrupted part-way — reuse `scratchpad/flaky_proxy.py`, adapted to cut the connection mid-response — showing the user is told the reply was cut off rather than being handed the fragment as if it were the whole answer.
+Evidence to produce: a transcript where a long generation is interrupted part-way, the program says the reply was cancelled, and a following message in the same process gets a real reply · a run where Ctrl-C at an idle prompt exits, with its status code · confirmation that the cancelled reply is absent from history, by asking the model afterwards about what it was saying.
 
-History must store what was actually received, and a cut-off reply must not enter history as though it were complete.
+Sending a real Ctrl-C to a child process on Windows is not the same as on POSIX — a `CTRL_C_EVENT` goes to the whole process group. Work out how to deliver it before writing the handler, or the evidence will not be trustworthy.
 
-Leave Ctrl-C alone this cycle. It is the last one, and it is easier to reason about once generation is a stream.
+When this is met, all 19 criteria are met: stop the loop, delete the cron, and report.

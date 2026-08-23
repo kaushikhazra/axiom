@@ -49,22 +49,35 @@ def main() -> None:
             return
 
         messages.append({"role": "user", "content": line})
+        reply = ""
         try:
-            reply = (
-                client.chat(model=args.model, messages=messages).message.content or ""
-            )
+            for chunk in client.chat(model=args.model, messages=messages, stream=True):
+                piece = chunk.message.content or ""
+                reply += piece
+                print(piece, end="", flush=True)
         except ollama.ResponseError as error:
             messages.pop()
-            print(f"error: {error}", file=sys.stderr)
+            print(f"\nerror: {error}" if reply else f"error: {error}", file=sys.stderr)
             continue
         except (ConnectionError, httpx.HTTPError) as error:
             # ollama turns a refused *connect* into ConnectionError, but a
             # connection dropped mid-request surfaces as a raw httpx error.
             messages.pop()
-            print(
-                f"error: cannot reach Ollama at {args.host} ({error})", file=sys.stderr
-            )
+            if reply:
+                # Part of a reply is already on screen. Say so, or the user
+                # reads a fragment as though it were the whole answer.
+                print(file=sys.stderr)
+                print(
+                    f"error: reply cut off after {len(reply)} characters "
+                    f"- lost connection to {args.host} ({error})",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"error: cannot reach Ollama at {args.host} ({error})",
+                    file=sys.stderr,
+                )
             continue
 
-        print(reply)
+        print()
         messages.append({"role": "assistant", "content": reply})
