@@ -1,13 +1,16 @@
 # Action
 
-One criterion left. AC 19: Ctrl-C while the model is generating cancels that reply and returns to the prompt; Ctrl-C at an idle prompt exits.
+AC 19 is blocked on a real keypress in a real terminal. The loop cannot produce one — cycle 6 established that with a control probe, not a guess.
 
-Streaming, added last cycle, is what makes this reachable — there is now a real generation loop to interrupt, and the interrupt lands inside it rather than inside a single blocking call.
+So this cycle does not attempt delivery again. It prepares the external check and stops.
 
-Two behaviours, and they must not be confused with each other: an interrupt during generation is *not* an exit, and an interrupt at the prompt *is*. The cancelled reply must be treated the way a cut-off stream already is — the partial does not enter history, and the user is told it was cancelled rather than left thinking the model stopped there on its own.
+Write nothing new to `src/`. Instead:
 
-Evidence to produce: a transcript where a long generation is interrupted part-way, the program says the reply was cancelled, and a following message in the same process gets a real reply · a run where Ctrl-C at an idle prompt exits, with its status code · confirmation that the cancelled reply is absent from history, by asking the model afterwards about what it was saying.
+1. Push `feature/26-ollama-chat` so the work is not stranded on one machine.
+2. Open a pull request for #26 stating 18 of 19 criteria met with evidence, and AC 19 pending a manual check.
+3. Leave Kaushik a two-command verification he can run in his own terminal in under a minute:
+   - `uv run axiom`, ask for a long generation, press Ctrl-C part-way — expect `cancelled after N characters`, the prompt returning, and a following message getting a real reply
+   - press Ctrl-C at the idle prompt — expect it to exit
+4. Then stop the loop and delete the cron.
 
-Sending a real Ctrl-C to a child process on Windows is not the same as on POSIX — a `CTRL_C_EVENT` goes to the whole process group. Work out how to deliver it before writing the handler, or the evidence will not be trustworthy.
-
-When this is met, all 19 criteria are met: stop the loop, delete the cron, and report.
+Do not mark AC 19 met. Do not extend the fail-safe waiting for a human — the loop's job ends at the handoff, and a loop that ends by asking someone is a better outcome than one that quietly declares itself finished.

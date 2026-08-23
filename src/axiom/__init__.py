@@ -29,8 +29,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     client = ollama.Client(host=args.host)
     print(f"axiom: {args.model} at {args.host}")
 
@@ -39,7 +39,8 @@ def main() -> None:
     while True:
         try:
             line = input("> ").strip()
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
+            # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
             print()
             return
 
@@ -55,6 +56,13 @@ def main() -> None:
                 piece = chunk.message.content or ""
                 reply += piece
                 print(piece, end="", flush=True)
+        except KeyboardInterrupt:
+            # Ctrl-C mid-generation cancels this reply only. The session lives,
+            # and the half-finished answer does not become history.
+            messages.pop()
+            print(file=sys.stderr)
+            print(f"cancelled after {len(reply)} characters", file=sys.stderr)
+            continue
         except ollama.ResponseError as error:
             messages.pop()
             print(f"\nerror: {error}" if reply else f"error: {error}", file=sys.stderr)
