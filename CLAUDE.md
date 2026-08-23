@@ -8,12 +8,32 @@ Minimal agent. v2 — rebuilt from scratch 2026-08-23. v1 is archived at tag `ar
 
 Do not create `requirement.md` / `design.md` / `task.md`, and do not run the `/e-spec:*` or `/dryrun-*` skills here unless Kaushik asks for one by name.
 
-Work proceeds as loops: a fixed goal, an artifact under test, and an instruction the loop rewrites each cycle from what the last cycle observed. The pattern is Kaushik's; it is implemented in the `ai-engineering:auto-iterate` plugin. Apply it — don't redesign it.
+Work proceeds as loops. The pattern is Kaushik's; it is implemented in the `ai-engineering:auto-iterate` plugin. Apply it — don't redesign it.
+
+```
+goal.md         fixed, never rewritten
+observe.md      how to check the artifact against the goal — fixed
+assumption.md   standing inputs that must survive a rewrite
+action.md       rewritten each cycle BY THE LOOP
+artifact/       the thing under test
+```
+
+One cycle = generate the artifact as `action.md` asks → check it against the goal → if met, stop; if not, write the next `action.md` and exit. The scheduler is the loop; each run is one body, and a hung run costs one cycle.
+
+The artifact is what's under test — never the prompt. `action.md` is the instrument. Getting this backwards has the loop tuning its own wording instead of the deliverable.
+
+Each cycle derives its next move from the last cycle's constraint. It does not generate a fresh idea — generation has no natural stop.
+
+Assume every run starts in a fresh context. Only the files exist.
 
 Two rules that are load-bearing and easy to get wrong:
 
 - **Define done by the object or the consumer — never by the producer.** "No new findings this pass" measures the agent's output and will never fire. "This number hasn't moved in N passes" measures the artifact. "The reader can act on this" measures the consumer.
 - **A loop cannot be its own convergence detector.** The external check is structural, not optional. Every loop carries a fail-safe and states a reason if it stops without converging.
+
+## Where knowledge lives
+
+In this repo. Do not use the cognitive-memory MCP tools as a store for Axiom project knowledge, and never cite a CM memory ID in an Axiom file — anything load-bearing gets inlined here, where a fresh session, a headless run, and Kaushik reading the repo all reach it.
 
 ## Why v1 was scrapped
 
