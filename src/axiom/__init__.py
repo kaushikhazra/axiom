@@ -2,7 +2,9 @@
 
 import argparse
 import os
+import sys
 
+import httpx
 import ollama
 
 DEFAULT_HOST = "http://localhost:11434"
@@ -47,6 +49,22 @@ def main() -> None:
             return
 
         messages.append({"role": "user", "content": line})
-        reply = client.chat(model=args.model, messages=messages).message.content or ""
+        try:
+            reply = (
+                client.chat(model=args.model, messages=messages).message.content or ""
+            )
+        except ollama.ResponseError as error:
+            messages.pop()
+            print(f"error: {error}", file=sys.stderr)
+            continue
+        except (ConnectionError, httpx.HTTPError) as error:
+            # ollama turns a refused *connect* into ConnectionError, but a
+            # connection dropped mid-request surfaces as a raw httpx error.
+            messages.pop()
+            print(
+                f"error: cannot reach Ollama at {args.host} ({error})", file=sys.stderr
+            )
+            continue
+
         print(reply)
         messages.append({"role": "assistant", "content": reply})
