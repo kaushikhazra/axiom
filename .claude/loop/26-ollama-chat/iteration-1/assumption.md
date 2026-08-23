@@ -10,4 +10,5 @@ Standing inputs. May change between iterations — when one does, say so in that
 - `pytest`, tests in `C:/Projects/axiom/tests/`.
 - Loop engineering, not spec-driven. Do not write `requirement.md`, `design.md`, or `task.md`, and do not run the `/e-spec:*` or `/dryrun-*` skills.
 - Read `C:/Projects/axiom/CLAUDE.md` before the first write.
-- Commit each cycle's work. Plain pushes to `master` are allowed; force-pushes and tag pushes are blocked by a hook and must be left to Kaushik.
+- **Work happens on `feature/26-ollama-chat`, never on `master`.** `protected_branch_guard.py` blocks editing any source or test file while `master` is checked out — not just pushing. Changed cycle 1, after the first write to `src/` was rejected.
+- Commit each cycle's work. Plain pushes are allowed; force-pushes and tag pushes are blocked by a hook and must be left to Kaushik.
