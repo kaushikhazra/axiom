@@ -1,11 +1,13 @@
 # Action
 
-Cycle 1 left the program exiting after one exchange. That single constraint is what blocks the largest group of criteria — turns, history, empty input, and every way out of the program all require a session that persists.
+Cycle 2 left the host and model frozen as module constants. That is the binding constraint, and not only for the configuration criteria: **the failure criteria cannot be evidenced without it.** Proving that an unreachable host produces a named error (AC 13) means pointing the program at an unreachable host, and proving a missing model is named (AC 14) means naming a model that isn't installed. Neither is testable while the values are literals in the source.
 
-Turn the one exchange into a session: loop on input, keep the message list across turns and send it whole, skip the model on an empty line, and handle both ways of leaving (an explicit exit command and EOF) with status 0.
+So configuration comes before error handling — it is what makes error handling checkable.
 
-Target AC 6, 7, 8, 9, 17, 18.
+Add a host and a model setting, each resolving in the order flag → environment variable → default, with `--help` documenting the defaults, and show the effective host and model to the user at startup.
 
-Evidence to produce: a single transcript showing three turns in one process, where the third turn asks the model about something said in the first and it answers correctly. Then a second run showing the conversation starts empty. Then `echo -n "" | ...` and an exit-command run, each with its status code.
+Target AC 2, 10, 11, 12.
 
-Leave configuration, error handling, and Ctrl-C alone this cycle.
+Evidence to produce: `--help` output showing both defaults · a run with the environment variable set, showing the effective value change · a run with both the environment variable and the flag set, showing the flag wins · the startup line naming host and model in a normal run.
+
+Leave error handling and Ctrl-C alone this cycle. Do not add streaming.
