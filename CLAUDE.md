@@ -33,7 +33,7 @@ Two rules that are load-bearing and easy to get wrong:
 
 ## Issues
 
-Work is tracked as GitHub issues, written as a user story followed by acceptance criteria:
+Work is tracked as GitHub issues. The title states the goal as `<actor> <verb>s <what>` — "User chats with a local Ollama model from the terminal", not a component name or a task. The body is a user story followed by acceptance criteria:
 
 ```
 As a <who>
