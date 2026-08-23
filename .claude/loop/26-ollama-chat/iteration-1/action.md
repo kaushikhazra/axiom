@@ -1,13 +1,13 @@
 # Action
 
-Cycle 2 left the host and model frozen as module constants. That is the binding constraint, and not only for the configuration criteria: **the failure criteria cannot be evidenced without it.** Proving that an unreachable host produces a named error (AC 13) means pointing the program at an unreachable host, and proving a missing model is named (AC 14) means naming a model that isn't installed. Neither is testable while the values are literals in the source.
+Cycle 3 made the host and model addressable, which was the thing standing between the loop and the failure criteria. Take them now.
 
-So configuration comes before error handling — it is what makes error handling checkable.
+Every failure currently escapes as a traceback and kills the process. Catch what the client raises, report it in terms the user can act on — naming the host that was tried, or the model that was asked for — and return to the prompt with the session intact rather than exiting.
 
-Add a host and a model setting, each resolving in the order flag → environment variable → default, with `--help` documenting the defaults, and show the effective host and model to the user at startup.
+Target AC 13, 14, 16.
 
-Target AC 2, 10, 11, 12.
+Evidence to produce: a run against `--host http://127.0.0.1:9999` showing the error names that host and no traceback appears · a run with `--model does-not-exist:1b` showing the error names that model and no other model answers · a transcript where a failed turn is followed by a working turn in the same process, proving the session survived.
 
-Evidence to produce: `--help` output showing both defaults · a run with the environment variable set, showing the effective value change · a run with both the environment variable and the flag set, showing the flag wins · the startup line naming host and model in a normal run.
+The reply after a failure must be a real one, not a cached or fallback string — show it in the transcript.
 
-Leave error handling and Ctrl-C alone this cycle. Do not add streaming.
+Leave Ctrl-C and streaming alone this cycle.
