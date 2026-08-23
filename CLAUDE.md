@@ -44,7 +44,9 @@ so that <why>.
 1. ...
 ```
 
-Criteria are verifiable and, wherever the work has a reader, at least one is written in terms of that reader rather than the code. Add **Out of scope** and **Constraints** sections when they stop the work from sprawling.
+Nothing else. No "out of scope", no "constraints", no notes, no rationale. Story and criteria.
+
+Criteria are verifiable, and where the work has a reader, at least one is written in terms of that reader rather than the code.
 
 ## Where knowledge lives
 
