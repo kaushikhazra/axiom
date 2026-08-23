@@ -33,20 +33,48 @@ Two rules that are load-bearing and easy to get wrong:
 
 ## Issues
 
-Work is tracked as GitHub issues. The title states the goal as `<actor> <verb>s <what>` — "User chats with a local Ollama model from the terminal", not a component name or a task. The body is a user story followed by acceptance criteria:
+Work is tracked as GitHub issues, one story each.
+
+**Title** — the goal, as `<actor> <verb>s <what>`:
+
+> User chats with a local Ollama model from the terminal
+
+Not a component (*"Ollama adapter"*), not a task (*"add the CLI loop"*), not a sketch (*"input → model → output"*).
+
+**Body** — the story, then the criteria:
 
 ```
-As a <who>
-I want to <what>
-so that <why>.
+**As a** <actor>
+**I want to** <capability>
+**so that** <why it is worth having>.
 
 ## Acceptance criteria
+
+**<group>**
+
 1. ...
 ```
 
-Nothing else. No "out of scope", no "constraints", no notes, no rationale. Story and criteria.
+Nothing else. No out-of-scope list, no constraints, no notes, no rationale, no design. If it is not the story or a criterion, it does not go in the issue.
 
-Every criterion is an objectively verifiable condition on the product. No sign-offs, no approval steps, no "Kaushik is happy with it" — a gate is not a criterion. A loop's done-condition is a separate thing and does not belong in the issue.
+**Criteria** state a condition and an observable result, in the user's terms. Every one is objectively verifiable. No sign-offs and no approvals — a gate is not a criterion, and a loop's done-condition is a separate thing that stays out of the issue.
+
+Write enough of them to test the story thoroughly. Walk this list and write what applies:
+
+| | |
+|---|---|
+| Startup | what the user sees on launch, and what happens with nothing configured |
+| Happy path | the main action and its visible result, in full |
+| In progress | what the user sees while waiting |
+| Boundaries | empty, missing, or trivial input |
+| State | what carries across actions within a run, and what resets between runs |
+| Configuration | each setting's default, each override, and the precedence between them |
+| Visibility | how the user confirms which configuration actually took effect |
+| Failure | each distinct way it can fail, what the user is told, and what must **not** happen |
+| Recovery | whether a failed action leaves things usable, or exits |
+| Exit | every way out, and the status code |
+
+Group criteria under bold headers once there are more than a handful, and number them continuously so one can be cited as "AC 12". Issue #26 is the worked example.
 
 ## Where knowledge lives
 
