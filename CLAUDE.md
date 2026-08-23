@@ -46,7 +46,7 @@ so that <why>.
 
 Nothing else. No "out of scope", no "constraints", no notes, no rationale. Story and criteria.
 
-Criteria are verifiable, and where the work has a reader, at least one is written in terms of that reader rather than the code.
+Every criterion is an objectively verifiable condition on the product. No sign-offs, no approval steps, no "Kaushik is happy with it" — a gate is not a criterion. A loop's done-condition is a separate thing and does not belong in the issue.
 
 ## Where knowledge lives
 
