@@ -87,3 +87,31 @@ In this repo. Do not use the cognitive-memory MCP tools as a store for Axiom pro
 M1–M8 shipped and worked — 53 modules, 558 tests, 10 spec folders, ~50 dryrun reports. It was too heavy for what it does. The architecture was sound and Kaushik retains it; the process weight is what's being left behind.
 
 **KISS, not asceticism.** "Minimal" means no unearned structure — no ports and adapters before there are two of anything, no spec ceremony around a hundred-line program. It does not mean writing things a good library already does. Reach for the library.
+
+## Testing tools before security exists
+
+Issue #34 gives the model file CRUD and command execution with **no list of permitted
+programs** (AC 14). The security stories are separate and none of them has landed, so
+nothing between the model and the machine inspects what a tool is about to do. Three
+different local models, each with its own tool template, will be improvising commands
+in an unattended loop. Assume one of them will eventually emit something destructive.
+
+The split that makes this safe is **who is driving**, not which command it is:
+
+- **A live model is only ever asked for non-destructive work.** Read a file, list a
+  directory, echo a string, run `python -c "print(...)"`, create a file in the sandbox.
+  Never a request that deletes, moves, or overwrites; never `git`; never the network.
+- **Destructive criteria are verified with a stub client**, which emits a fixed tool
+  call the test wrote itself. AC 12 - deleting a file - is settled this way: a
+  deterministic call inside pytest's `tmp_path`. A live model is never asked to
+  improvise its way to a destructive command, because the point of the test is the
+  tool's behaviour, not the model's judgement.
+- **Every live-model tool test runs with its working directory set to
+  `C:/Projects/.tmp/axiom-tool-sandbox`** - outside the repo, and never the repo root
+  or the `C:\` root. A model that improvises a recursive delete of its working
+  directory hits an empty scratch tree instead of source history.
+- **The sandbox is the only thing a test may destroy.** If a test needs to assert that
+  something was removed, it removes something it created inside the sandbox.
+
+This holds until the security stories land. When they do, revisit it - do not delete
+it silently.
