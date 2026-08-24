@@ -17,6 +17,8 @@ Fail-safe: at 2026-08-24 13:41 IST, stop and delete the cron, converged or not,
 and state why it did not converge.
 ```
 
+Cron: `423fd68c`, `*/15 * * * *`. A recurring job — delete it when the loop stops.
+
 **The artifact lives outside this folder.** The code is the repo's real source at `C:/Projects/axiom/src/`, not a copy under `iteration-1/`. There is no `artifact/` directory here, deliberately — do not create one, and do not write code anywhere but `src/` and `tests/`.
 
 The loop's own files stay in this folder. Everything else it produces is repo source.

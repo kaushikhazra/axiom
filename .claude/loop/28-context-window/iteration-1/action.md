@@ -1,9 +1,7 @@
 # Action
 
-First thing to tackle: **get the two raw numbers on screen.** Everything else — the min, the fallback, the visibility line, the state behaviour — is downstream of actually being able to query them.
+None. The goal was met at cycle 3 — all 9 acceptance criteria, evidenced. Full suite green (8 passed).
 
-Query the configured model's max context length via `ollama.Client(host=...).show(model)` and find where the context length lives in `model_info` (the key is architecture-prefixed, e.g. `qwen2.context_length` — inspect the real response for `qwen2.5:7b` rather than assuming the key name). Separately, query available memory with `psutil.virtual_memory().available`.
+Handoff, same shape as #26: push the branch, open a PR against #28 with the evidence summary, stop the loop, delete the cron.
 
-Print both raw values — do not compute the minimum or wire it into the chat call yet. Do not touch `--host`/`--model` handling, error handling, or the REPL loop this cycle.
-
-Evidence to produce: a run showing the actual queried max-context value for `qwen2.5:7b` and the actual available-memory figure for this machine, both printed, both real numbers from real queries — not placeholders.
+Nothing here should run again. A new goal means a new `iteration-2/`, not an edit to this one.
