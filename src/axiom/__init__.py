@@ -78,6 +78,29 @@ def memory_safe_context(info: dict, available_bytes: int | None) -> int | None:
     return budget_bytes // bytes_per_token
 
 
+COMPACTION_INSTRUCTION = (
+    "Summarize the conversation below concisely. Preserve every specific "
+    "fact, name, and number mentioned - a reader must be able to answer "
+    "questions about it from your summary alone, without the original "
+    "text.\n\n"
+)
+
+
+def compact(client: ollama.Client, model: str, pairs: list[dict[str, str]]) -> str:
+    """Summarize a run of {role, content} messages into shorter text.
+
+    Proven standalone in cycle 1: a real fact survives (recalled correctly
+    from the summary alone) while the text genuinely shrinks. Not wired into
+    the chat loop yet.
+    """
+    transcript = "\n".join(f"{m['role']}: {m['content']}" for m in pairs)
+    reply = client.chat(
+        model=model,
+        messages=[{"role": "user", "content": COMPACTION_INSTRUCTION + transcript}],
+    )
+    return reply.message.content or ""
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="axiom", description="Chat with a local Ollama model."
