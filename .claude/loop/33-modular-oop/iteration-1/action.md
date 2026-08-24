@@ -1,60 +1,61 @@
 # Action
 
-Close AC 5 and AC 4 without breaching AC 14. Cycle 3 left 20 lines of headroom and the
-terminal still unsplit, so this cycle is a squeeze, not an expansion. Do the two routes in
-order - the reclaim first, because it buys the room the split needs.
+Three criteria remain - AC 7, AC 11, AC 20 - and they are one piece of work, not three. The
+duplicated test helpers exist because every test module builds its own client stub; the
+per-module tests do not exist because there was nothing to test per module until this cycle;
+and AC 7 is unfinished because `main()` still builds its own backend rather than accepting
+one. A single shared stub in `conftest.py`, injected into `main()`, closes all three.
 
-## First: reclaim lines that carry no knowledge
+Do it in that order.
 
-Before adding a module, take back what is being spent on docstrings that restate their own
-signature. Candidates identified in cycle 3:
+## AC 7: let `main()` take a backend
 
-- `ModelBackend` - six lines of docstring for three signatures.
-- `Piece` - a docstring for a two-field frozen dataclass.
-- `Settings` - check whether the debug-override note is still earning its length.
-- `OllamaBackend.complete` and `.model_info` - one-line docstrings restating the name.
+`main()` accepts a `ModelBackend` from its caller and falls back to building an
+`OllamaBackend` when it is not given one, so the console entry point still works untouched
+(AC 3).
 
-**Do not touch these.** They are earned findings and losing them costs more than the lines
-are worth: the KV-cache derivation in `context.py`, the never-re-summarize rationale in
-`compacted_history`, the leading-blank-line explanation in `report_failure`, the
-`estimated_tokens` note about why it is an estimate at all, and the module docstring in
-`backend.py` explaining why the seam exists.
+Then move the tests that currently patch `axiom.backend.ollama.Client` onto that seam - pass
+the stub in instead. When it is done, `grep -rn "setattr.*Client" tests/` should return
+nothing, which is how AC 7 is settled: substituting a backend requires no patching of module
+globals.
 
-Record `wc -l` before and after this step alone, so the reclaim is measured rather than
-assumed.
+**`psutil.virtual_memory` patching is not in scope.** That is a real dependency of
+`context.py`, not the model seam, and AC 7 is about the backend.
 
-## Then: one module, not two
+Budget note: `src/` is at 446 of 447. This change is worth roughly one line. If it lands over,
+take the room from `compaction.py` - two of its docstrings restate mechanics the code shows
+directly. Do not touch the KV-cache derivation, the never-re-summarize rationale, the
+leading-blank-line explanation, or the `estimated_tokens` note.
 
-Create `terminal.py` and move every `print` and the `input` call into it - the startup line,
-the prompt, the streamed reply, the compaction notice, and `report_failure`.
+## AC 11: one stub, one feed
 
-**Leave the chat loop in `__init__.py`.** Nothing in #33 requires a separate `session.py`.
-AC 5 is satisfied when `__init__.py` stops writing to the terminal itself and calls the
-terminal module instead; AC 8 only asks that whichever module holds the loop names no vendor
-client, and `__init__.py` already names none. A third module would cost 15-20 lines to satisfy
-a criterion nobody wrote.
+`feed()` is defined in three test modules and `_chunk()` in three. Move one of each into
+`conftest.py` as fixtures or helpers and delete the copies. The stub that `main()` now
+receives should live there too - `RecordingBackend` in `test_compaction.py` and `StubClient`
+in `test_characterization.py` overlap heavily.
 
-That is a KISS decision under AC 12 and AC 13, not a shortcut - say so in the log, and say
-what would change the answer.
+Take the chance to check the rest of AC 11 while in there: any default or literal appearing in
+more than one place across `src/` and `tests/`. The host, the model name and the prompt string
+are the likely ones.
 
-## Watch for
+## AC 20: a test file per module
 
-**The startup line is assembled from three parts** - model, host, and a context note that
-depends on whether a debug override is in play. Decide deliberately whether the terminal
-formats it from settings plus a context value, or receives a finished string. The first keeps
-formatting in the terminal where AC 4 wants it; the second leaves formatting in the loop.
-Prefer the first.
+`config`, `context`, `backend` and `terminal` have no test module of their own. They are
+covered incidentally by tests aimed at other things, which is not the same as being tested.
 
-**The transcript is the whole safety net for this move.** Every one of the thirteen scenarios
-exercises printing. Run the characterization test immediately after the move, before anything
-else.
+Write the missing ones - small, direct, no live model. `terminal.report_failure` in particular
+deserves direct tests: it carries four distinct messages and a leading-blank-line rule that
+only the transcript currently pins down, and the transcript would not tell you *which* rule
+broke.
+
+**Do not restate what the characterization transcript already covers.** These are unit tests
+of a module's own contract, not a second copy of the golden master.
 
 ## Record
 
-`wc -l` across `src/` after the reclaim and again after the split, both against 447. If the
-split lands over the ceiling, do not delete knowledge-bearing comments to squeeze under it -
-report AC 14 unmet, with the exact overage and what it would cost to close.
+Full suite plus characterization after each of the three steps. `wc -l` across `src/` against
+447 after AC 7's change. Status token for all 20.
 
-Status token for all 20. AC 4, AC 5 and AC 14 are the three that should resolve this cycle,
-and AC 7's remaining half - letting `main()` take a backend from its caller - is the natural
-next move once the terminal is out.
+If all 20 read `met-with-evidence` and the suite is green, **the goal is met** - follow
+`loop.md`'s exit 1: commit, push, open a PR referencing #33, merge it, delete the branch,
+delete the cron, and say so.

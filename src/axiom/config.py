@@ -12,10 +12,8 @@ DEFAULT_MODEL = "qwen2.5:7b"
 class Settings:
     """Resolved settings for one run.
 
-    `debug_max_context` is the AXIOM_DEBUG_MAX_CONTEXT override, which replaces
-    the computed context outright rather than capping it - it exists to force
-    small windows during testing, so it has to be able to go below what the
-    model and the machine would allow.
+    `debug_max_context` replaces the computed context outright rather than
+    capping it - it exists to force small windows during testing.
     """
 
     host: str

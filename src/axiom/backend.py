@@ -19,10 +19,6 @@ class BackendError(Exception):
     """A request to the model failed. The turn is dropped; the session lives."""
 
 
-class ModelRefused(BackendError):
-    """Reached the service, and it rejected the request."""
-
-
 class ConnectionLost(BackendError):
     """Could not reach the backend, or the connection dropped mid-request."""
 
@@ -36,12 +32,7 @@ class Piece:
 
 
 class ModelBackend(Protocol):
-    """What axiom needs a model to do.
-
-    Two implementations earn this: OllamaBackend below, and the stubs the tests
-    hand to the session directly. Without the second one it would be an
-    abstraction over a single thing, which is what AC 13 forbids.
-    """
+    """What axiom needs a model to do. Implemented here, and by the test stubs."""
 
     def model_info(self, model: str) -> dict | None: ...
 
@@ -80,7 +71,7 @@ class OllamaBackend:
                     (chunk.prompt_eval_count or 0) + (chunk.eval_count or 0),
                 )
         except ollama.ResponseError as refused:
-            raise ModelRefused(str(refused)) from refused
+            raise BackendError(str(refused)) from refused
         except (ConnectionError, httpx.HTTPError) as lost:
             # ollama turns a refused *connect* into ConnectionError, but a
             # connection dropped mid-request surfaces as a raw httpx error.
