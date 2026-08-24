@@ -29,7 +29,7 @@ class ShowOnlyClient:
             or options["num_ctx"] is not None
         )
         return iter(
-            [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})()})()]
+            [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})(), "prompt_eval_count": 1, "eval_count": 1})()]
         )
 
 
@@ -84,7 +84,7 @@ def test_both_queries_failing_falls_back_to_ollama_default(monkeypatch, capsys):
                 "nothing to size num_ctx from - must omit it entirely"
             )
             return iter(
-                [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})()})()]
+                [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})(), "prompt_eval_count": 1, "eval_count": 1})()]
             )
 
     monkeypatch.setattr(axiom.ollama, "Client", lambda host: BrokenClient())
@@ -145,3 +145,29 @@ def test_context_length_is_requeried_per_run(
 
     out = capsys.readouterr().out
     assert f"context: {expected_context} tokens" in out
+
+
+def test_debug_max_context_env_var_overrides_the_computed_value(monkeypatch, capsys):
+    """AXIOM_DEBUG_MAX_CONTEXT exists to make manual/local testing of the
+    compaction ladder (#29) practical without needing a real conversation
+    large enough to fill a real model's actual context.
+    """
+    monkeypatch.setattr(axiom.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO))
+    monkeypatch.setenv("AXIOM_DEBUG_MAX_CONTEXT", "500")
+    feed_and_exit(monkeypatch)
+
+    axiom.main([])
+
+    out = capsys.readouterr().out
+    assert "context: 500 tokens, debug override" in out
+
+
+def test_debug_max_context_env_var_unset_uses_the_normal_computation(monkeypatch, capsys):
+    monkeypatch.setattr(axiom.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO))
+    monkeypatch.delenv("AXIOM_DEBUG_MAX_CONTEXT", raising=False)
+    feed_and_exit(monkeypatch)
+
+    axiom.main([])
+
+    out = capsys.readouterr().out
+    assert "debug override" not in out
