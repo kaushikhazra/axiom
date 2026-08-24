@@ -1,49 +1,60 @@
 # Action
 
-Cycle 1 left one thing unproven and one thing undone. Do them in that order - the second is
-not trustworthy until the first is settled.
+Build the seam. Cycle 2 established that config and context moved without a design decision
+because neither touches the client, and that **nothing remaining has that property** -
+`model_info_for`, `compact`, `compacted_history` and `maybe_compact` all take
+`client: ollama.Client`, and `main()` catches three vendor error types by name. The seam is
+not one of the four remaining extractions; it is what the other three are waiting on.
 
-## First: prove the instrument detects a change
+## Write `backend.py`
 
-`tests/baseline/transcript.txt` has only ever passed. A golden master that has never failed
-is not yet known to catch anything, and every later claim about AC 1 rests on it.
+Three things, and resist adding a fourth:
 
-Make one deliberate, trivial change to an observable string in `src/axiom/__init__.py` - a
-single character in the startup line is enough. Run the characterization test. It must fail,
-and the failure must name the scenario that changed. **Then revert the change** and confirm
-the suite is green again at 25/25.
+- **A `ModelBackend` protocol** covering exactly what the program asks a model to do today:
+  report the model's info, stream a chat turn, and produce a plain non-streamed reply for
+  summarizing. Nothing speculative - AC 13 forbids an abstraction with one implementation and
+  no test double, and the protocol only earns its place because the stub in the tests is the
+  second implementation.
+- **An `OllamaBackend`** implementing it, holding the `ollama.Client`, and the only place in
+  `src/` that imports `ollama` or `httpx`.
+- **Error translation at that boundary.** `ollama.ResponseError`, `ConnectionError` and
+  `httpx.HTTPError` become this module's own error type or types, carrying whatever the
+  caller needs to write the same message it writes today - including the host, since two of
+  the three current messages name it.
 
-Record both outcomes in the log. If it does not fail, the instrument is broken and fixing it
-is the whole of cycle 2 - do not proceed to the extraction on an instrument that cannot see.
+The error taxonomy is the part to get right, because AC 10 depends on it. The three `except`
+blocks in `main()` differ only in the message they print and whether a partial reply is
+already on screen. Once they catch one family instead of three vendor types, they collapse
+into one handler - that is the whole of AC 10, and it falls out of this design rather than
+needing separate work.
 
-## Then: extract the two clusters that have no seam question
+Do not create `session.py` or `terminal.py` this cycle. One structural move per cycle, so a
+transcript failure has one candidate cause.
 
-Take `config.py` and `context.py` out of `src/axiom/__init__.py`, in that order, using the
-shape named in cycle 1.
+## Then move compaction onto it
 
-- `config.py` - `DEFAULT_HOST`, `DEFAULT_MODEL`, `parse_args`, and the resolution of
-  `AXIOM_HOST`, `AXIOM_MODEL` and `AXIOM_DEBUG_MAX_CONTEXT` into one settings object.
-- `context.py` - `model_max_context`, `kv_cache_bytes_per_token`, `available_memory`,
-  `memory_safe_context`, `_find`, and the constants they use.
+`compact`, `compacted_history` and `maybe_compact` into `compaction.py`, taking the backend
+rather than a client. That closes AC 9 and it is the cheapest proof the seam is real: if
+compaction can run against the stub with no vendor type in sight, the protocol is load-bearing
+rather than decorative.
 
-These two first precisely because they raise no question about where the backend seam sits.
-They are close to pure functions over data, they move without a design decision, and moving
-them exercises the whole apparatus - transcript, suite, line count - on the lowest-risk
-change available. If something about the method is wrong, it is far cheaper to find out here
-than inside the seam.
+`main()` stays in `__init__.py` and keeps working. The entry point does not move.
 
-Leave `model_info_for` where it is for now: it calls the client, so it belongs to the
-backend question, not this one.
+## Watch for
 
-`main()` stays in `__init__.py` and keeps working. The entry point does not move (AC 3).
+**The transcript is the thing to protect.** Error translation is where behaviour drifts
+silently - a reworded message, a lost `(status code: -1)` suffix, a missing leading newline
+when a partial reply is already on screen. The baseline has all three failure messages
+recorded verbatim. Run the characterization test after the backend lands and again after
+compaction moves, not once at the end.
+
+**The tests still patch `axiom.ollama.Client`.** They will keep working this cycle since
+`__init__.py` still holds the client. Do not rewrite them onto the seam yet - that is AC 7's
+own move and it deserves its own cycle. Note in the log whether the seam as built would in
+fact let them stop patching globals, because if it would not, the protocol is wrong.
 
 ## Record
 
-Run the full suite and the characterization test after each extraction, not once at the end -
-if the transcript changes, the smaller the step that caused it, the shorter the search.
-
-Report `wc -l` across all of `src/` against the 447 ceiling, since two files now exist where
-one did, and this is the first real evidence of whether AC 14 is comfortable or tight.
-
-Give all 20 criteria a status token. AC 1 moves only if the transcript still matches after
-the extraction; AC 4 and AC 14 are the two that should show real movement this cycle.
+Full suite plus characterization after each of the two moves. `wc -l` across `src/` against
+the 390-400 projection - this cycle is where that estimate gets its first real test. Status
+token for all 20 criteria.

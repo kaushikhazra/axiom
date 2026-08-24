@@ -111,7 +111,7 @@ def test_available_memory_returns_none_on_failure(monkeypatch):
         raise OSError("boom")
 
     monkeypatch.setattr(psutil, "virtual_memory", broken_virtual_memory)
-    assert axiom.available_memory() is None
+    assert axiom.context.available_memory() is None
 
 
 @pytest.mark.parametrize(
