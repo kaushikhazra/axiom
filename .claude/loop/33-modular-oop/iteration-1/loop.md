@@ -52,4 +52,4 @@ Three ways out, and every one of them leaves no branch behind unexplained:
 
 Never merge a red suite. Never merge a behaviour change that AC 1 has not cleared.
 
-**First run: 2026-08-25 00:55 IST. Fail-safe deadline: 2026-08-25 12:55 IST.**
+**First run: 2026-08-25 00:52 IST (cron fires at :07, :22, :37, :52). Fail-safe deadline: 2026-08-25 12:52 IST.**
