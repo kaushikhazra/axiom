@@ -193,11 +193,17 @@ def main(argv: list[str] | None = None) -> None:
     candidates = [c for c in (max_context, safe_context) if c is not None]
     effective_context = min(candidates) if candidates else None
 
+    debug_override = os.environ.get("AXIOM_DEBUG_MAX_CONTEXT")
+    context_note_suffix = ""
+    if debug_override is not None:
+        effective_context = int(debug_override)
+        context_note_suffix = ", debug override"
+
     chat_options = (
         {"num_ctx": effective_context} if effective_context is not None else None
     )
     context_note = (
-        f"{effective_context} tokens"
+        f"{effective_context} tokens{context_note_suffix}"
         if effective_context is not None
         else "Ollama default"
     )
