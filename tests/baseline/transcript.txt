@@ -1,0 +1,117 @@
+=== startup reports the model, host and context ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== startup when the model cannot be reached ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: Ollama default)
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a normal exchange ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> hi there
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a blank line is ignored ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> > > 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== compaction fires and says so ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 200 tokens, debug override)
+> a reply
+> axiom: compacting older history (everything)
+a reply
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a model error mid-turn ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> > 
+--- stderr ---
+error: model not found (status code: -1)
+
+--- ending --- returned normally (exit status 0)
+
+=== the connection drops before any reply arrives ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> > 
+--- stderr ---
+error: cannot reach Ollama at http://localhost:11434 (connection refused)
+
+--- ending --- returned normally (exit status 0)
+
+=== the connection drops mid-reply ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> partial > 
+--- stderr ---
+
+error: reply cut off after 8 characters - lost connection to http://localhost:11434 (connection reset)
+
+--- ending --- returned normally (exit status 0)
+
+=== Ctrl-C during generation cancels only that reply ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> partial > second reply
+> 
+--- stderr ---
+
+cancelled after 8 characters
+
+--- ending --- returned normally (exit status 0)
+
+=== Ctrl-C at an idle prompt exits ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> 
+
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== /exit leaves ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== /quit leaves ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== end of input leaves ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> 
+
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+

@@ -1,35 +1,49 @@
 # Action
 
-Establish the baseline. **Do not modify `src/` this cycle** - nothing in the restructure
-can be judged until there is a recorded picture of what the program does today.
+Cycle 1 left one thing unproven and one thing undone. Do them in that order - the second is
+not trustworthy until the first is settled.
 
-Start on branch `feature/33-modular-oop`, created from `master`.
+## First: prove the instrument detects a change
 
-Read `src/axiom/__init__.py` in full and the three test modules, then produce three things
-and record all of them in `logs/cycle-1.md`:
+`tests/baseline/transcript.txt` has only ever passed. A golden master that has never failed
+is not yet known to catch anything, and every later claim about AC 1 rests on it.
 
-1. **A behaviour transcript.** Drive `main()` with scripted input against a stub client and
-   capture stdout, stderr and exit status for each of: startup with a model that reports its
-   context; startup when the model cannot be reached; a normal exchange; a compaction notice
-   firing; a `ResponseError` mid-turn; a connection dropped mid-stream with a partial reply;
-   Ctrl-C during generation; Ctrl-C at an idle prompt; `/exit`; `/quit`; end-of-input.
-   This is the instrument AC 1 is settled with, so capture it verbatim - not a summary of it.
+Make one deliberate, trivial change to an observable string in `src/axiom/__init__.py` - a
+single character in the startup line is enough. Run the characterization test. It must fail,
+and the failure must name the scenario that changed. **Then revert the change** and confirm
+the suite is green again at 25/25.
 
-   Writing a new characterization harness under `tests/` is expected and allowed: it is the
-   measuring instrument, not the artifact, and it adds without removing. `src/` stays untouched.
+Record both outcomes in the log. If it does not fail, the instrument is broken and fixing it
+is the whole of cycle 2 - do not proceed to the extraction on an instrument that cannot see.
 
-2. **An assertion inventory.** Every assertion in `tests/`, listed by test name. AC 2 is
-   settled by showing each of these still asserted after the restructure, so a bare count
-   is not enough - record what each one actually asserts.
+## Then: extract the two clusters that have no seam question
 
-3. **A line count.** `wc -l` of `src/`, and the 447-line ceiling restated against it.
+Take `config.py` and `context.py` out of `src/axiom/__init__.py`, in that order, using the
+shape named in cycle 1.
 
-Then, without writing any of it yet, record the shape the restructure will take: which
-responsibilities exist in the current file, which module each would move to, and where the
-model backend seam would sit so that `ollama` and `httpx` disappear from the session module.
-Name it, so the next cycle derives its move from a decision already made rather than
-inventing one.
+- `config.py` - `DEFAULT_HOST`, `DEFAULT_MODEL`, `parse_args`, and the resolution of
+  `AXIOM_HOST`, `AXIOM_MODEL` and `AXIOM_DEBUG_MAX_CONTEXT` into one settings object.
+- `context.py` - `model_max_context`, `kv_cache_bytes_per_token`, `available_memory`,
+  `memory_safe_context`, `_find`, and the constants they use.
 
-Finally, walk #33's 20 criteria and give each a status token. Almost all will be
-`not-started` - that is the correct reading at cycle 1, and the point is the baseline row,
-not the score.
+These two first precisely because they raise no question about where the backend seam sits.
+They are close to pure functions over data, they move without a design decision, and moving
+them exercises the whole apparatus - transcript, suite, line count - on the lowest-risk
+change available. If something about the method is wrong, it is far cheaper to find out here
+than inside the seam.
+
+Leave `model_info_for` where it is for now: it calls the client, so it belongs to the
+backend question, not this one.
+
+`main()` stays in `__init__.py` and keeps working. The entry point does not move (AC 3).
+
+## Record
+
+Run the full suite and the characterization test after each extraction, not once at the end -
+if the transcript changes, the smaller the step that caused it, the shorter the search.
+
+Report `wc -l` across all of `src/` against the 447 ceiling, since two files now exist where
+one did, and this is the first real evidence of whether AC 14 is comfortable or tight.
+
+Give all 20 criteria a status token. AC 1 moves only if the transcript still matches after
+the extraction; AC 4 and AC 14 are the two that should show real movement this cycle.
