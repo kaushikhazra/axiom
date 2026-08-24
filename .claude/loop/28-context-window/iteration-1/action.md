@@ -1,9 +1,13 @@
 # Action
 
-First thing to tackle: **get the two raw numbers on screen.** Everything else — the min, the fallback, the visibility line, the state behaviour — is downstream of actually being able to query them.
+Cycle 1 proved both queries work and left the two real numbers sitting side by side, unused. Compute the minimum and actually apply it.
 
-Query the configured model's max context length via `ollama.Client(host=...).show(model)` and find where the context length lives in `model_info` (the key is architecture-prefixed, e.g. `qwen2.context_length` — inspect the real response for `qwen2.5:7b` rather than assuming the key name). Separately, query available memory with `psutil.virtual_memory().available`.
+Replace the `[cycle-1 debug]` print lines. Compute `min(model_max_context, int(0.70 * available_memory-derived token budget))` — but note the two values are not directly comparable: `model_max_context` is a token count, `available_memory()` is bytes. Converting bytes of available memory into an equivalent token budget requires a per-token memory cost, which depends on the model's own architecture (layers, heads, head dimension) — the same `model_info` response from cycle 1 has these fields (e.g. `qwen2.block_count`, `qwen2.attention.head_count`, `qwen2.attention.head_count_kv`, `qwen2.attention.key_length`). Work out the KV-cache-per-token formula from those fields before computing anything, and show the arithmetic in the cycle log — do not guess a conversion factor.
 
-Print both raw values — do not compute the minimum or wire it into the chat call yet. Do not touch `--host`/`--model` handling, error handling, or the REPL loop this cycle.
+Wire the result into the chat call via `options={"num_ctx": ...}`. Replace the startup line so it shows the effective context length alongside model and host (AC 4) — not a debug line, the real one.
 
-Evidence to produce: a run showing the actual queried max-context value for `qwen2.5:7b` and the actual available-memory figure for this machine, both printed, both real numbers from real queries — not placeholders.
+Handle both `None` cases: if either query fails or the model reports no max, do not pass `num_ctx` at all — let Ollama use its own default, per `assumption.md`.
+
+Target AC 2, 3, 4, and the `None`-handling half of AC 5/6 (the failure-*trigger* half — forcing an actual failure and confirming the fallback — can wait for a later cycle if this one runs long).
+
+Evidence to produce: the computed effective context length for `qwen2.5:7b` on this machine, shown in the new startup line · the arithmetic that produced it, so the number is checkable, not asserted · a regression run confirming chat still works with `num_ctx` set.

@@ -6,10 +6,25 @@ import sys
 
 import httpx
 import ollama
+import psutil
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5:7b"
 EXIT_COMMANDS = {"/exit", "/quit"}
+
+
+def model_max_context(client: ollama.Client, model: str) -> int | None:
+    """The model's own reported max context length, or None if it doesn't say."""
+    info = client.show(model).modelinfo or {}
+    for key, value in info.items():
+        if key.endswith(".context_length"):
+            return int(value)
+    return None
+
+
+def available_memory() -> int | None:
+    """Bytes of memory currently free on this machine, or None if unknown."""
+    return psutil.virtual_memory().available
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -33,6 +48,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     client = ollama.Client(host=args.host)
     print(f"axiom: {args.model} at {args.host}")
+
+    max_context = model_max_context(client, args.model)
+    free_memory = available_memory()
+    print(f"[cycle-1 debug] model max context: {max_context}")
+    print(f"[cycle-1 debug] available memory: {free_memory}")
 
     messages: list[dict[str, str]] = []
 
