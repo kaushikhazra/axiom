@@ -12,22 +12,25 @@ import builtins
 import axiom
 
 
-class RecordingClient:
-    """Returns a fixed summary, records exactly what it was asked to summarize."""
+class RecordingBackend:
+    """Stands in for a ModelBackend.
+
+    Returns a fixed summary and records exactly what it was asked to summarize.
+    Handed straight to compaction - no module global is patched to install it,
+    which is the point of the seam.
+    """
 
     def __init__(self, summary: str) -> None:
         self.summary = summary
         self.calls: list[dict] = []
 
-    def chat(self, model, messages):  # noqa: ANN001
+    def complete(self, model, messages):  # noqa: ANN001
         self.calls.append({"model": model, "messages": messages})
-        return type(
-            "Reply", (), {"message": type("Msg", (), {"content": self.summary})()}
-        )()
+        return self.summary
 
 
 def test_compact_sends_every_pair_and_returns_the_reply_untouched():
-    client = RecordingClient(summary="A concise summary.")
+    client = RecordingBackend(summary="A concise summary.")
     pairs = [
         {"role": "user", "content": "My favourite colour is teal."},
         {"role": "assistant", "content": "Teal is a great choice!"},
@@ -35,7 +38,7 @@ def test_compact_sends_every_pair_and_returns_the_reply_untouched():
         {"role": "assistant", "content": "Biscuit is a lovely name!"},
     ]
 
-    result = axiom.compact(client, "qwen2.5:7b", pairs)
+    result = axiom.compaction.compact(client, "qwen2.5:7b", pairs)
 
     assert result == "A concise summary."
     assert len(client.calls) == 1
@@ -50,8 +53,10 @@ def test_compact_sends_every_pair_and_returns_the_reply_untouched():
 
 
 def test_compact_returns_empty_string_not_none_on_a_blank_reply():
-    client = RecordingClient(summary=None)
-    result = axiom.compact(client, "qwen2.5:7b", [{"role": "user", "content": "hi"}])
+    client = RecordingBackend(summary=None)
+    result = axiom.compaction.compact(
+        client, "qwen2.5:7b", [{"role": "user", "content": "hi"}]
+    )
     assert result == ""
 
 
@@ -64,10 +69,12 @@ def make_pairs(n: int) -> list[dict[str, str]]:
 
 
 def test_compacted_history_replaces_everything_older_than_the_kept_window():
-    client = RecordingClient(summary="summary of the old stuff")
+    client = RecordingBackend(summary="summary of the old stuff")
     messages = make_pairs(13)  # 26 entries
 
-    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=5)
+    result = axiom.compaction.compacted_history(
+        client, "qwen2.5:7b", messages, kept_pairs=5
+    )
 
     assert result[0] == {
         "role": "system",
@@ -78,10 +85,12 @@ def test_compacted_history_replaces_everything_older_than_the_kept_window():
 
 
 def test_compacted_history_kept_pairs_zero_compacts_everything():
-    client = RecordingClient(summary="everything, summarized")
+    client = RecordingBackend(summary="everything, summarized")
     messages = make_pairs(13)
 
-    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=0)
+    result = axiom.compaction.compacted_history(
+        client, "qwen2.5:7b", messages, kept_pairs=0
+    )
 
     assert len(result) == 1
     assert result[0]["role"] == "system"
@@ -91,10 +100,12 @@ def test_compacted_history_kept_pairs_zero_compacts_everything():
 
 
 def test_compacted_history_returns_unchanged_when_nothing_is_older(monkeypatch=None):
-    client = RecordingClient(summary="should not be called")
+    client = RecordingBackend(summary="should not be called")
     messages = make_pairs(4)  # fewer than the 10-pair kept window
 
-    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=10)
+    result = axiom.compaction.compacted_history(
+        client, "qwen2.5:7b", messages, kept_pairs=10
+    )
 
     assert result is messages, "AC 11: nothing older than the kept window -> no-op"
     assert client.calls == [], (
@@ -103,10 +114,10 @@ def test_compacted_history_returns_unchanged_when_nothing_is_older(monkeypatch=N
 
 
 def test_maybe_compact_leaves_history_untouched_below_the_trigger():
-    client = RecordingClient(summary="should not be called")
+    client = RecordingBackend(summary="should not be called")
     messages = make_pairs(13)
 
-    result, kept_pairs = axiom.maybe_compact(
+    result, kept_pairs = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=10, effective_context=1000
     )
 
@@ -120,10 +131,10 @@ def test_maybe_compact_leaves_history_untouched_when_context_is_unknown():
     own fallback (Ollama's default, axiom doesn't know the number) means
     there is nothing to trigger against, so compaction simply never fires.
     """
-    client = RecordingClient(summary="should not be called")
+    client = RecordingBackend(summary="should not be called")
     messages = make_pairs(13)
 
-    result, kept_pairs = axiom.maybe_compact(
+    result, kept_pairs = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=999_999, effective_context=None
     )
 
@@ -137,17 +148,17 @@ def test_maybe_compact_escalates_past_a_level_that_still_does_not_fit():
     must escalate to the next one, not stop early.
     """
     huge_summary = "x" * 10_000  # guarantees the 10-pair candidate won't fit
-    client = RecordingClient(summary=huge_summary)
+    client = RecordingBackend(summary=huge_summary)
     messages = make_pairs(13)
 
-    result, kept_pairs = axiom.maybe_compact(
+    result, kept_pairs = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=100, effective_context=100
     )
 
     assert kept_pairs == 0, (
         "every non-zero rung's candidate is oversized - must reach the floor"
     )
-    assert len(client.calls) == len(axiom.KEPT_PAIRS_LADDER), (
+    assert len(client.calls) == len(axiom.compaction.KEPT_PAIRS_LADDER), (
         "one compact() call per rung tried before landing on the floor"
     )
 
@@ -162,7 +173,7 @@ def test_maybe_compact_still_compacts_older_pairs_even_when_kept_pairs_dominate(
     threshold (90% of 600). So kept_pairs=10 fits on the FIRST rung tried;
     the ladder never needs to escalate for this assertion to hold.
     """
-    client = RecordingClient(summary="y")  # ~0 estimated tokens
+    client = RecordingBackend(summary="y")  # ~0 estimated tokens
     old_pair = [
         {"role": "user", "content": "x"},
         {"role": "assistant", "content": "x"},
@@ -172,7 +183,7 @@ def test_maybe_compact_still_compacts_older_pairs_even_when_kept_pairs_dominate(
         m["content"] = m["content"].ljust(100, "z")  # exactly 100 chars each
     messages = old_pair + kept_pairs_raw
 
-    result, kept_pairs = axiom.maybe_compact(
+    result, kept_pairs = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=600, effective_context=600
     )
 
@@ -247,7 +258,7 @@ def test_main_prints_visibility_line_when_compaction_triggers(monkeypatch, capsy
         prompt_eval_count=190,
         compact_summary="a short summary",
     )
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: client)
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: client)
     feed(monkeypatch, ["first message", "second message", "/exit"])
 
     axiom.main([])
@@ -264,7 +275,7 @@ def test_main_does_not_print_a_visibility_line_below_threshold(monkeypatch, caps
         prompt_eval_count=5,  # far under 180
         compact_summary="should not be called",
     )
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: client)
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: client)
     feed(monkeypatch, ["first message", "second message", "/exit"])
 
     axiom.main([])
@@ -287,7 +298,7 @@ def test_compacted_history_persists_and_does_not_re_expand(monkeypatch, capsys):
         prompt_eval_count=190,
         compact_summary="THE-COMPACTED-SUMMARY-MARKER",
     )
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: client)
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: client)
     feed(monkeypatch, ["first message", "second message", "third message", "/exit"])
 
     axiom.main([])
@@ -308,7 +319,7 @@ def test_compacted_history_never_resummarizes_an_existing_summary():
     preserved. Fix: an existing summary is carried forward verbatim; only
     the genuinely new messages after it are ever handed to compact().
     """
-    client = RecordingClient(summary="NEW-FACTS-ONLY")
+    client = RecordingBackend(summary="NEW-FACTS-ONLY")
     prior_summary = {
         "role": "system",
         "content": "Summary of earlier conversation: PRIOR-FACT-MUST-SURVIVE",
@@ -316,15 +327,21 @@ def test_compacted_history_never_resummarizes_an_existing_summary():
     new_turns = make_pairs(3)
     messages = [prior_summary, *new_turns]
 
-    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=0)
+    result = axiom.compaction.compacted_history(
+        client, "qwen2.5:7b", messages, kept_pairs=0
+    )
 
-    assert len(client.calls) == 1, "compact() must be called exactly once - for the new turns only"
+    assert len(client.calls) == 1, (
+        "compact() must be called exactly once - for the new turns only"
+    )
     sent = client.calls[0]["messages"][0]["content"]
     assert "PRIOR-FACT-MUST-SURVIVE" not in sent, (
         "the existing summary must never be re-sent to compact() for re-summarization"
     )
     for m in new_turns:
-        assert m["content"] in sent, f"{m['content']!r} missing from the new-facts prompt"
+        assert m["content"] in sent, (
+            f"{m['content']!r} missing from the new-facts prompt"
+        )
 
     assert len(result) == 1
     assert "PRIOR-FACT-MUST-SURVIVE" in result[0]["content"], (
@@ -338,14 +355,18 @@ def test_compacted_history_carries_summary_forward_with_no_new_turns():
     (nothing genuinely new since then), compact() should not be called at
     all - there is nothing new to summarize.
     """
-    client = RecordingClient(summary="should not be called")
+    client = RecordingBackend(summary="should not be called")
     prior_summary = {
         "role": "system",
         "content": "Summary of earlier conversation: ONLY-FACT",
     }
     messages = [prior_summary, *make_pairs(1)]  # 1 pair, under any non-zero kept level
 
-    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=10)
+    result = axiom.compaction.compacted_history(
+        client, "qwen2.5:7b", messages, kept_pairs=10
+    )
 
-    assert result is messages, "1 pair is under the 10-pair kept window - nothing older to touch"
+    assert result is messages, (
+        "1 pair is under the 10-pair kept window - nothing older to touch"
+    )
     assert client.calls == []

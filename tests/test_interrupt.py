@@ -62,7 +62,7 @@ def client(monkeypatch):
         made.append(FakeClient(host))
         return made[-1]
 
-    monkeypatch.setattr(axiom.ollama, "Client", factory)
+    monkeypatch.setattr(axiom.backend.ollama, "Client", factory)
     return made
 
 

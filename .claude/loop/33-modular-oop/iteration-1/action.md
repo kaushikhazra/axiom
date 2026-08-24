@@ -1,60 +1,60 @@
 # Action
 
-Build the seam. Cycle 2 established that config and context moved without a design decision
-because neither touches the client, and that **nothing remaining has that property** -
-`model_info_for`, `compact`, `compacted_history` and `maybe_compact` all take
-`client: ollama.Client`, and `main()` catches three vendor error types by name. The seam is
-not one of the four remaining extractions; it is what the other three are waiting on.
+Close AC 5 and AC 4 without breaching AC 14. Cycle 3 left 20 lines of headroom and the
+terminal still unsplit, so this cycle is a squeeze, not an expansion. Do the two routes in
+order - the reclaim first, because it buys the room the split needs.
 
-## Write `backend.py`
+## First: reclaim lines that carry no knowledge
 
-Three things, and resist adding a fourth:
+Before adding a module, take back what is being spent on docstrings that restate their own
+signature. Candidates identified in cycle 3:
 
-- **A `ModelBackend` protocol** covering exactly what the program asks a model to do today:
-  report the model's info, stream a chat turn, and produce a plain non-streamed reply for
-  summarizing. Nothing speculative - AC 13 forbids an abstraction with one implementation and
-  no test double, and the protocol only earns its place because the stub in the tests is the
-  second implementation.
-- **An `OllamaBackend`** implementing it, holding the `ollama.Client`, and the only place in
-  `src/` that imports `ollama` or `httpx`.
-- **Error translation at that boundary.** `ollama.ResponseError`, `ConnectionError` and
-  `httpx.HTTPError` become this module's own error type or types, carrying whatever the
-  caller needs to write the same message it writes today - including the host, since two of
-  the three current messages name it.
+- `ModelBackend` - six lines of docstring for three signatures.
+- `Piece` - a docstring for a two-field frozen dataclass.
+- `Settings` - check whether the debug-override note is still earning its length.
+- `OllamaBackend.complete` and `.model_info` - one-line docstrings restating the name.
 
-The error taxonomy is the part to get right, because AC 10 depends on it. The three `except`
-blocks in `main()` differ only in the message they print and whether a partial reply is
-already on screen. Once they catch one family instead of three vendor types, they collapse
-into one handler - that is the whole of AC 10, and it falls out of this design rather than
-needing separate work.
+**Do not touch these.** They are earned findings and losing them costs more than the lines
+are worth: the KV-cache derivation in `context.py`, the never-re-summarize rationale in
+`compacted_history`, the leading-blank-line explanation in `report_failure`, the
+`estimated_tokens` note about why it is an estimate at all, and the module docstring in
+`backend.py` explaining why the seam exists.
 
-Do not create `session.py` or `terminal.py` this cycle. One structural move per cycle, so a
-transcript failure has one candidate cause.
+Record `wc -l` before and after this step alone, so the reclaim is measured rather than
+assumed.
 
-## Then move compaction onto it
+## Then: one module, not two
 
-`compact`, `compacted_history` and `maybe_compact` into `compaction.py`, taking the backend
-rather than a client. That closes AC 9 and it is the cheapest proof the seam is real: if
-compaction can run against the stub with no vendor type in sight, the protocol is load-bearing
-rather than decorative.
+Create `terminal.py` and move every `print` and the `input` call into it - the startup line,
+the prompt, the streamed reply, the compaction notice, and `report_failure`.
 
-`main()` stays in `__init__.py` and keeps working. The entry point does not move.
+**Leave the chat loop in `__init__.py`.** Nothing in #33 requires a separate `session.py`.
+AC 5 is satisfied when `__init__.py` stops writing to the terminal itself and calls the
+terminal module instead; AC 8 only asks that whichever module holds the loop names no vendor
+client, and `__init__.py` already names none. A third module would cost 15-20 lines to satisfy
+a criterion nobody wrote.
+
+That is a KISS decision under AC 12 and AC 13, not a shortcut - say so in the log, and say
+what would change the answer.
 
 ## Watch for
 
-**The transcript is the thing to protect.** Error translation is where behaviour drifts
-silently - a reworded message, a lost `(status code: -1)` suffix, a missing leading newline
-when a partial reply is already on screen. The baseline has all three failure messages
-recorded verbatim. Run the characterization test after the backend lands and again after
-compaction moves, not once at the end.
+**The startup line is assembled from three parts** - model, host, and a context note that
+depends on whether a debug override is in play. Decide deliberately whether the terminal
+formats it from settings plus a context value, or receives a finished string. The first keeps
+formatting in the terminal where AC 4 wants it; the second leaves formatting in the loop.
+Prefer the first.
 
-**The tests still patch `axiom.ollama.Client`.** They will keep working this cycle since
-`__init__.py` still holds the client. Do not rewrite them onto the seam yet - that is AC 7's
-own move and it deserves its own cycle. Note in the log whether the seam as built would in
-fact let them stop patching globals, because if it would not, the protocol is wrong.
+**The transcript is the whole safety net for this move.** Every one of the thirteen scenarios
+exercises printing. Run the characterization test immediately after the move, before anything
+else.
 
 ## Record
 
-Full suite plus characterization after each of the two moves. `wc -l` across `src/` against
-the 390-400 projection - this cycle is where that estimate gets its first real test. Status
-token for all 20 criteria.
+`wc -l` across `src/` after the reclaim and again after the split, both against 447. If the
+split lands over the ceiling, do not delete knowledge-bearing comments to squeeze under it -
+report AC 14 unmet, with the exact overage and what it would cost to close.
+
+Status token for all 20. AC 4, AC 5 and AC 14 are the three that should resolve this cycle,
+and AC 7's remaining half - letting `main()` take a backend from its caller - is the natural
+next move once the terminal is out.

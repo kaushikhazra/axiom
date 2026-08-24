@@ -127,7 +127,7 @@ def _run(name: str, lines: list, client: StubClient, debug_context: str | None) 
         mp.delenv("AXIOM_DEBUG_MAX_CONTEXT", raising=False)
         if debug_context is not None:
             mp.setenv("AXIOM_DEBUG_MAX_CONTEXT", debug_context)
-        mp.setattr(axiom.ollama, "Client", lambda host: client)  # noqa: ARG005
+        mp.setattr(axiom.backend.ollama, "Client", lambda host: client)  # noqa: ARG005
         mp.setattr(
             psutil,
             "virtual_memory",

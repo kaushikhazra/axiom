@@ -55,7 +55,7 @@ def feed_and_exit(monkeypatch) -> None:
 def test_memory_query_failure_falls_back_to_model_max(monkeypatch, capsys):
     """AC 6: psutil itself raising must not crash the program."""
     monkeypatch.setattr(
-        axiom.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO)
+        axiom.backend.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO)
     )
 
     def broken_virtual_memory():
@@ -77,7 +77,7 @@ def test_both_queries_failing_falls_back_to_ollama_default(monkeypatch, capsys):
 
     class BrokenClient:
         def show(self, model):  # noqa: ANN001, ARG002
-            raise axiom.ollama.ResponseError("model not found", 404)
+            raise axiom.backend.ollama.ResponseError("model not found", 404)
 
         def chat(self, model, messages, stream, options=None):  # noqa: ANN001, ARG002
             assert options is None, (
@@ -87,7 +87,7 @@ def test_both_queries_failing_falls_back_to_ollama_default(monkeypatch, capsys):
                 [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})(), "prompt_eval_count": 1, "eval_count": 1})()]
             )
 
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: BrokenClient())
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: BrokenClient())
 
     def broken_virtual_memory():
         raise OSError("cannot read /proc/meminfo")
@@ -130,7 +130,7 @@ def test_context_length_is_requeried_per_run(
     axiom.main() call), which is what proves this is a per-run query and not
     a value cached across the module or process lifetime.
     """
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: ShowOnlyClient(model_info))
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: ShowOnlyClient(model_info))
     # Isolate the model side: give memory a budget larger than either case's
     # max context, so this machine's real available RAM can't cap the result
     # and hide whether the model query actually re-ran.
@@ -152,7 +152,7 @@ def test_debug_max_context_env_var_overrides_the_computed_value(monkeypatch, cap
     compaction ladder (#29) practical without needing a real conversation
     large enough to fill a real model's actual context.
     """
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO))
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO))
     monkeypatch.setenv("AXIOM_DEBUG_MAX_CONTEXT", "500")
     feed_and_exit(monkeypatch)
 
@@ -163,7 +163,7 @@ def test_debug_max_context_env_var_overrides_the_computed_value(monkeypatch, cap
 
 
 def test_debug_max_context_env_var_unset_uses_the_normal_computation(monkeypatch, capsys):
-    monkeypatch.setattr(axiom.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO))
+    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: ShowOnlyClient(QWEN_2_5_7B_INFO))
     monkeypatch.delenv("AXIOM_DEBUG_MAX_CONTEXT", raising=False)
     feed_and_exit(monkeypatch)
 
