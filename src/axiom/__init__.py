@@ -1,13 +1,14 @@
 """A terminal chat with a local Ollama model."""
 
 from . import backend, compaction, config, context, terminal
+from .backend import ModelBackend
 
 EXIT_COMMANDS = {"/exit", "/quit"}
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> None:
     settings = config.resolve(argv)
-    model_backend = backend.OllamaBackend(settings.host)
+    model_backend = using or backend.OllamaBackend(settings.host)
 
     effective_context = context.effective_context(
         model_backend.model_info(settings.model)

@@ -10,6 +10,7 @@ import sys
 from .backend import ConnectionLost
 
 PROMPT = "> "
+VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
 def announce(model: str, host: str, context: int | None, overridden: bool) -> None:
@@ -18,7 +19,7 @@ def announce(model: str, host: str, context: int | None, overridden: bool) -> No
         note = "Ollama default"
     else:
         note = f"{context} tokens{', debug override' if overridden else ''}"
-    print(f"axiom: {model} at {host} (context: {note})")
+    print(f"{VOICE} {model} at {host} (context: {note})")
 
 
 def read_line() -> str | None:
@@ -41,7 +42,7 @@ def end_reply() -> None:
 
 def note_compaction(kept_pairs: int) -> None:
     level = "everything" if kept_pairs == 0 else f"keeping the last {kept_pairs}"
-    print(f"axiom: compacting older history ({level})")
+    print(f"{VOICE} compacting older history ({level})")
 
 
 def report_failure(failure: BaseException, reply: str, host: str) -> None:

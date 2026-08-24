@@ -68,12 +68,6 @@ def effective_context(info: dict | None) -> int | None:
     """
     if info is None:
         return None
-    candidates = [
-        limit
-        for limit in (
-            model_max_context(info),
-            memory_safe_context(info, available_memory()),
-        )
-        if limit is not None
-    ]
-    return min(candidates) if candidates else None
+    limits = (model_max_context(info), memory_safe_context(info, available_memory()))
+    known = [limit for limit in limits if limit is not None]
+    return min(known) if known else None

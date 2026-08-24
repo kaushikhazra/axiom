@@ -7,9 +7,8 @@ shrinkage). These tests cover what a fake client can honestly cover: the
 right messages get sent, and the reply comes back through untouched.
 """
 
-import builtins
-
 import axiom
+from conftest import StubBackend, feed
 
 
 class RecordingBackend:
@@ -195,73 +194,19 @@ def test_maybe_compact_still_compacts_older_pairs_even_when_kept_pairs_dominate(
     assert len(client.calls) == 1, "only one compact() call - fit on the first rung"
 
 
-class ChatAndCompactClient:
-    """Handles both call shapes main() makes: the streaming chat loop
-    (stream=True) and compact()'s own plain, non-streamed summarization call.
-    """
-
-    def __init__(
-        self, model_info: dict, prompt_eval_count: int, compact_summary: str
-    ) -> None:
-        self.model_info = model_info
-        self.prompt_eval_count = prompt_eval_count
-        self.compact_summary = compact_summary
-        self.chat_calls: list[dict] = []
-
-    def show(self, model):  # noqa: ANN001, ARG002
-        return type("Info", (), {"modelinfo": self.model_info})()
-
-    def chat(self, model, messages, stream=False, options=None):  # noqa: ANN001, ARG002
-        self.chat_calls.append(
-            {"messages": [dict(m) for m in messages], "stream": stream}
-        )
-        if stream:
-            chunk = type(
-                "Chunk",
-                (),
-                {
-                    "message": type("Msg", (), {"content": "a reply"})(),
-                    "prompt_eval_count": self.prompt_eval_count,
-                    "eval_count": 0,
-                },
-            )()
-            return iter([chunk])
-        return type(
-            "Reply",
-            (),
-            {"message": type("Msg", (), {"content": self.compact_summary})()},
-        )()
-
-
-def feed(monkeypatch, lines: list[str]) -> None:
-    supply = iter(lines)
-
-    def fake_input(prompt: str = "") -> str:
-        print(prompt, end="")
-        try:
-            return next(supply)
-        except StopIteration:
-            raise EOFError from None
-
-    monkeypatch.setattr(builtins, "input", fake_input)
-
-
 def test_main_prints_visibility_line_when_compaction_triggers(monkeypatch, capsys):
     """AC 9: the user is told when compaction happens.
 
     context_length=200, threshold=180. The first turn's fake response
-    reports prompt_eval_count=190 - over threshold - so the SECOND input
-    (checked before sending) is the one that should trigger compaction.
+    reports usage=190 - over threshold - so the SECOND input (checked
+    before sending) is the one that should trigger compaction.
     """
-    client = ChatAndCompactClient(
-        model_info={"qwen2.context_length": 200},
-        prompt_eval_count=190,
-        compact_summary="a short summary",
+    backend = StubBackend(
+        info={"qwen2.context_length": 200}, usage=190, summary="a short summary"
     )
-    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: client)
     feed(monkeypatch, ["first message", "second message", "/exit"])
 
-    axiom.main([])
+    axiom.main([], using=backend)
 
     out = capsys.readouterr().out
     assert "compacting" in out.lower(), (
@@ -270,21 +215,18 @@ def test_main_prints_visibility_line_when_compaction_triggers(monkeypatch, capsy
 
 
 def test_main_does_not_print_a_visibility_line_below_threshold(monkeypatch, capsys):
-    client = ChatAndCompactClient(
-        model_info={"qwen2.context_length": 200},
-        prompt_eval_count=5,  # far under 180
-        compact_summary="should not be called",
+    backend = StubBackend(
+        info={"qwen2.context_length": 200},
+        usage=5,  # far under 180
+        summary="should not be called",
     )
-    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: client)
     feed(monkeypatch, ["first message", "second message", "/exit"])
 
-    axiom.main([])
+    axiom.main([], using=backend)
 
     out = capsys.readouterr().out
     assert "compacting" not in out.lower()
-    assert not any(c["stream"] is False for c in client.chat_calls), (
-        "compact() must not run"
-    )
+    assert backend.completed == [], "compact() must not run"
 
 
 def test_compacted_history_persists_and_does_not_re_expand(monkeypatch, capsys):
@@ -293,18 +235,16 @@ def test_compacted_history_persists_and_does_not_re_expand(monkeypatch, capsys):
     the original raw pairs, proving state was actually replaced in main(),
     not recomputed fresh (and back to the original) each turn.
     """
-    client = ChatAndCompactClient(
-        model_info={"qwen2.context_length": 200},
-        prompt_eval_count=190,
-        compact_summary="THE-COMPACTED-SUMMARY-MARKER",
+    backend = StubBackend(
+        info={"qwen2.context_length": 200},
+        usage=190,
+        summary="THE-COMPACTED-SUMMARY-MARKER",
     )
-    monkeypatch.setattr(axiom.backend.ollama, "Client", lambda host: client)
     feed(monkeypatch, ["first message", "second message", "third message", "/exit"])
 
-    axiom.main([])
+    axiom.main([], using=backend)
 
-    streaming_calls = [c for c in client.chat_calls if c["stream"] is True]
-    third_turn_messages = streaming_calls[2]["messages"]
+    third_turn_messages = backend.streamed[2]
     assert third_turn_messages[0]["role"] == "system"
     assert "THE-COMPACTED-SUMMARY-MARKER" in third_turn_messages[0]["content"]
     assert not any(m["content"] == "first message" for m in third_turn_messages), (

@@ -15,7 +15,6 @@ Regenerating it to make a failure go away is the one thing that defeats the
 point of having it.
 """
 
-import builtins
 import contextlib
 import io
 import os
@@ -27,6 +26,7 @@ import psutil
 import pytest
 
 import axiom
+from conftest import chunk, feed
 
 BASELINE = Path(__file__).parent / "baseline" / "transcript.txt"
 
@@ -40,18 +40,6 @@ FULL_INFO = {
     "qwen2.attention.head_count_kv": 4,
     "qwen2.attention.key_length": 128,
 }
-
-
-def _chunk(text: str, prompt_eval_count: int, eval_count: int):
-    return type(
-        "Chunk",
-        (),
-        {
-            "message": type("Msg", (), {"content": text})(),
-            "prompt_eval_count": prompt_eval_count,
-            "eval_count": eval_count,
-        },
-    )()
 
 
 def _reply(text: str):
@@ -98,23 +86,7 @@ class StubClient:
         for action in actions:
             if isinstance(action, BaseException):
                 raise action
-            yield _chunk(action, self.prompt_eval_count, 0)
-
-
-def _feed(mp, lines: list) -> None:
-    supply = iter(lines)
-
-    def fake_input(prompt: str = "") -> str:
-        print(prompt, end="")
-        try:
-            item = next(supply)
-        except StopIteration:
-            raise EOFError from None
-        if isinstance(item, BaseException):
-            raise item
-        return item
-
-    mp.setattr(builtins, "input", fake_input)
+            yield chunk(action, self.prompt_eval_count, 0)
 
 
 def _run(name: str, lines: list, client: StubClient, debug_context: str | None) -> str:
@@ -133,7 +105,7 @@ def _run(name: str, lines: list, client: StubClient, debug_context: str | None) 
             "virtual_memory",
             lambda: type("VM", (), {"available": FIXED_AVAILABLE_BYTES})(),
         )
-        _feed(mp, lines)
+        feed(mp, lines)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 axiom.main([])
