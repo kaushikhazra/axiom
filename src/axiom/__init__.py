@@ -79,10 +79,13 @@ def memory_safe_context(info: dict, available_bytes: int | None) -> int | None:
 
 
 COMPACTION_INSTRUCTION = (
-    "Summarize the conversation below concisely. Preserve every specific "
-    "fact, name, and number mentioned - a reader must be able to answer "
-    "questions about it from your summary alone, without the original "
-    "text.\n\n"
+    "Extract every distinct fact, stated preference, name, and number from "
+    "the conversation below as a bulleted list - one bullet per fact, in "
+    "the order it was mentioned. Do not write a narrative summary. Do not "
+    "judge some facts as more important than others: a brief, early "
+    "statement (e.g. a stated preference) is exactly as important to keep "
+    "as a later, longer topic. Omit nothing a reader would need to answer "
+    "a question about anything mentioned below.\n\n"
 )
 
 
@@ -122,17 +125,28 @@ def compacted_history(
     """messages with everything older than the last kept_pairs pairs replaced
     by one system-role summary. kept_pairs=0 compacts everything. Returns
     messages unchanged (same object) if there is nothing older to compact.
+
+    Never re-summarizes an existing summary: if `older` already starts with
+    a prior pass's system-role summary, that text is carried forward
+    verbatim and only the genuinely new messages since then are compacted.
+    Re-summarizing an already-compacted summary alongside newer turns was
+    found, live, to silently drop facts the first pass had preserved.
     """
     kept_count = kept_pairs * 2
     older = messages if kept_count == 0 else messages[:-kept_count]
     kept = [] if kept_count == 0 else messages[-kept_count:]
     if not older:
         return messages
-    summary = compact(client, model, older)
-    return [
-        {"role": "system", "content": f"Summary of earlier conversation: {summary}"},
-        *kept,
-    ]
+
+    if older[0]["role"] == "system":
+        prior_summary = older[0]["content"]
+        new_older = older[1:]
+        new_facts = compact(client, model, new_older) if new_older else ""
+        content = prior_summary + (f"\n{new_facts}" if new_facts else "")
+    else:
+        content = f"Summary of earlier conversation: {compact(client, model, older)}"
+
+    return [{"role": "system", "content": content}, *kept]
 
 
 def maybe_compact(
