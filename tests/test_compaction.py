@@ -7,6 +7,8 @@ shrinkage). These tests cover what a fake client can honestly cover: the
 right messages get sent, and the reply comes back through untouched.
 """
 
+import builtins
+
 import axiom
 
 
@@ -51,3 +53,249 @@ def test_compact_returns_empty_string_not_none_on_a_blank_reply():
     client = RecordingClient(summary=None)
     result = axiom.compact(client, "qwen2.5:7b", [{"role": "user", "content": "hi"}])
     assert result == ""
+
+
+def make_pairs(n: int) -> list[dict[str, str]]:
+    pairs = []
+    for i in range(n):
+        pairs.append({"role": "user", "content": f"user turn {i}"})
+        pairs.append({"role": "assistant", "content": f"assistant turn {i}"})
+    return pairs
+
+
+def test_compacted_history_replaces_everything_older_than_the_kept_window():
+    client = RecordingClient(summary="summary of the old stuff")
+    messages = make_pairs(13)  # 26 entries
+
+    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=5)
+
+    assert result[0] == {
+        "role": "system",
+        "content": "Summary of earlier conversation: summary of the old stuff",
+    }
+    assert result[1:] == messages[-10:], "the last 5 pairs (10 entries) must stay raw"
+    assert len(result) == 11
+
+
+def test_compacted_history_kept_pairs_zero_compacts_everything():
+    client = RecordingClient(summary="everything, summarized")
+    messages = make_pairs(13)
+
+    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=0)
+
+    assert len(result) == 1
+    assert result[0]["role"] == "system"
+    sent = client.calls[0]["messages"][0]["content"]
+    for m in messages:
+        assert m["content"] in sent, "every pair must reach compact(), none held back"
+
+
+def test_compacted_history_returns_unchanged_when_nothing_is_older(monkeypatch=None):
+    client = RecordingClient(summary="should not be called")
+    messages = make_pairs(4)  # fewer than the 10-pair kept window
+
+    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=10)
+
+    assert result is messages, "AC 11: nothing older than the kept window -> no-op"
+    assert client.calls == [], (
+        "compact() must not be called when there is nothing to compact"
+    )
+
+
+def test_maybe_compact_leaves_history_untouched_below_the_trigger():
+    client = RecordingClient(summary="should not be called")
+    messages = make_pairs(13)
+
+    result, kept_pairs = axiom.maybe_compact(
+        client, "qwen2.5:7b", messages, running_usage=10, effective_context=1000
+    )
+
+    assert result is messages
+    assert kept_pairs is None
+    assert client.calls == []
+
+
+def test_maybe_compact_leaves_history_untouched_when_context_is_unknown():
+    """AC 1's trigger needs an effective_context to compare against - #28's
+    own fallback (Ollama's default, axiom doesn't know the number) means
+    there is nothing to trigger against, so compaction simply never fires.
+    """
+    client = RecordingClient(summary="should not be called")
+    messages = make_pairs(13)
+
+    result, kept_pairs = axiom.maybe_compact(
+        client, "qwen2.5:7b", messages, running_usage=999_999, effective_context=None
+    )
+
+    assert result is messages
+    assert kept_pairs is None
+    assert client.calls == []
+
+
+def test_maybe_compact_escalates_past_a_level_that_still_does_not_fit():
+    """A summary that comes back too long to fit even at the first rung
+    must escalate to the next one, not stop early.
+    """
+    huge_summary = "x" * 10_000  # guarantees the 10-pair candidate won't fit
+    client = RecordingClient(summary=huge_summary)
+    messages = make_pairs(13)
+
+    result, kept_pairs = axiom.maybe_compact(
+        client, "qwen2.5:7b", messages, running_usage=100, effective_context=100
+    )
+
+    assert kept_pairs == 0, (
+        "every non-zero rung's candidate is oversized - must reach the floor"
+    )
+    assert len(client.calls) == len(axiom.KEPT_PAIRS_LADDER), (
+        "one compact() call per rung tried before landing on the floor"
+    )
+
+
+def test_maybe_compact_still_compacts_older_pairs_even_when_kept_pairs_dominate():
+    """AC 6: compaction of everything older than the kept window happens
+    even when the kept pairs alone account for most of the space.
+
+    Sizes are exact, not guessed: 20 kept entries x 100 chars = 2000 chars
+    (500 estimated tokens) - the dominant term by construction - plus a
+    near-empty summary of the one old pair, comfortably under a 540-token
+    threshold (90% of 600). So kept_pairs=10 fits on the FIRST rung tried;
+    the ladder never needs to escalate for this assertion to hold.
+    """
+    client = RecordingClient(summary="y")  # ~0 estimated tokens
+    old_pair = [
+        {"role": "user", "content": "x"},
+        {"role": "assistant", "content": "x"},
+    ]
+    kept_pairs_raw = make_pairs(10)
+    for m in kept_pairs_raw:
+        m["content"] = m["content"].ljust(100, "z")  # exactly 100 chars each
+    messages = old_pair + kept_pairs_raw
+
+    result, kept_pairs = axiom.maybe_compact(
+        client, "qwen2.5:7b", messages, running_usage=600, effective_context=600
+    )
+
+    assert kept_pairs == 10, "the dominant kept pairs fit on the first rung tried"
+    assert result[0]["role"] == "system", (
+        "the one small older pair still got compacted, despite being a tiny "
+        "fraction of the total size"
+    )
+    assert len(client.calls) == 1, "only one compact() call - fit on the first rung"
+
+
+class ChatAndCompactClient:
+    """Handles both call shapes main() makes: the streaming chat loop
+    (stream=True) and compact()'s own plain, non-streamed summarization call.
+    """
+
+    def __init__(
+        self, model_info: dict, prompt_eval_count: int, compact_summary: str
+    ) -> None:
+        self.model_info = model_info
+        self.prompt_eval_count = prompt_eval_count
+        self.compact_summary = compact_summary
+        self.chat_calls: list[dict] = []
+
+    def show(self, model):  # noqa: ANN001, ARG002
+        return type("Info", (), {"modelinfo": self.model_info})()
+
+    def chat(self, model, messages, stream=False, options=None):  # noqa: ANN001, ARG002
+        self.chat_calls.append(
+            {"messages": [dict(m) for m in messages], "stream": stream}
+        )
+        if stream:
+            chunk = type(
+                "Chunk",
+                (),
+                {
+                    "message": type("Msg", (), {"content": "a reply"})(),
+                    "prompt_eval_count": self.prompt_eval_count,
+                    "eval_count": 0,
+                },
+            )()
+            return iter([chunk])
+        return type(
+            "Reply",
+            (),
+            {"message": type("Msg", (), {"content": self.compact_summary})()},
+        )()
+
+
+def feed(monkeypatch, lines: list[str]) -> None:
+    supply = iter(lines)
+
+    def fake_input(prompt: str = "") -> str:
+        print(prompt, end="")
+        try:
+            return next(supply)
+        except StopIteration:
+            raise EOFError from None
+
+    monkeypatch.setattr(builtins, "input", fake_input)
+
+
+def test_main_prints_visibility_line_when_compaction_triggers(monkeypatch, capsys):
+    """AC 9: the user is told when compaction happens.
+
+    context_length=200, threshold=180. The first turn's fake response
+    reports prompt_eval_count=190 - over threshold - so the SECOND input
+    (checked before sending) is the one that should trigger compaction.
+    """
+    client = ChatAndCompactClient(
+        model_info={"qwen2.context_length": 200},
+        prompt_eval_count=190,
+        compact_summary="a short summary",
+    )
+    monkeypatch.setattr(axiom.ollama, "Client", lambda host: client)
+    feed(monkeypatch, ["first message", "second message", "/exit"])
+
+    axiom.main([])
+
+    out = capsys.readouterr().out
+    assert "compacting" in out.lower(), (
+        "no visibility line printed when compaction fired"
+    )
+
+
+def test_main_does_not_print_a_visibility_line_below_threshold(monkeypatch, capsys):
+    client = ChatAndCompactClient(
+        model_info={"qwen2.context_length": 200},
+        prompt_eval_count=5,  # far under 180
+        compact_summary="should not be called",
+    )
+    monkeypatch.setattr(axiom.ollama, "Client", lambda host: client)
+    feed(monkeypatch, ["first message", "second message", "/exit"])
+
+    axiom.main([])
+
+    out = capsys.readouterr().out
+    assert "compacting" not in out.lower()
+    assert not any(c["stream"] is False for c in client.chat_calls), (
+        "compact() must not run"
+    )
+
+
+def test_compacted_history_persists_and_does_not_re_expand(monkeypatch, capsys):
+    """AC 10: once compacted, it stays compacted for the rest of the session -
+    the THIRD turn's request must carry the compacted system summary, not
+    the original raw pairs, proving state was actually replaced in main(),
+    not recomputed fresh (and back to the original) each turn.
+    """
+    client = ChatAndCompactClient(
+        model_info={"qwen2.context_length": 200},
+        prompt_eval_count=190,
+        compact_summary="THE-COMPACTED-SUMMARY-MARKER",
+    )
+    monkeypatch.setattr(axiom.ollama, "Client", lambda host: client)
+    feed(monkeypatch, ["first message", "second message", "third message", "/exit"])
+
+    axiom.main([])
+
+    streaming_calls = [c for c in client.chat_calls if c["stream"] is True]
+    third_turn_messages = streaming_calls[2]["messages"]
+    assert third_turn_messages[0]["role"] == "system"
+    assert "THE-COMPACTED-SUMMARY-MARKER" in third_turn_messages[0]["content"]
+    assert not any(m["content"] == "first message" for m in third_turn_messages), (
+        "the original raw pair should be gone, not re-sent alongside the summary"
+    )

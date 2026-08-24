@@ -29,7 +29,7 @@ class ShowOnlyClient:
             or options["num_ctx"] is not None
         )
         return iter(
-            [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})()})()]
+            [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})(), "prompt_eval_count": 1, "eval_count": 1})()]
         )
 
 
@@ -84,7 +84,7 @@ def test_both_queries_failing_falls_back_to_ollama_default(monkeypatch, capsys):
                 "nothing to size num_ctx from - must omit it entirely"
             )
             return iter(
-                [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})()})()]
+                [type("Chunk", (), {"message": type("Msg", (), {"content": "ok"})(), "prompt_eval_count": 1, "eval_count": 1})()]
             )
 
     monkeypatch.setattr(axiom.ollama, "Client", lambda host: BrokenClient())

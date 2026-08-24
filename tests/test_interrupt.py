@@ -43,7 +43,15 @@ class FakeClient:
 
 
 def _chunk(text: str):
-    return type("Chunk", (), {"message": type("Msg", (), {"content": text})()})()
+    return type(
+        "Chunk",
+        (),
+        {
+            "message": type("Msg", (), {"content": text})(),
+            "prompt_eval_count": 1,
+            "eval_count": 1,
+        },
+    )()
 
 
 @pytest.fixture

@@ -101,6 +101,71 @@ def compact(client: ollama.Client, model: str, pairs: list[dict[str, str]]) -> s
     return reply.message.content or ""
 
 
+COMPACTION_TRIGGER_FRACTION = 0.90
+KEPT_PAIRS_LADDER = (10, 5, 2, 0)
+CHARS_PER_TOKEN_ESTIMATE = 4  # rough proxy for a hypothetical, not-yet-sent payload
+
+
+def estimated_tokens(messages: list[dict[str, str]]) -> int:
+    """A rough size estimate for history that hasn't been sent yet - no real
+    prompt_eval_count exists for a hypothetical payload. Only used to choose
+    an escalation level; the real trigger check uses the actual last
+    prompt_eval_count + eval_count instead.
+    """
+    chars = sum(len(m["content"]) for m in messages)
+    return chars // CHARS_PER_TOKEN_ESTIMATE
+
+
+def compacted_history(
+    client: ollama.Client, model: str, messages: list[dict[str, str]], kept_pairs: int
+) -> list[dict[str, str]]:
+    """messages with everything older than the last kept_pairs pairs replaced
+    by one system-role summary. kept_pairs=0 compacts everything. Returns
+    messages unchanged (same object) if there is nothing older to compact.
+    """
+    kept_count = kept_pairs * 2
+    older = messages if kept_count == 0 else messages[:-kept_count]
+    kept = [] if kept_count == 0 else messages[-kept_count:]
+    if not older:
+        return messages
+    summary = compact(client, model, older)
+    return [
+        {"role": "system", "content": f"Summary of earlier conversation: {summary}"},
+        *kept,
+    ]
+
+
+def maybe_compact(
+    client: ollama.Client,
+    model: str,
+    messages: list[dict[str, str]],
+    running_usage: int | None,
+    effective_context: int | None,
+) -> tuple[list[dict[str, str]], int | None]:
+    """(possibly-compacted messages, the kept_pairs level used - None if untouched).
+
+    Triggers on the REAL running usage from the last completed turn. Escalation
+    levels are chosen with the character-based estimate - there is no real
+    count for a payload not yet sent.
+    """
+    if running_usage is None or effective_context is None:
+        return messages, None
+    if running_usage < effective_context * COMPACTION_TRIGGER_FRACTION:
+        return messages, None
+
+    for kept_pairs in KEPT_PAIRS_LADDER:
+        candidate = compacted_history(client, model, messages, kept_pairs)
+        if candidate is messages:
+            continue  # nothing older than this level - try a smaller kept window
+        if (
+            kept_pairs == 0
+            or estimated_tokens(candidate)
+            < effective_context * COMPACTION_TRIGGER_FRACTION
+        ):
+            return candidate, kept_pairs
+    return messages, None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="axiom", description="Chat with a local Ollama model."
@@ -139,6 +204,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"axiom: {args.model} at {args.host} (context: {context_note})")
 
     messages: list[dict[str, str]] = []
+    running_usage: int | None = None  # real prompt_eval_count + eval_count, last turn
 
     while True:
         try:
@@ -153,8 +219,18 @@ def main(argv: list[str] | None = None) -> None:
         if line in EXIT_COMMANDS:
             return
 
+        messages, kept_pairs = maybe_compact(
+            client, args.model, messages, running_usage, effective_context
+        )
+        if kept_pairs is not None:
+            level = (
+                "everything" if kept_pairs == 0 else f"keeping the last {kept_pairs}"
+            )
+            print(f"axiom: compacting older history ({level})")
+
         messages.append({"role": "user", "content": line})
         reply = ""
+        last_chunk = None
         try:
             for chunk in client.chat(
                 model=args.model, messages=messages, stream=True, options=chat_options
@@ -162,6 +238,7 @@ def main(argv: list[str] | None = None) -> None:
                 piece = chunk.message.content or ""
                 reply += piece
                 print(piece, end="", flush=True)
+                last_chunk = chunk
         except KeyboardInterrupt:
             # Ctrl-C mid-generation cancels this reply only. The session lives,
             # and the half-finished answer does not become history.
@@ -195,3 +272,7 @@ def main(argv: list[str] | None = None) -> None:
 
         print()
         messages.append({"role": "assistant", "content": reply})
+        if last_chunk is not None:
+            running_usage = (last_chunk.prompt_eval_count or 0) + (
+                last_chunk.eval_count or 0
+            )
