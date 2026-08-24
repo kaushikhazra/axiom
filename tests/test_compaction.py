@@ -299,3 +299,53 @@ def test_compacted_history_persists_and_does_not_re_expand(monkeypatch, capsys):
     assert not any(m["content"] == "first message" for m in third_turn_messages), (
         "the original raw pair should be gone, not re-sent alongside the summary"
     )
+
+
+def test_compacted_history_never_resummarizes_an_existing_summary():
+    """The bug found live: a second compaction pass folded an already-
+    compacted system-role summary into compact()'s input alongside new
+    turns, and the model's fresh summary dropped facts the first pass had
+    preserved. Fix: an existing summary is carried forward verbatim; only
+    the genuinely new messages after it are ever handed to compact().
+    """
+    client = RecordingClient(summary="NEW-FACTS-ONLY")
+    prior_summary = {
+        "role": "system",
+        "content": "Summary of earlier conversation: PRIOR-FACT-MUST-SURVIVE",
+    }
+    new_turns = make_pairs(3)
+    messages = [prior_summary, *new_turns]
+
+    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=0)
+
+    assert len(client.calls) == 1, "compact() must be called exactly once - for the new turns only"
+    sent = client.calls[0]["messages"][0]["content"]
+    assert "PRIOR-FACT-MUST-SURVIVE" not in sent, (
+        "the existing summary must never be re-sent to compact() for re-summarization"
+    )
+    for m in new_turns:
+        assert m["content"] in sent, f"{m['content']!r} missing from the new-facts prompt"
+
+    assert len(result) == 1
+    assert "PRIOR-FACT-MUST-SURVIVE" in result[0]["content"], (
+        "the prior summary must survive verbatim in the result"
+    )
+    assert "NEW-FACTS-ONLY" in result[0]["content"], "the new summary must be appended"
+
+
+def test_compacted_history_carries_summary_forward_with_no_new_turns():
+    """If everything older than the kept window IS just the prior summary
+    (nothing genuinely new since then), compact() should not be called at
+    all - there is nothing new to summarize.
+    """
+    client = RecordingClient(summary="should not be called")
+    prior_summary = {
+        "role": "system",
+        "content": "Summary of earlier conversation: ONLY-FACT",
+    }
+    messages = [prior_summary, *make_pairs(1)]  # 1 pair, under any non-zero kept level
+
+    result = axiom.compacted_history(client, "qwen2.5:7b", messages, kept_pairs=10)
+
+    assert result is messages, "1 pair is under the 10-pair kept window - nothing older to touch"
+    assert client.calls == []
