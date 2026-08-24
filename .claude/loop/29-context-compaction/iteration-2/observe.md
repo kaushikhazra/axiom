@@ -2,19 +2,20 @@
 
 Record each cycle:
 
-- Where the fix stands: what was tried, whether it held up, and against what evidence.
+- Where each of A, B, C, D stands: not started / attempted / fixed-live-evidenced / named-as-accepted-limit. All four get a line every cycle, even "no change."
 - How far that moved from the last cycle, and what moved it.
 - What is still missing, and whether it can be closed from here at all.
 - Any assumption that changed.
 
-Evidence rules — the bug that started this iteration was found by a real, live, multi-turn run, not a unit test, so the goal check must be settled the same way:
+Evidence rules — the bug that started this iteration was found by a real, live, multi-turn run, not a unit test, so each of A/B/C must be settled the same way:
 
-- **A live run is required**: a real conversation, real Ollama, driving at least two separate compaction passes in the same session (`AXIOM_DEBUG_MAX_CONTEXT` is fine for this — it's exactly what it exists for), ending on a question whose answer was only ever in the first message. The transcript is the evidence.
-- A unit/mocked test proving the mechanism (e.g. an existing summary is never re-summarized) is good supporting evidence, but does not by itself close the goal — the original bug survived a fully-green test suite and 11/11 mocked+live-single-pass criteria. Mocking is not enough here.
-- If a fix changes `compacted_history()`'s shape or `main()`'s wiring, re-run the full `pytest` suite and note the result — do not let a fix for this regress #26/#28/#29's existing criteria.
+- **A live run is required for A, B, and C.** `AXIOM_DEBUG_MAX_CONTEXT` is fine for this — it exists for exactly this purpose. Natural, varied sentences only — repeated/near-identical filler sent the model into a degenerate loop earlier this session; that is a real hazard for these tests too.
+- A unit/mocked test proving the mechanism (e.g. an existing summary is passed through, not re-summarized) is good supporting evidence, but does not by itself close A, B, or C — the original bug survived a fully-green test suite and 11/11 mocked-plus-live-single-pass criteria. Mocking is not enough on its own here.
+- **D does not need a live fix.** It needs an honest decision, recorded in the log: either a concrete mitigation with evidence it works, or an explicit statement of why it's an accepted limit for now and what would trigger revisiting it.
+- If a fix changes `compacted_history()`'s shape, `maybe_compact()`'s ladder logic, or `main()`'s wiring, re-run the full `pytest` suite and note the result — do not let a fix here regress #26/#28/#29's existing criteria.
 
 Goal check:
 
-- **Met** — a live run survives 2+ real compaction passes and still answers correctly, and the full test suite is green. The loop ends.
-- **Not met** — report and write the next action.
+- **Met** — A, B, C each have live evidence they're fixed; D is either fixed with evidence or explicitly named as an accepted limit with a stated reason; full suite green. The loop ends.
+- **Not met** — report which of A/B/C/D moved and which didn't, and write the next action.
 - **Answer did not move** — report the flat result and stop. Do not run another variant.
