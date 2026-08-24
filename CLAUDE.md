@@ -26,6 +26,8 @@ Each cycle derives its next move from the last cycle's constraint. It does not g
 
 Assume every run starts in a fresh context. Only the files exist.
 
+Loops live at `.claude/loop/{issue-id}-{slug}/iteration-{n}/` — the issue id first, so a loop is traceable to the story it serves. **The code is not the loop's artifact folder.** Source stays in `src/` and tests in `tests/`, and the loop points at them; an iteration folder holds the loop's own files and logs, nothing else.
+
 Two rules that are load-bearing and easy to get wrong:
 
 - **Define done by the object or the consumer — never by the producer.** "No new findings this pass" measures the agent's output and will never fire. "This number hasn't moved in N passes" measures the artifact. "The reader can act on this" measures the consumer.
@@ -82,4 +84,6 @@ In this repo. Do not use the cognitive-memory MCP tools as a store for Axiom pro
 
 ## Why v1 was scrapped
 
-M1–M8 shipped and worked — 53 modules, 558 tests, 10 spec folders, ~50 dryrun reports. It was too heavy for what it does. The architecture was sound and Kaushik retains it; the process weight is what's being left behind. Minimalism is the constraint, not a preference.
+M1–M8 shipped and worked — 53 modules, 558 tests, 10 spec folders, ~50 dryrun reports. It was too heavy for what it does. The architecture was sound and Kaushik retains it; the process weight is what's being left behind.
+
+**KISS, not asceticism.** "Minimal" means no unearned structure — no ports and adapters before there are two of anything, no spec ceremony around a hundred-line program. It does not mean writing things a good library already does. Reach for the library.
