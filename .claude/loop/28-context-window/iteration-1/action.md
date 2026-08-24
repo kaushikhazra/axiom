@@ -1,13 +1,11 @@
 # Action
 
-Cycle 1 proved both queries work and left the two real numbers sitting side by side, unused. Compute the minimum and actually apply it.
+Three criteria left, all untested paths rather than unwritten code: AC 6 (memory undeterminable), AC 8 (restart re-queries), AC 9 (both fail together).
 
-Replace the `[cycle-1 debug]` print lines. Compute `min(model_max_context, int(0.70 * available_memory-derived token budget))` — but note the two values are not directly comparable: `model_max_context` is a token count, `available_memory()` is bytes. Converting bytes of available memory into an equivalent token budget requires a per-token memory cost, which depends on the model's own architecture (layers, heads, head dimension) — the same `model_info` response from cycle 1 has these fields (e.g. `qwen2.block_count`, `qwen2.attention.head_count`, `qwen2.attention.head_count_kv`, `qwen2.attention.key_length`). Work out the KV-cache-per-token formula from those fields before computing anything, and show the arithmetic in the cycle log — do not guess a conversion factor.
+Force `available_memory()` to actually fail — monkeypatch `psutil.virtual_memory` to raise, confirm `available_memory()` returns `None` rather than propagating, and confirm the program still starts and shows "Ollama default" (or a memory-only-blind context, if the model side still resolves) rather than crashing. Do the same for the model side already covered by AC 5's transcript, but now force *both* to fail in the same run for AC 9 — confirm a single combined "Ollama default" run, not two separate near-misses.
 
-Wire the result into the chat call via `options={"num_ctx": ...}`. Replace the startup line so it shows the effective context length alongside model and host (AC 4) — not a debug line, the real one.
+For AC 8, produce two consecutive runs on this machine with different `--model` values whose max context differs (e.g. `qwen2.5:7b` vs `ornith:9b`, 32768 vs 262144) and show the startup line's context figure actually changes between them — proving the query re-runs rather than caching or hardcoding from the first run.
 
-Handle both `None` cases: if either query fails or the model reports no max, do not pass `num_ctx` at all — let Ollama use its own default, per `assumption.md`.
+Prefer unit tests with a fake client/psutil over more scratch scripts where the previous cycles' pattern already fits — AC 6 and AC 9 are exactly the shape `tests/test_interrupt.py`'s `FakeClient` already handles (a fake that raises where the real thing would raise); extend it or add a sibling test module rather than another proxy.
 
-Target AC 2, 3, 4, and the `None`-handling half of AC 5/6 (the failure-*trigger* half — forcing an actual failure and confirming the fallback — can wait for a later cycle if this one runs long).
-
-Evidence to produce: the computed effective context length for `qwen2.5:7b` on this machine, shown in the new startup line · the arithmetic that produced it, so the number is checkable, not asserted · a regression run confirming chat still works with `num_ctx` set.
+When all 9 are met, this iteration is done — say so plainly in the log, push the branch, and prepare the same handoff shape #26 used (PR, evidence summary) rather than inventing a new one.

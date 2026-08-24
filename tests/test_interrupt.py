@@ -19,7 +19,13 @@ class FakeClient:
         self.host = host
         self.calls: list[list[dict[str, str]]] = []
 
-    def chat(self, model, messages, stream):  # noqa: ANN001, ARG002
+    def show(self, model):  # noqa: ANN001, ARG002
+        # Empty model_info: these tests are about interrupt behaviour, not
+        # context sizing, so this exercises the same "Ollama default" path
+        # a real unknown-context model would.
+        return type("Info", (), {"modelinfo": {}})()
+
+    def chat(self, model, messages, stream, options=None):  # noqa: ANN001, ARG002
         self.calls.append([dict(m) for m in messages])
         if len(self.calls) == 1:
             return self._interrupted_stream()

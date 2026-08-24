@@ -11,20 +11,71 @@ import psutil
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5:7b"
 EXIT_COMMANDS = {"/exit", "/quit"}
+SAFE_MEMORY_FRACTION = 0.70
+KV_CACHE_BYTES_PER_VALUE = 2  # Ollama's default KV cache precision (f16)
 
 
-def model_max_context(client: ollama.Client, model: str) -> int | None:
-    """The model's own reported max context length, or None if it doesn't say."""
-    info = client.show(model).modelinfo or {}
+def model_info_for(client: ollama.Client, model: str) -> dict | None:
+    """The model's raw model_info, or None if Ollama can't be reached or asked."""
+    try:
+        return client.show(model).modelinfo or {}
+    except (ollama.ResponseError, ConnectionError, httpx.HTTPError):
+        return None
+
+
+def _find(info: dict, suffix: str):
     for key, value in info.items():
-        if key.endswith(".context_length"):
-            return int(value)
+        if key.endswith(suffix):
+            return value
     return None
+
+
+def model_max_context(info: dict) -> int | None:
+    """The model's own reported max context length, or None if it doesn't say."""
+    value = _find(info, ".context_length")
+    return int(value) if value is not None else None
+
+
+def kv_cache_bytes_per_token(info: dict) -> int | None:
+    """Bytes of KV cache one token of context costs, at Ollama's default f16 cache.
+
+    2 (K+V) x layers x kv_heads x head_dim x bytes_per_value. Prefers the model's
+    own reported key_length for head_dim over embedding_length / head_count - they
+    differ for architectures with shared or sliding-window attention (e.g. gemma4,
+    where key_length=512 but embedding_length/head_count=192). Overestimating this
+    only makes the resulting token budget more conservative, never less safe.
+    """
+    num_layers = _find(info, ".block_count")
+    num_kv_heads = _find(info, ".attention.head_count_kv")
+    head_dim = _find(info, ".attention.key_length")
+    if head_dim is None:
+        embedding_length = _find(info, ".embedding_length")
+        head_count = _find(info, ".attention.head_count")
+        if not embedding_length or not head_count:
+            return None
+        head_dim = embedding_length / head_count
+    if not num_layers or not num_kv_heads:
+        return None
+    return int(2 * num_layers * num_kv_heads * head_dim * KV_CACHE_BYTES_PER_VALUE)
 
 
 def available_memory() -> int | None:
     """Bytes of memory currently free on this machine, or None if unknown."""
-    return psutil.virtual_memory().available
+    try:
+        return psutil.virtual_memory().available
+    except Exception:
+        return None
+
+
+def memory_safe_context(info: dict, available_bytes: int | None) -> int | None:
+    """How many tokens of context fit in SAFE_MEMORY_FRACTION of available memory."""
+    if available_bytes is None:
+        return None
+    bytes_per_token = kv_cache_bytes_per_token(info)
+    if not bytes_per_token:
+        return None
+    budget_bytes = int(available_bytes * SAFE_MEMORY_FRACTION)
+    return budget_bytes // bytes_per_token
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -47,12 +98,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     client = ollama.Client(host=args.host)
-    print(f"axiom: {args.model} at {args.host}")
 
-    max_context = model_max_context(client, args.model)
-    free_memory = available_memory()
-    print(f"[cycle-1 debug] model max context: {max_context}")
-    print(f"[cycle-1 debug] available memory: {free_memory}")
+    info = model_info_for(client, args.model)
+    max_context = model_max_context(info) if info else None
+    safe_context = memory_safe_context(info, available_memory()) if info else None
+    candidates = [c for c in (max_context, safe_context) if c is not None]
+    effective_context = min(candidates) if candidates else None
+
+    chat_options = (
+        {"num_ctx": effective_context} if effective_context is not None else None
+    )
+    context_note = (
+        f"{effective_context} tokens"
+        if effective_context is not None
+        else "Ollama default"
+    )
+    print(f"axiom: {args.model} at {args.host} (context: {context_note})")
 
     messages: list[dict[str, str]] = []
 
@@ -72,7 +133,9 @@ def main(argv: list[str] | None = None) -> None:
         messages.append({"role": "user", "content": line})
         reply = ""
         try:
-            for chunk in client.chat(model=args.model, messages=messages, stream=True):
+            for chunk in client.chat(
+                model=args.model, messages=messages, stream=True, options=chat_options
+            ):
                 piece = chunk.message.content or ""
                 reply += piece
                 print(piece, end="", flush=True)
