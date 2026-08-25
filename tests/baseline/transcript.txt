@@ -41,7 +41,7 @@ error: this message is about 538 tokens too large to send - try a shorter one
 
 --- ending --- returned normally (exit status 0)
 
-=== the conversation outgrows what is left and says a new session is needed ===
+=== the conversation outgrows what is left, so the oldest of it is let go ===
 --- stdout ---
 axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 7 tools including web)
 > a reply
@@ -67,15 +67,27 @@ axiom: the summary is full - forgetting 17:
   | - fact 19 the user mentioned earlier
   | - fact 20 the user mentioned earlier
   | - fact 21 the user mentioned earlier
-> axiom: compacting older history (everything)
-> axiom: compacting older history (everything)
-> axiom: compacting older history (everything)
+axiom: compacting older history (everything)
+axiom: the summary is full - forgetting 13:
+  | - fact 0 the user mentioned earlier
+  | - fact 1 the user mentioned earlier
+  | - fact 2 the user mentioned earlier
+  | - fact 3 the user mentioned earlier
+  | - fact 4 the user mentioned earlier
+  | - fact 22 the user mentioned earlier
+  | - fact 23 the user mentioned earlier
+  | - fact 24 the user mentioned earlier
+  | - fact 25 the user mentioned earlier
+  | - fact 26 the user mentioned earlier
+  | - fact 27 the user mentioned earlier
+  | - fact 28 the user mentioned earlier
+  | - fact 29 the user mentioned earlier
+a reply
+> a reply
+> a reply
+> a reply
 > 
 --- stderr ---
-error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
-error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
-error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
-error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
 
 --- ending --- returned normally (exit status 0)
 

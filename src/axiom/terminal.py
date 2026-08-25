@@ -196,8 +196,18 @@ def report_too_large(over: int, cause: str = "message") -> None:
             file=sys.stderr,
         )
     elif cause == "conversation":
-        # The history is what tips it, and compaction has already squeezed it
-        # as far as the ladder goes. A shorter message would not help.
+        # Currently unreachable through `main()`, and deliberately kept.
+        #
+        # #42 cycle 4 added a last resort: when nothing on the ladder fits, the
+        # summary is let go and the session carries on. Its guard is exactly
+        # this case's condition, so wherever the conversation would have been
+        # the blocker the session is rescued instead of refused. Swept 35
+        # context/message-size combinations and only "message" was ever
+        # reached.
+        #
+        # Kept because AC 5 names the conversation as something this should be
+        # able to say, and because the alternative is that a later change to
+        # that guard has no message for the case at all.
         print(
             f"error: the conversation so far is about {over} tokens too large "
             f"to send, and it has already been compacted as far as it goes - "

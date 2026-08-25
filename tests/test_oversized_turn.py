@@ -187,6 +187,92 @@ def test_a_short_message_is_never_refused_when_the_context_allows_one(
     assert err.count("too large") <= 1, "short messages kept being refused"
 
 
+def test_a_session_at_the_wall_lets_the_summary_go_and_carries_on(monkeypatch, capsys):
+    """AC 4, in the band cycle 3 found it broken.
+
+    Context above the floor but below roughly twice it. Before this: four turns
+    worked, then four consecutive refusals of 80-character messages, each
+    preceded by a re-compaction that achieved nothing. That is exactly "a state
+    where every message, however short, is refused".
+    """
+    backend = Watched(
+        info={"qwen2.context_length": 350},
+        usage=1,
+        summary="\n".join(f"- fact {n} the user mentioned earlier" for n in range(30)),
+    )
+    feed(monkeypatch, ["please tell me a little more about that " * 2] * 10 + ["/exit"])
+
+    axiom.main([], using=backend)
+    out, err = capsys.readouterr()
+
+    assert err == "", "the session still refuses"
+    assert out.count("a reply") == 10, "not every message was answered"
+
+
+def test_the_facts_let_go_are_named_one_by_one(monkeypatch, capsys):
+    """AC 4 and AC 8 together.
+
+    This path drops more at once than any other, which makes saying so more
+    important rather than less. #32 exists because a long session must never
+    lose information silently.
+    """
+    backend = Watched(
+        info={"qwen2.context_length": 350},
+        usage=1,
+        summary="\n".join(f"- fact {n} the user mentioned earlier" for n in range(30)),
+    )
+    feed(monkeypatch, ["please tell me a little more about that " * 2] * 10 + ["/exit"])
+
+    axiom.main([], using=backend)
+    out = capsys.readouterr().out
+
+    assert "the summary is full - forgetting" in out
+    assert "- fact 29 the user mentioned earlier" in out, "facts went unnamed"
+
+
+def test_history_is_not_thrown_away_when_the_message_is_the_problem(
+    monkeypatch, capsys
+):
+    """The cold check on the fix itself.
+
+    If the message the user just typed is what will not fit, dropping the
+    conversation buys nothing and costs everything. The last resort only fires
+    when an empty history would actually fit.
+    """
+    backend = Watched(
+        info={"qwen2.context_length": 1200},
+        usage=1,
+        summary="- the user's cat is called Biscuit",
+    )
+    feed(
+        monkeypatch,
+        ["my cat is called Biscuit", "x" * 6000, "what is my cat called?", "/exit"],
+    )
+
+    axiom.main([], using=backend)
+    out, err = capsys.readouterr()
+
+    assert "this message is about" in err, (
+        "the oversized message was not the reported cause"
+    )
+    last = backend.streamed[-1]
+    assert any("Biscuit" in (m.get("content") or "") for m in last), (
+        "the conversation was thrown away over a message that was too large"
+    )
+
+
+def test_a_comfortable_session_never_drops_its_summary(monkeypatch, capsys):
+    """The negative. This path fires only when the ladder is exhausted."""
+    backend = Watched(info={"qwen2.context_length": 32768}, usage=1)
+    feed(monkeypatch, ["hello", "and another thing", "/exit"])
+
+    axiom.main([], using=backend)
+    out = capsys.readouterr().out
+
+    assert "forgetting" not in out
+    assert backend.compactions == 0
+
+
 # --- AC 5 and AC 6: what the user is told -----------------------------------
 
 

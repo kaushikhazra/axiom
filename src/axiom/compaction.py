@@ -292,6 +292,8 @@ def compact_to_fit(
         return messages, None, []
 
     limit = summary_limit(effective_context)
+    everything: list[dict[str, str]] | None = None  # the kept_pairs=0 rung
+    already_dropped: list[str] = []
     for kept_pairs in KEPT_PAIRS_LADDER:
         candidate = compacted_history(backend, model, messages, kept_pairs)
         if candidate is messages:
@@ -301,8 +303,29 @@ def compact_to_fit(
             trimmed, dropped = bounded(candidate[0]["content"], limit)
             if dropped:
                 candidate = [{"role": "system", "content": trimmed}, *candidate[1:]]
+        if kept_pairs == 0:
+            everything, already_dropped = candidate, dropped
         if _payload_tokens(candidate, overhead) <= effective_context:
             return candidate, kept_pairs, dropped
+
+    # Nothing on the ladder fits, so what will not fit is the summary itself.
+    # Letting it go is the only move left that keeps the session usable, and
+    # #42 AC 4 forbids a state where every message, however short, is refused.
+    # Measured before this existed: four turns worked, then four consecutive
+    # refusals of 80-character messages, each preceded by a re-compaction that
+    # achieved nothing.
+    #
+    # Reported through the same forgotten-facts path as every other loss. This
+    # drops more at once than anything else does, which makes saying so more
+    # important rather than less - #32 exists because a long session must never
+    # lose information *silently*.
+    #
+    # Only when the history is genuinely what is in the way. If an empty
+    # history still would not fit, the prompt and this message alone are over
+    # and throwing the conversation away would buy nothing.
+    if everything is not None and _payload_tokens([], overhead) <= effective_context:
+        header, *facts = everything[0]["content"].splitlines()
+        return [], 0, [*already_dropped, *facts]
     return messages, None, []
 
 

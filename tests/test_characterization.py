@@ -258,7 +258,7 @@ def _scenarios() -> list[tuple]:
         # context in tokens, so prompt + summary only exceeds the context while
         # the context is under roughly twice the prompt's cost.
         (
-            "the conversation outgrows what is left and says a new session is needed",
+            "the conversation outgrows what is left, so the oldest of it is let go",
             # Short enough that the message is never the bulk - what tips it is
             # the history behind it, once compaction has squeezed that as far
             # as the ladder goes.
