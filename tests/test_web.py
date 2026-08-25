@@ -470,7 +470,7 @@ def test_only_a_page_that_was_really_read_counts_as_a_source(result, expected):
 def test_an_unreadable_page_is_not_named_among_the_sources(monkeypatch, capsys):
     """#40 AC 11, end to end rather than at the seam."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(monkeypatch, body=PNG_BYTES, content_type="image/png")
     feed(monkeypatch, ["read it", "/exit"])
@@ -483,7 +483,7 @@ def test_an_unreadable_page_is_not_named_among_the_sources(monkeypatch, capsys):
 def test_an_empty_page_is_not_named_among_the_sources(monkeypatch, capsys):
     """#40 AC 8 and AC 11: reached, but with nothing in it to cite."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(monkeypatch, "", content_type="text/plain")
     feed(monkeypatch, ["read it", "/exit"])
@@ -496,7 +496,7 @@ def test_an_empty_page_is_not_named_among_the_sources(monkeypatch, capsys):
 def test_a_plain_text_page_that_was_read_is_named(monkeypatch, capsys):
     """#40 AC 10: it was read, so it is a source like any other."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(monkeypatch, SOURCE, content_type="text/plain")
     feed(monkeypatch, ["read it", "/exit"])
@@ -585,7 +585,7 @@ def a_fetch_call(url: str = PAGE):
 def test_the_query_is_shown_before_a_search_runs(monkeypatch, capsys):
     """AC 13."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_results(monkeypatch, [{"title": "T", "href": "https://x/y", "body": "b"}])
     feed(monkeypatch, ["find out", "/exit"])
@@ -598,7 +598,7 @@ def test_the_query_is_shown_before_a_search_runs(monkeypatch, capsys):
 def test_the_address_is_shown_before_a_page_is_fetched(monkeypatch, capsys):
     """AC 14."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(
         monkeypatch,
@@ -614,7 +614,7 @@ def test_the_address_is_shown_before_a_page_is_fetched(monkeypatch, capsys):
 def test_fetched_content_is_marked_apart_from_axioms_words(monkeypatch, capsys):
     """AC 15."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(
         monkeypatch,
@@ -635,7 +635,7 @@ def test_fetched_content_is_marked_apart_from_axioms_words(monkeypatch, capsys):
 def test_a_page_becomes_part_of_the_conversation(monkeypatch, capsys):
     """AC 25: a later turn can refer to what was read."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(
         monkeypatch,
@@ -701,7 +701,7 @@ def test_with_no_network_the_web_fails_plainly_and_chat_still_works(
     be broken in a way the user cannot fix.
     """
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_search_raises(monkeypatch, OSError("getaddrinfo failed"))
     given_page(monkeypatch, raises=httpx.ConnectError("getaddrinfo failed"))
@@ -718,7 +718,7 @@ def test_with_no_network_the_web_fails_plainly_and_chat_still_works(
 def test_the_web_tools_are_absent_when_the_web_is_switched_off(monkeypatch, capsys):
     """AC 29: and the other tools survive it."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     backend = StubBackend(turns=[["hello"]])
     feed(monkeypatch, ["hi", "/exit"])
@@ -754,7 +754,7 @@ def test_an_interrupt_during_a_fetch_is_not_swallowed(monkeypatch):
 def test_a_cancelled_fetch_leaves_the_session_usable(monkeypatch, capsys):
     """AC 24: stops it and returns to the prompt."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(monkeypatch, raises=KeyboardInterrupt())
     backend = StubBackend(turns=[[a_fetch_call()], ["second answer"]])
@@ -770,7 +770,7 @@ def test_a_cancelled_fetch_leaves_the_session_usable(monkeypatch, capsys):
 def test_a_cancelled_fetch_leaves_nothing_of_the_turn_in_history(monkeypatch, capsys):
     """The same all-or-nothing rule #34 established for tools generally."""
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(monkeypatch, raises=KeyboardInterrupt())
     backend = StubBackend(turns=[[a_fetch_call()], ["second answer"]])
@@ -779,7 +779,9 @@ def test_a_cancelled_fetch_leaves_nothing_of_the_turn_in_history(monkeypatch, ca
     axiom.main([], using=backend)
     capsys.readouterr()
 
-    assert [m["content"] for m in backend.streamed[1]] == ["ask something else"]
+    assert [m["content"] for m in history(backend.streamed[1])] == [
+        "ask something else"
+    ]
 
 
 def test_read_file_sends_a_web_address_to_the_right_tool():
@@ -808,7 +810,7 @@ def test_a_local_path_is_still_read_normally(tmp_path):
 
 def run_turn(monkeypatch, capsys, turns, lines=None):
     import axiom
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     feed(monkeypatch, lines or ["go", "/exit"])
     axiom.main([], using=StubBackend(turns=turns))
@@ -915,7 +917,7 @@ def test_sources_do_not_carry_over_to_the_next_answer(monkeypatch, capsys):
     same false claim, one turn removed."""
     import axiom
     from axiom.backend import Call
-    from conftest import StubBackend, feed
+    from conftest import StubBackend, feed, history
 
     given_page(
         monkeypatch,

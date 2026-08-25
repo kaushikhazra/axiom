@@ -8,7 +8,7 @@ right messages get sent, and the reply comes back through untouched.
 """
 
 import axiom
-from conftest import StubBackend, feed
+from conftest import StubBackend, feed, history
 
 
 class RecordingBackend:
@@ -201,12 +201,12 @@ def test_maybe_compact_still_compacts_older_pairs_even_when_kept_pairs_dominate(
 def test_main_prints_visibility_line_when_compaction_triggers(monkeypatch, capsys):
     """AC 9: the user is told when compaction happens.
 
-    context_length=200, threshold=180. The first turn's fake response
-    reports usage=190 - over threshold - so the SECOND input (checked
+    context_length=1000, threshold=900. The first turn's fake response
+    reports usage=950 - over threshold - so the SECOND input (checked
     before sending) is the one that should trigger compaction.
     """
     backend = StubBackend(
-        info={"qwen2.context_length": 200}, usage=190, summary="a short summary"
+        info={"qwen2.context_length": 1000}, usage=950, summary="a short summary"
     )
     feed(monkeypatch, ["first message", "second message", "/exit"])
 
@@ -220,7 +220,7 @@ def test_main_prints_visibility_line_when_compaction_triggers(monkeypatch, capsy
 
 def test_main_does_not_print_a_visibility_line_below_threshold(monkeypatch, capsys):
     backend = StubBackend(
-        info={"qwen2.context_length": 200},
+        info={"qwen2.context_length": 1000},
         usage=5,  # far under 180
         summary="should not be called",
     )
@@ -240,15 +240,15 @@ def test_compacted_history_persists_and_does_not_re_expand(monkeypatch, capsys):
     not recomputed fresh (and back to the original) each turn.
     """
     backend = StubBackend(
-        info={"qwen2.context_length": 200},
-        usage=190,
+        info={"qwen2.context_length": 1000},
+        usage=950,
         summary="THE-COMPACTED-SUMMARY-MARKER",
     )
     feed(monkeypatch, ["first message", "second message", "third message", "/exit"])
 
     axiom.main([], using=backend)
 
-    third_turn_messages = backend.streamed[2]
+    third_turn_messages = history(backend.streamed[2])
     assert third_turn_messages[0]["role"] == "system"
     assert "THE-COMPACTED-SUMMARY-MARKER" in third_turn_messages[0]["content"]
     assert not any(m["content"] == "first message" for m in third_turn_messages), (

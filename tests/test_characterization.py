@@ -29,6 +29,7 @@ import psutil
 import pytest
 
 import axiom
+from axiom import compaction
 from axiom.backend import Call
 from conftest import chunk, feed, vendor_call
 
@@ -110,7 +111,7 @@ class StubClient:
         info: dict | None = None,
         turns: list | None = None,
         summary: str = "a short summary",
-        prompt_eval_count: int = 1,
+        prompt_eval_count: int | None = None,
         show_raises: BaseException | None = None,
         capabilities: list[str] | None = None,
     ) -> None:
@@ -134,6 +135,22 @@ class StubClient:
     def chat(self, model, messages, stream=False, options=None, tools=None):  # noqa: ANN001, ARG002
         if not stream:
             return _reply(self.summary)
+        # A real prompt_eval_count follows the size of what was actually sent.
+        # A constant was harmless while every payload was small, and became a
+        # false truncation signal the moment #41 put a system prompt in every
+        # request - `looks_truncated` compares the estimate against this, so a
+        # stub that always says 1 claims every request was cut. That is the
+        # same class of fault #40 found in `given_page` announcing text/plain
+        # over HTML: a stub contradicting the thing under test.
+        #
+        # An explicit count still wins, for the scenarios that set one to drive
+        # compaction deliberately.
+        self.reported = (
+            self.prompt_eval_count
+            if self.prompt_eval_count is not None
+            else sum(len(m.get("content") or "") for m in messages)
+            // compaction.SAFE_CHARS_PER_TOKEN
+        )
         actions = (
             self.turns[self.index] if self.index < len(self.turns) else ["a reply"]
         )
@@ -145,11 +162,9 @@ class StubClient:
             if isinstance(action, BaseException):
                 raise action
             if isinstance(action, Call):
-                yield chunk(
-                    "", self.prompt_eval_count, 0, tool_calls=[vendor_call(action)]
-                )
+                yield chunk("", self.reported, 0, tool_calls=[vendor_call(action)])
                 continue
-            yield chunk(action, self.prompt_eval_count, 0)
+            yield chunk(action, self.reported, 0)
 
 
 def _run(
@@ -233,8 +248,8 @@ def _scenarios() -> list[tuple]:
         (
             "compaction fires and says so",
             ["first message", "second message", "/exit"],
-            StubClient(prompt_eval_count=190),
-            "200",
+            StubClient(prompt_eval_count=950),
+            "1000",
         ),
         (
             "a model error mid-turn",
@@ -316,12 +331,12 @@ def _scenarios() -> list[tuple]:
             "the summary reaches its bound and facts are let go",
             ["first message", "second message", "third message", "/exit"],
             StubClient(
-                prompt_eval_count=190,
+                prompt_eval_count=950,
                 summary="\n".join(
                     f"- fact {n} the user mentioned some turns ago" for n in range(40)
                 ),
             ),
-            "200",
+            "1000",
         ),
         (
             "a call the model announced as text, not as a call",

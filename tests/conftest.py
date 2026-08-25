@@ -117,6 +117,16 @@ def vendor_call(call: Call):
     )()
 
 
+def history(sent: list[dict[str, str]]) -> list[dict[str, str]]:
+    """One sent turn, minus the standing instructions at index 0.
+
+    `main` prepends a system prompt to every request (#41), holding it outside
+    `messages` so compaction never treats it as a carried-forward summary. A
+    test about what the *conversation* contains wants everything after it.
+    """
+    return sent[1:]
+
+
 def feed(monkeypatch, lines: list) -> None:
     """Script what the user types. An exception in the list is raised instead."""
     supply = iter(lines)
