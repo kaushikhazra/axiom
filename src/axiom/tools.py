@@ -124,8 +124,66 @@ def search_web(query: str, limits: "Limits" = None) -> str:
     )
 
 
+# Types whose body is markup to be reduced, not content to be kept.
+HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+
+# Text that does not arrive under `text/`. Raw hosts serve markdown, rst, csv
+# and javascript all as `text/plain`, but other hosts announce them properly,
+# and a body is no less readable for being labelled precisely.
+TEXT_TYPES = frozenset(
+    {
+        "application/ecmascript",
+        "application/graphql",
+        "application/javascript",
+        "application/json",
+        "application/sql",
+        "application/toml",
+        "application/x-yaml",
+        "application/xml",
+        "application/yaml",
+    }
+)
+
+
+def _media_type(page: httpx.Response) -> str:
+    """The bare media type: lowercased, with any parameters removed.
+
+    Real headers arrive in three shapes and all three were measured:
+    `text/plain; charset=utf-8`, a bare `text/plain` with no parameter at all,
+    and `application/pdf; qs=0.001` - a parameter on a *binary* type, which is
+    why the split has to happen before anything compares.
+    """
+    return (page.headers.get("content-type") or "").split(";")[0].strip().lower()
+
+
+def _treat_as(media_type: str) -> str | None:
+    """How a body of this type is read: 'html', 'text', or None for neither.
+
+    None means not readable at all, and its bytes are never returned.
+
+    A body announcing no type is treated as text. Text is the only treatment
+    that can hand back exactly what was served: guessing HTML would run a
+    reducer over something that may not be markup, and guessing unreadable
+    would refuse a page that is most likely fine.
+    """
+    if not media_type:
+        return "text"
+    if media_type in HTML_TYPES:
+        return "html"
+    if media_type.startswith("text/"):
+        return "text"
+    if media_type in TEXT_TYPES or media_type.endswith(("+json", "+xml")):
+        return "text"
+    return None
+
+
 def fetch_page(url: str, limits: "Limits" = None) -> str:
-    """Fetch one page and return its readable text."""
+    """Fetch one page and return what it says.
+
+    Three outcomes, and the type decides which: markup is reduced to its prose,
+    text is returned as it was served, and anything else is refused without its
+    bytes ever being read.
+    """
     limits = limits or DEFAULT_LIMITS
     try:
         page = httpx.get(url, timeout=limits.fetch_timeout, follow_redirects=True)
@@ -140,9 +198,51 @@ def fetch_page(url: str, limits: "Limits" = None) -> str:
     if page.status_code >= 400:
         return f"error: {url} answered {page.status_code}"
 
-    text = trafilatura.extract(page.text)
-    if not text:
-        return f"error: {url} has no readable text"
+    media_type = _media_type(page)
+    treatment = _treat_as(media_type)
+
+    # Decided before anything touches `page.text`, deliberately: decoding a PNG
+    # returns control characters rather than raising, and a PDF decodes into
+    # something that looks enough like text to pass a careless eye. Neither is
+    # ever allowed to become content, at any length.
+    if treatment is None:
+        return f"error: {url} is {media_type} - not readable as text"
+
+    # Reached, and there was nothing in it. Not a failure: nothing went wrong,
+    # and "nothing" is a true answer about a page that really was served.
+    if not page.content:
+        return f"warning: {url} is empty"
+
+    if treatment == "html":
+        text = trafilatura.extract(page.text)
+        # Distinct from empty above, and deliberately a different message: this
+        # page had a body, it just carried no prose - navigation, script, or
+        # markup with nothing to say.
+        if not text:
+            return f"error: {url} has no readable text"
+    else:
+        # Verbatim. `trafilatura.extract` joins paragraphs and drops chrome,
+        # which is right for markup and wrong here - in a source file the line
+        # breaks and the indentation *are* the content.
+        text = page.text
+
+        # A page announcing no type is *judged by its content*, not assumed
+        # readable - so a body that is not text is refused even though the
+        # missing header sent it down this branch. A NUL is the same test
+        # `file` and git use: binary formats carry them and text does not.
+        #
+        # Read from the decoded text rather than the raw bytes deliberately.
+        # utf-16 is half zero bytes and would fail a raw check, but decodes
+        # through its declared charset into ordinary text with no NUL in it.
+        #
+        # Applied to every text body, not only the typeless one. A server that
+        # announces `text/plain` over a PNG is lying, and the cost of not
+        # believing it is nothing: real text does not contain NUL.
+        if "\x00" in text:
+            return f"error: {url} is binary - not readable as text"
+
+        if not text.strip():
+            return f"warning: {url} is empty"
 
     if len(text) > limits.page_characters:
         withheld = len(text) - limits.page_characters
@@ -151,6 +251,22 @@ def fetch_page(url: str, limits: "Limits" = None) -> str:
             + f"\n\n[cut here - {withheld} more characters not included]"
         )
     return text
+
+
+# Prefixes are this module's format, so the test for them lives here beside the
+# code that writes them - the same reason `addresses_in` sits next to the
+# search format it parses.
+NOT_A_SOURCE = ("error:", "warning:")
+
+
+def was_read(result: str) -> bool:
+    """Whether a `fetch_page` result means the page was actually read.
+
+    Two of the three outcomes are not a source: a failure, and a page that was
+    reached and found empty. An empty page is not an error - nothing went
+    wrong - but there is nothing in it to cite either.
+    """
+    return not result.startswith(NOT_A_SOURCE)
 
 
 def addresses_in(result: str) -> list[str]:

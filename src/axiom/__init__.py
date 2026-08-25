@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                 for call in calls:
                     terminal.note_tool(call.name, call.arguments)
                     result = tools.run(call.name, call.arguments, limits)
-                    if call.name == "fetch_page" and not result.startswith("error:"):
+                    if call.name == "fetch_page" and tools.was_read(result):
                         read.append(str(call.arguments.get("url")))
                     elif call.name == "search_web":
                         seen.extend(tools.addresses_in(result))

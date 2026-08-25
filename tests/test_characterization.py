@@ -71,7 +71,15 @@ class StubSearch:
 def stub_fetch(url, timeout=None, follow_redirects=None):  # noqa: ANN001, ARG001
     if "unreachable" in url:
         raise httpx.ConnectError("connection refused")
-    return httpx.Response(200, text=FIXED_PAGE, request=httpx.Request("GET", url))
+    # The type is announced because `FIXED_PAGE` is HTML and a real server says
+    # so. Without it `httpx.Response(text=...)` stamps `text/plain`, and the
+    # transcript would record raw markup as though that were the behaviour.
+    return httpx.Response(
+        200,
+        text=FIXED_PAGE,
+        headers={"content-type": "text/html"},
+        request=httpx.Request("GET", url),
+    )
 
 
 # Fixed so the memory-derived context budget cannot vary with the machine.

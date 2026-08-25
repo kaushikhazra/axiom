@@ -40,13 +40,39 @@ def given_search_raises(monkeypatch, failure):
     monkeypatch.setattr(tools.ddgs, "DDGS", Stub)
 
 
-def given_page(monkeypatch, html="", status=200, raises=None, seen=None):
+def given_page(
+    monkeypatch,
+    html="",
+    status=200,
+    raises=None,
+    seen=None,
+    content_type="text/html",
+    body=None,
+):
+    """A stubbed response.
+
+    `content_type` defaults to `text/html` because every caller that passes
+    `html` means HTML, and because that is what a real server sends for one -
+    measured. It is not cosmetic: without it `httpx.Response(text=...)` stamps
+    `text/plain; charset=utf-8` on the response, so an HTML test would be
+    announcing plain text and the type branch could never be exercised either
+    way. Pass `content_type=None` for a response that announces no type at all.
+
+    `body` takes raw bytes, for the types that are not text at all.
+    """
+
     def fake_get(url, timeout=None, follow_redirects=None):  # noqa: ANN001
         if seen is not None:
             seen.update({"url": url, "timeout": timeout})
         if raises is not None:
             raise raises
-        return httpx.Response(status, text=html, request=httpx.Request("GET", url))
+        headers = {} if content_type is None else {"content-type": content_type}
+        request = httpx.Request("GET", url)
+        if body is not None:
+            return httpx.Response(
+                status, content=body, headers=headers, request=request
+            )
+        return httpx.Response(status, text=html, headers=headers, request=request)
 
     monkeypatch.setattr(tools.httpx, "get", fake_get)
 
@@ -219,6 +245,267 @@ def test_the_fetch_timeout_reaches_the_request(monkeypatch):
     assert seen["timeout"] == 7
 
 
+# --- #40: a page that is not HTML -------------------------------------------
+
+SOURCE = 'def greet(name):\n    if name:\n        return "hi"\n\n    return "hello"\n'
+
+
+def test_a_plain_text_page_returns_its_contents(monkeypatch):
+    """#40 AC 1: the page said plenty; axiom used to call it empty."""
+    given_page(monkeypatch, SOURCE, content_type="text/plain; charset=utf-8")
+
+    result = fetch()
+
+    assert "def greet(name):" in result
+    assert not result.startswith("error:")
+
+
+def test_a_source_file_keeps_its_indentation_and_line_breaks(monkeypatch):
+    """#40 AC 2: in a source file the whitespace is the meaning.
+
+    `trafilatura.extract` joins paragraphs and drops chrome - correct for
+    markup, and the reason text must not be routed through it even to be
+    "normalised".
+    """
+    given_page(monkeypatch, SOURCE, content_type="text/plain; charset=utf-8")
+
+    assert fetch() == SOURCE
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "text/plain; charset=utf-8",  # what raw hosts send for all of these
+        "text/markdown",
+        "text/x-rst",
+        "text/csv",
+        "text/javascript",
+        "application/javascript",
+        "application/json",
+        "application/xml",
+        "image/svg+xml",  # the +xml suffix, not a listed type
+        "TEXT/PLAIN",  # media types are case-insensitive
+        "text/plain",  # no charset parameter at all - python.org/robots.txt
+    ],
+)
+def test_anything_that_is_text_is_read_the_same_way(monkeypatch, content_type):
+    """#40 AC 3: type says text, so it is read as text."""
+    given_page(monkeypatch, SOURCE, content_type=content_type)
+
+    assert fetch() == SOURCE
+
+
+def test_a_page_announcing_no_type_is_read_as_text(monkeypatch):
+    """#40 AC 7.
+
+    Text is the only treatment that can hand back exactly what was served.
+    Guessing HTML would run a reducer over something that may not be markup.
+    """
+    given_page(monkeypatch, SOURCE, content_type=None)
+
+    assert fetch() == SOURCE
+
+
+def test_a_typeless_page_that_is_not_text_is_still_refused(monkeypatch):
+    """#40 AC 7: *judged by its content*, not assumed readable.
+
+    Found by cycle 3's cold read of the criterion. Cycle 2 treated a missing
+    type as text unconditionally and only ever tested it with a text body, so
+    a typeless PNG had its bytes returned as content and counted as a source.
+    Defaulting to text is right; skipping the judgement is not.
+    """
+    given_page(monkeypatch, body=PNG_BYTES, content_type=None)
+
+    result = fetch()
+
+    assert result.startswith("error:")
+    assert "not readable" in result
+    assert "secret" not in result
+    assert "IHDR" not in result
+
+
+def test_a_server_lying_about_the_type_still_leaks_nothing(monkeypatch):
+    """#40 AC 6: believing the header is not required to be reckless.
+
+    `text/plain` announced over a PNG. Real text does not contain NUL, so the
+    cost of not believing it is nothing.
+    """
+    given_page(monkeypatch, body=PNG_BYTES, content_type="text/plain; charset=utf-8")
+
+    result = fetch()
+
+    assert result.startswith("error:")
+    assert "secret" not in result
+
+
+def test_utf16_text_is_not_mistaken_for_binary(monkeypatch):
+    """#40 AC 2, guarding the shape of the binary check.
+
+    utf-16 is half zero bytes, so a check against the *raw* body would refuse
+    perfectly good text. The check reads the decoded string instead, and this
+    test is what stops a later cycle "simplifying" it back onto the bytes.
+    """
+    body = "café\n    indented\nsecond line\n".encode("utf-16")
+    given_page(monkeypatch, body=body, content_type="text/plain; charset=utf-16")
+
+    assert fetch() == body.decode("utf-16")
+
+
+@pytest.mark.parametrize(
+    ("charset", "encoding"),
+    [("latin-1", "latin-1"), ("utf-8", "utf-8")],
+)
+def test_contents_survive_their_declared_charset(monkeypatch, charset, encoding):
+    """#40 AC 2: as they were served, whatever they were served in."""
+    body = "café naïve\n    indented\n".encode(encoding)
+    given_page(monkeypatch, body=body, content_type=f"text/plain; charset={charset}")
+
+    assert fetch() == body.decode(encoding)
+
+
+def test_windows_line_endings_are_left_alone(monkeypatch):
+    """#40 AC 2: the line breaks are the content, including how they end."""
+    body = b"line one\r\nline two\r\n\r\nline four\r\n"
+    given_page(monkeypatch, body=body, content_type="text/plain")
+
+    assert fetch() == body.decode()
+
+
+# A real PNG header, and bytes that decode into control characters rather than
+# raising - which is precisely why the type is checked before `page.text`.
+PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x02D\x00\x00\x00\xd0secret"
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["application/pdf; qs=0.001", "image/png", "application/zip", "audio/mpeg"],
+)
+def test_a_page_that_is_not_text_is_refused(monkeypatch, content_type):
+    """#40 AC 6: reported as not readable."""
+    given_page(monkeypatch, body=PNG_BYTES, content_type=content_type)
+
+    result = fetch()
+
+    assert result.startswith("error:")
+    assert "not readable" in result
+
+
+def test_the_bytes_of_an_unreadable_page_never_become_content(monkeypatch):
+    """#40 AC 6, the half that a message test would miss.
+
+    A tool can say "not readable" and still hand the model the bytes. #34's
+    timeout reported "stopped it" while the command kept running; this is the
+    same shape. Assert on what came back, not on what it says.
+    """
+    given_page(monkeypatch, body=PNG_BYTES, content_type="image/png")
+
+    result = fetch()
+
+    assert "secret" not in result
+    assert "PNG" not in result
+    assert "IHDR" not in result
+    assert len(result) < 200, "the body reached the model at some length"
+
+
+def test_an_empty_page_is_a_warning_rather_than_a_failure(monkeypatch):
+    """#40 AC 8: nothing went wrong - there was simply nothing there."""
+    given_page(monkeypatch, "", content_type="text/plain")
+
+    result = fetch()
+
+    assert "empty" in result
+    assert not result.startswith("error:")
+
+
+def test_a_page_of_only_whitespace_is_empty_too(monkeypatch):
+    """#40 AC 8: indistinguishable from nothing, and reported as nothing."""
+    given_page(monkeypatch, "   \n\n  \t\n", content_type="text/plain")
+
+    assert "empty" in fetch()
+
+
+def test_html_with_a_body_but_no_prose_still_says_no_readable_text(monkeypatch):
+    """#40 AC 5 against AC 8: a different case, kept a different message.
+
+    This page is not empty. It has a body - script and markup - that simply
+    carries nothing to read.
+    """
+    given_page(monkeypatch, "<html><body><script>var x = 1;</script></body></html>")
+
+    result = fetch()
+
+    assert "no readable text" in result
+    assert "empty" not in result
+
+
+def test_a_large_plain_text_page_is_cut_to_the_same_bound(monkeypatch):
+    """#40 AC 9: the same bound as any other page, and it says so."""
+    given_page(monkeypatch, "word " * 5000, content_type="text/plain")
+
+    result = fetch(limits=Limits(page_characters=500))
+
+    assert len(result) < 700, "the page was not cut"
+    assert "cut here" in result
+    assert "more characters not included" in result
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ("some real page content", True),
+        ("error: x is image/png - not readable as text", False),
+        ("error: could not reach x (refused)", False),
+        ("warning: x is empty", False),
+    ],
+)
+def test_only_a_page_that_was_really_read_counts_as_a_source(result, expected):
+    """#40 AC 10 and AC 11.
+
+    Three outcomes, two of which are not a source. The test lives beside the
+    code that writes the prefixes, for the reason `addresses_in` gives.
+    """
+    assert tools.was_read(result) is expected
+
+
+def test_an_unreadable_page_is_not_named_among_the_sources(monkeypatch, capsys):
+    """#40 AC 11, end to end rather than at the seam."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(monkeypatch, body=PNG_BYTES, content_type="image/png")
+    feed(monkeypatch, ["read it", "/exit"])
+
+    axiom.main([], using=StubBackend(turns=[[a_fetch_call()], ["Not readable."]]))
+
+    assert "read:" not in capsys.readouterr().out
+
+
+def test_an_empty_page_is_not_named_among_the_sources(monkeypatch, capsys):
+    """#40 AC 8 and AC 11: reached, but with nothing in it to cite."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(monkeypatch, "", content_type="text/plain")
+    feed(monkeypatch, ["read it", "/exit"])
+
+    axiom.main([], using=StubBackend(turns=[[a_fetch_call()], ["It is empty."]]))
+
+    assert "read:" not in capsys.readouterr().out
+
+
+def test_a_plain_text_page_that_was_read_is_named(monkeypatch, capsys):
+    """#40 AC 10: it was read, so it is a source like any other."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(monkeypatch, SOURCE, content_type="text/plain")
+    feed(monkeypatch, ["read it", "/exit"])
+
+    axiom.main([], using=StubBackend(turns=[[a_fetch_call()], ["Read it."]]))
+
+    assert f"read: {PAGE}" in capsys.readouterr().out
+
+
 # --- independence -----------------------------------------------------------
 
 
@@ -313,7 +600,10 @@ def test_the_address_is_shown_before_a_page_is_fetched(monkeypatch, capsys):
     import axiom
     from conftest import StubBackend, feed
 
-    given_page(monkeypatch, "<html><body><article><p>" + "text " * 30 + "</p></article></body></html>")
+    given_page(
+        monkeypatch,
+        "<html><body><article><p>" + "text " * 30 + "</p></article></body></html>",
+    )
     feed(monkeypatch, ["read it", "/exit"])
 
     axiom.main([], using=StubBackend(turns=[[a_fetch_call()], ["done"]]))
@@ -328,7 +618,9 @@ def test_fetched_content_is_marked_apart_from_axioms_words(monkeypatch, capsys):
 
     given_page(
         monkeypatch,
-        "<html><body><article><p>" + "Distinctive sentence. " * 20 + "</p></article></body></html>",
+        "<html><body><article><p>"
+        + "Distinctive sentence. " * 20
+        + "</p></article></body></html>",
     )
     feed(monkeypatch, ["read it", "/exit"])
 
@@ -347,7 +639,9 @@ def test_a_page_becomes_part_of_the_conversation(monkeypatch, capsys):
 
     given_page(
         monkeypatch,
-        "<html><body><article><p>" + "Biscuit is ginger. " * 20 + "</p></article></body></html>",
+        "<html><body><article><p>"
+        + "Biscuit is ginger. " * 20
+        + "</p></article></body></html>",
     )
     backend = StubBackend(turns=[[a_fetch_call()], ["noted"]])
     feed(monkeypatch, ["read it", "/exit"])
@@ -473,9 +767,7 @@ def test_a_cancelled_fetch_leaves_the_session_usable(monkeypatch, capsys):
     assert "second answer" in out.out, "the session did not survive the interrupt"
 
 
-def test_a_cancelled_fetch_leaves_nothing_of_the_turn_in_history(
-    monkeypatch, capsys
-):
+def test_a_cancelled_fetch_leaves_nothing_of_the_turn_in_history(monkeypatch, capsys):
     """The same all-or-nothing rule #34 established for tools generally."""
     import axiom
     from conftest import StubBackend, feed
@@ -529,7 +821,9 @@ def test_pages_that_were_read_are_named(monkeypatch, capsys):
 
     given_page(
         monkeypatch,
-        "<html><body><article><p>" + "Content here. " * 20 + "</p></article></body></html>",
+        "<html><body><article><p>"
+        + "Content here. " * 20
+        + "</p></article></body></html>",
     )
     out = run_turn(
         monkeypatch,
@@ -591,7 +885,9 @@ def test_a_page_found_then_read_is_listed_only_as_read(monkeypatch, capsys):
     )
     given_page(
         monkeypatch,
-        "<html><body><article><p>" + "Real content. " * 20 + "</p></article></body></html>",
+        "<html><body><article><p>"
+        + "Real content. " * 20
+        + "</p></article></body></html>",
     )
     out = run_turn(
         monkeypatch,
