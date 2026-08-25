@@ -1,78 +1,60 @@
 # Action
 
-Write the classifier and the three outcomes. Cycle 1 measured everything this needs; the
-plan is in `logs/cycle-1.md` section 5 and is not to be re-derived.
+**Verify cold, then merge or fix.** Cycle 2 wrote twelve implementations and judged them
+met. This cycle is the external check `observe.md` requires, and its value comes entirely
+from not trusting cycle 2's reasoning.
 
-## 1. The classifier
+## 1. Read the criteria as written, not as remembered
 
-A small function in `tools.py` that turns a response into one of three answers: HTML, text,
-or not readable.
+`gh issue view 40` first. Read all twelve from GitHub **before** reading `logs/cycle-2.md`,
+and before reading the diff. Cycle 2's log is persuasive because its author wrote both the
+code and the verdict; reading it first is how that persuasion transfers.
 
-- Take `page.headers.get("content-type")`, split on `;`, first field, `.strip().lower()`.
-  Cycle 1 measured all three shapes this has to survive: `text/plain; charset=utf-8`, a bare
-  `text/plain`, and `application/pdf; qs=0.001`.
-- **HTML**: `text/html`, `application/xhtml+xml`.
-- **Text**: anything else under `text/`, plus the text-ish `application/*` types -
-  `application/json`, `application/javascript`, `application/xml`, and the `+json` / `+xml`
-  suffixes. Raw hosts serve markdown, rst, csv and javascript as `text/plain`, but other
-  hosts will not.
-- **Text**, also, when the header is missing or blank. That is Kaushik's decision in
-  `assumption.md`: text is the only treatment that can hand back exactly what was served.
-- **Not readable**: everything else.
+Then `git diff master...HEAD -- src/ tests/` and judge each criterion against the code.
 
-Test the classifier directly on header strings, including the three measured shapes, an
-absent header, an empty string, and an uppercase `TEXT/PLAIN`.
+## 2. Attack the four that are easiest to get wrong
 
-## 2. The three outcomes in `fetch_page`
+For each, try to construct a case that breaks it. A criterion survives by resisting an
+attack, not by having a test named after it.
 
-Order is load-bearing. `httpx.get` and the `status_code >= 400` guard do not move - AC 12
-depends on that, and cycle 1 recorded the four strings it protects.
+- **AC 6.** The bytes must never come back. Try `text/plain` announced on a body that is
+  actually binary; a type of `application/octet-stream`; a `+xml` suffix on something
+  binary, since `image/svg+xml` is deliberately routed to text. Does any of them return
+  bytes? If a hostile server can get a payload through by lying about the type, say so - the
+  criterion says *served as*, so believing the header may be correct, but the reasoning must
+  be written down rather than assumed.
+- **AC 2.** Exact equality is asserted for a utf-8 body. What about a body whose charset is
+  something else, or one with `\r\n` line endings? `page.text` decodes by the announced
+  charset. Does "as they were served" still hold?
+- **AC 9.** The cut is measured in characters against `page_characters`. Confirm the message
+  is the same one HTML gets, and that a multi-byte body does not cut mid-character.
+- **AC 12.** Re-run `.tmp/probe_ac12.py` and diff against the four strings quoted in
+  `logs/cycle-1.md`. They are quoted there exactly for this purpose.
 
-- **HTML** - today's path unchanged: `trafilatura.extract(page.text)`, and the existing
-  `error: {url} has no readable text` when it returns None. AC 4 and AC 5 are preserved by
-  not touching this branch.
-- **Text** - `page.text` verbatim. No extraction. Indentation and line breaks survive,
-  which is AC 2. Then the existing `page_characters` cut with its existing
-  `[cut here - N more characters not included]` message, which is AC 9.
-- **Not readable** - return an `error:` naming the type, and **never access `page.text`**.
-  Not truncated, not decoded, not sampled. Cycle 1 confirmed `page.text` returns
-  `'�PNG\r\n\x1a\n…'` for a PNG without raising, so this is a real path to guard, not a
-  theoretical one.
+## 3. Re-run everything
 
-**Empty**, across both readable branches: a body that is empty or only whitespace returns
-`warning: {url} is empty`. Not an error. An HTML body that has content but no extractable
-prose keeps today's `error: … has no readable text` - AC 5 and AC 8 are different cases and
-stay different messages.
+- Full suite and the hermeticity command. 223 is the floor.
+- `diff .tmp/transcript-baseline-cycle1.txt tests/baseline/transcript.txt` - must be silent.
+- `.tmp/probe_types.py` for the live sweep, and `.tmp/probe_no_type.py` for AC 7.
 
-## 3. The source seam
+## 4. Then take the exit
 
-Decided in cycle 1 section 4, on the precedent of `addresses_in()` in the same module:
-*"Parser and format live together deliberately; splitting them is how one drifts from the
-other."*
+**If all twelve hold:** `loop.md` exit 1. Commit, push, open a PR referencing #40, merge it,
+delete the branch. Then in the same run: delete the cron, mark #40 done in `queue.md` with
+the PR number and cycle count, and scaffold row 6 - #41, `41-limits-and-place` - per the
+handover procedure. **That scaffold states decisions, never questions** - if #41's criteria
+contain something ambiguous, settle it there with the reasoning recorded, exactly as this
+loop settled AC 6, AC 7 and AC 8.
 
-- A named function in `tools.py` answers whether a `fetch_page` result means the page was
-  read. It knows about both prefixes because it sits beside the code that writes them.
-- `__init__.py` calls it instead of testing `not result.startswith("error:")` itself.
-- Do not widen this to other tools and do not generalise it for #43. Cycle 1 established
-  that #43 does not pressure this decision - the call site is already gated on
-  `call.name == "fetch_page"`.
-
-## 4. Prove it, and prove nothing else moved
-
-- Unit tests for each branch, with stubbed responses, asserting on **what the function
-  returned** - never on what was printed. AC 6's test asserts the PNG's bytes appear nowhere
-  in the result, not that the message says "not readable".
-- Run the four AC 12 probes again and diff against the strings in cycle 1's log. They are
-  quoted there exactly.
-- Full suite and the hermeticity command. 193 is the floor; it should only grow.
-- `diff` the golden transcript against `.tmp/transcript-baseline-cycle1.txt`. If it moved,
-  say which lines and why, and only regenerate deliberately with `AXIOM_WRITE_BASELINE=1`.
+**If any criterion does not hold:** do not merge. Fix it, record what the cold read caught
+that cycle 2 missed, and write cycle 4's action. A criterion the author's own cycle called
+met and a fresh read overturned is the most valuable thing this loop can produce - say so
+plainly rather than quietly correcting it.
 
 ## Record
 
-Status for all 12. AC 1, 2, 3, 6, 7 and 9 should reach `met-with-evidence` this cycle if the
-branches land; AC 8, 10 and 11 depend on the source seam and may follow in cycle 3. Then
-write cycle 3's `action.md`.
+Status for all 12, judged against the criteria text rather than against cycle 2's table.
+Where a verdict differs from cycle 2's, say which reading was wrong and why.
 
-**Write no questions into it.** Decide, record the decision and the reasoning in the log,
-carry on. Nobody is reading between firings.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry
+on. Nobody is reading between firings.

@@ -50,6 +50,12 @@ tests, green and hermetic** at scaffold time.
 - **`tests/test_web.py` already covers the HTML paths**, including the four failures AC 12
   protects: unreachable address, error status, fetch past the time limit, cancelled fetch.
   Those tests are the AC 12 evidence if they still pass unchanged.
+- **`httpx.Response(status, text=...)` stamps `content-type: text/plain; charset=utf-8`**
+  (cycle 2). Every HTML stub in the suite was built that way, so for as long as `fetch_page`
+  ignored the header they were announcing plain text while serving markup - and the suite
+  could not have caught a content-type mistake in either direction. `given_page` and
+  `stub_fetch` now set the header explicitly. **Any new stubbed response must say its type**,
+  or it is testing a contradiction.
 
 ## Decided by Kaushik - do not reopen
 
