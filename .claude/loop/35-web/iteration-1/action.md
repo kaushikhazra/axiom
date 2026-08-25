@@ -1,72 +1,60 @@
 # Action
 
-Add the two tools. The mechanism exists; this is two registry entries and the three findings
-from cycle 1.
-
-## Add the dependencies, deliberately
-
-`ddgs` and `trafilatura` into `pyproject.toml`. Cycle 1 recorded why each earns its place and
-what it costs - 17 and 18 packages. **Confirm or overturn that judgement in this cycle's log
-rather than inheriting it silently.** If overturned, say what replaces it.
-
-## `search_web(query)`
-
-Returns title, address and snippet per result, `max_results` from `Limits` (AC 3, AC 4).
-
-- `ddgs.exceptions.RatelimitException` becomes a message saying the provider throttled us,
-  **distinct from any other failure** (AC 19). `TimeoutException` and the `DDGSException`
-  base get their own handling - do not collapse them into one.
-- No results is reported as no results, not as an error (AC 16).
-
-## `fetch_page(url)`
-
-`httpx` for transport, `trafilatura` for text (AC 5, AC 6).
-
-Three things cycle 1 found, each of which the obvious implementation gets wrong:
-
-- **Check the status explicitly.** httpx does not raise on 4xx or 5xx, and a 404's body is a
-  9.5KB HTML error page that extracts into convincing prose. Reporting the status is AC 21;
-  returning the error page as content is the failure it exists to prevent.
-- **Cut the content in the tool, not just on screen** (AC 18). A page extracts to ~54,000
-  characters. The display truncation from #34 stays as it is - it is a separate concern, and
-  #34 proved the model must otherwise receive results whole. Say in the tool's result that it
-  was cut and by how much.
-- **`trafilatura.extract` returns `None`** for a page with no readable text. That is AC 17,
-  and it must read as "this page has no readable text", not as an empty string that looks
-  like success.
-
-Timeout from `Limits` (AC 22). An unreachable address raises `httpx.HTTPError` - report the
-reason (AC 20).
+Configuration, the startup line, and the plumbing that #34 should already give. End the cycle
+with a deliberate transcript regeneration.
 
 ## Configuration
 
-`Limits` gains result count, fetch timeout and the page cap. `Settings` gains those plus a
-**web switch separate from `--no-tools`** - switching off the web must not take away
-`read_file` (AC 29).
+`config.Settings` gains the three from `Limits` - result count, fetch time limit, page
+characters kept - each with a default, an environment variable and a flag, resolved in the
+same precedence as everything else (AC 28). Then hand them into the `Limits` that `main()`
+already builds.
 
-Then the startup line names web availability separately from the tool count (AC 1), because
-`7 tools` says nothing about whether the web is reachable and cannot distinguish web-off from
-tools-off.
+Then a **web switch separate from `--no-tools`** (AC 29). Switching off the web must leave
+`read_file` and `run_command` working; switching off tools must switch off the web too.
+Decide how that composes and say so in the log - the two flags interact, and a user who
+passes both should get something obvious rather than something clever.
 
-## Tests
+## The startup line
 
-Stub-driven; **no test may touch the network**. Patch `ddgs.DDGS` and `httpx.get` at the
-point `tools.py` uses them.
+AC 1 wants web availability shown; AC 29 wants the off state shown. The line already carries
+a tool count, and `7 tools` says nothing about whether the web is reachable.
 
-Cover: result shape, the default count, throttling reported distinctly, no results, a 404
-reported as an error rather than as content, a page with no text, a page cut with the amount
-stated, an unreachable address, and a timeout.
+Three web states - available, switched off, and unavailable because tools are off entirely -
+against the three tool states already there. **Do not let this become a matrix of nine
+sentences.** Find the reading that stays one short line and says the true thing.
 
-**AC 10 gets a test that forces it**: a throttled search followed by a successful fetch in
-the same session. Cycle 1 argued it is structurally true; make it observably true.
+## Then the plumbing, by verification rather than construction
 
-## Safety
+These should already work. Confirm each against these tools, and if one does not, that is the
+finding:
 
-Live checks in this cycle, if any, go to stable public documentation pages only. **A handful
-of searches, not a loop.** No live model chooses an address.
+- **AC 13, 14** - `note_tool` shows the query before a search and the address before a fetch.
+- **AC 15** - `show_tool_result` marks fetched content.
+- **AC 24** - Ctrl-C during a fetch. `run_command` needed explicit killing because it held a
+  subprocess; httpx holds a socket. Check whether an interrupt leaves anything behind, and
+  test the world rather than the message.
+- **AC 25, 26** - results and pages enter history, and survive compaction with their
+  addresses. #34 cycle 6 made compaction render call arguments, so the address should
+  survive - **test that specifically**, since AC 26 names it.
+- **AC 30** - exits, re-verified with the web tools registered.
+
+## AC 23: no network at all
+
+Not the same as an unreachable host. Force it - point the process at a network that cannot
+resolve, or patch at the transport layer - and confirm both tools fail with a plain
+explanation **and that chat still works for anything not needing the web**. That second half
+is the criterion's real content.
+
+## Then regenerate the transcript
+
+All eighteen scenarios change, plus new ones: a search running, a page read, a throttled
+search, an unreachable address, web switched off.
+
+Copy aside, regenerate, diff, and put the diff in the log. Confirm every changed line is the
+startup line and the additions are additions.
 
 ## Record
 
-Full suite and the hermeticity check. `wc -l` and test count against 1021 and 131. Status for
-all 30. Do not regenerate the transcript yet - the startup line changes with the web switch,
-and that deserves the cycle where it is the headline.
+Full suite and the hermeticity check. `wc -l` and test count against 1116 and 150. Status for
+all 30. What is left after this should be only the criteria a live model has to demonstrate.

@@ -11,7 +11,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import ddgs
+import ddgs.exceptions
+import httpx
 import psutil
+import trafilatura
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,9 @@ class Limits:
 
     working_directory: str | None = None  # None means where axiom was started
     command_timeout: float = 30.0
+    search_results: int = 5
+    fetch_timeout: float = 20.0
+    page_characters: int = 20_000
 
 
 DEFAULT_LIMITS = Limits()
@@ -78,6 +85,62 @@ def delete_file(path: str) -> str:
     target = Path(path)
     target.unlink()
     return f"deleted {target}"
+
+
+def search_web(query: str, limits: "Limits" = None) -> str:
+    """Search the web and return what was found, one result per block."""
+    limits = limits or DEFAULT_LIMITS
+    try:
+        found = ddgs.DDGS().text(query, max_results=limits.search_results)
+    except ddgs.exceptions.RatelimitException as throttled:
+        # Its own message, distinct from every other failure: the advice is to
+        # wait, and telling the user to check their network would be wrong.
+        return f"error: the search provider is throttling us - wait and retry ({throttled})"
+    except ddgs.exceptions.TimeoutException as slow:
+        return f"error: the search provider did not answer in time ({slow})"
+    except ddgs.exceptions.DDGSException as refused:
+        return f"error: the search provider refused the request ({refused})"
+    except Exception as unreachable:  # noqa: BLE001
+        return f"error: could not reach the search provider ({unreachable})"
+
+    if not found:
+        return f"no results for {query!r}"
+
+    return "\n\n".join(
+        "{}\n{}\n{}".format(
+            item.get("title", ""), item.get("href", ""), item.get("body", "")
+        )
+        for item in found
+    )
+
+
+def fetch_page(url: str, limits: "Limits" = None) -> str:
+    """Fetch one page and return its readable text."""
+    limits = limits or DEFAULT_LIMITS
+    try:
+        page = httpx.get(url, timeout=limits.fetch_timeout, follow_redirects=True)
+    except httpx.TimeoutException:
+        return f"error: {url} did not answer within {limits.fetch_timeout:g} seconds"
+    except httpx.HTTPError as unreachable:
+        return f"error: could not reach {url} ({unreachable})"
+
+    # httpx does not raise on 4xx or 5xx, and an error page has a body that
+    # extracts into convincing prose. Returning it would hand the model an
+    # error page as though it were the page asked for.
+    if page.status_code >= 400:
+        return f"error: {url} answered {page.status_code}"
+
+    text = trafilatura.extract(page.text)
+    if not text:
+        return f"{url} has no readable text"
+
+    if len(text) > limits.page_characters:
+        withheld = len(text) - limits.page_characters
+        return (
+            text[: limits.page_characters]
+            + f"\n\n[cut here - {withheld} more characters not included]"
+        )
+    return text
 
 
 def _report(stdout: str, stderr: str, status: int) -> str:
@@ -229,6 +292,38 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["command"],
             },
             run=run_command,
+            needs_limits=True,
+        ),
+        Tool(
+            name="search_web",
+            description=(
+                "Search the web and return the title, address and a snippet for "
+                "each result. Use this to find pages; use fetch_page to read one."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for."}
+                },
+                "required": ["query"],
+            },
+            run=search_web,
+            needs_limits=True,
+        ),
+        Tool(
+            name="fetch_page",
+            description=(
+                "Fetch one web page and return its readable text. Works on any "
+                "address, whether or not it came from a search."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The address to read."}
+                },
+                "required": ["url"],
+            },
+            run=fetch_page,
             needs_limits=True,
         ),
     )
