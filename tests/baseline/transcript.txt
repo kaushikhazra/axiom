@@ -146,6 +146,95 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, no tools - t
 
 --- ending --- returned normally (exit status 0)
 
+=== the summary reaches its bound and facts are let go ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 200 tokens, debug override, 7 tools including web)
+> a reply
+> axiom: compacting older history (everything)
+axiom: the summary is full - forgetting 34:
+  | - fact 5 the user mentioned some turns ago
+  | - fact 6 the user mentioned some turns ago
+  | - fact 7 the user mentioned some turns ago
+  | - fact 8 the user mentioned some turns ago
+  | - fact 9 the user mentioned some turns ago
+  | - fact 10 the user mentioned some turns ago
+  | - fact 11 the user mentioned some turns ago
+  | - fact 12 the user mentioned some turns ago
+  | - fact 13 the user mentioned some turns ago
+  | - fact 14 the user mentioned some turns ago
+  | - fact 15 the user mentioned some turns ago
+  | - fact 16 the user mentioned some turns ago
+  | - fact 17 the user mentioned some turns ago
+  | - fact 18 the user mentioned some turns ago
+  | - fact 19 the user mentioned some turns ago
+  | - fact 20 the user mentioned some turns ago
+  | - fact 21 the user mentioned some turns ago
+  | - fact 22 the user mentioned some turns ago
+  | - fact 23 the user mentioned some turns ago
+  | - fact 24 the user mentioned some turns ago
+  | - fact 25 the user mentioned some turns ago
+  | - fact 26 the user mentioned some turns ago
+  | - fact 27 the user mentioned some turns ago
+  | - fact 28 the user mentioned some turns ago
+  | - fact 29 the user mentioned some turns ago
+  | - fact 30 the user mentioned some turns ago
+  | - fact 31 the user mentioned some turns ago
+  | - fact 32 the user mentioned some turns ago
+  | - fact 33 the user mentioned some turns ago
+  | - fact 34 the user mentioned some turns ago
+  | - fact 35 the user mentioned some turns ago
+  | - fact 36 the user mentioned some turns ago
+  | - fact 37 the user mentioned some turns ago
+  | - fact 38 the user mentioned some turns ago
+a reply
+> axiom: compacting older history (everything)
+axiom: the summary is full - forgetting 40:
+  | - fact 39 the user mentioned some turns ago
+  | - fact 0 the user mentioned some turns ago
+  | - fact 1 the user mentioned some turns ago
+  | - fact 2 the user mentioned some turns ago
+  | - fact 3 the user mentioned some turns ago
+  | - fact 4 the user mentioned some turns ago
+  | - fact 5 the user mentioned some turns ago
+  | - fact 6 the user mentioned some turns ago
+  | - fact 7 the user mentioned some turns ago
+  | - fact 8 the user mentioned some turns ago
+  | - fact 9 the user mentioned some turns ago
+  | - fact 10 the user mentioned some turns ago
+  | - fact 11 the user mentioned some turns ago
+  | - fact 12 the user mentioned some turns ago
+  | - fact 13 the user mentioned some turns ago
+  | - fact 14 the user mentioned some turns ago
+  | - fact 15 the user mentioned some turns ago
+  | - fact 16 the user mentioned some turns ago
+  | - fact 17 the user mentioned some turns ago
+  | - fact 18 the user mentioned some turns ago
+  | - fact 19 the user mentioned some turns ago
+  | - fact 20 the user mentioned some turns ago
+  | - fact 21 the user mentioned some turns ago
+  | - fact 22 the user mentioned some turns ago
+  | - fact 23 the user mentioned some turns ago
+  | - fact 24 the user mentioned some turns ago
+  | - fact 25 the user mentioned some turns ago
+  | - fact 26 the user mentioned some turns ago
+  | - fact 27 the user mentioned some turns ago
+  | - fact 28 the user mentioned some turns ago
+  | - fact 29 the user mentioned some turns ago
+  | - fact 30 the user mentioned some turns ago
+  | - fact 31 the user mentioned some turns ago
+  | - fact 32 the user mentioned some turns ago
+  | - fact 33 the user mentioned some turns ago
+  | - fact 34 the user mentioned some turns ago
+  | - fact 35 the user mentioned some turns ago
+  | - fact 36 the user mentioned some turns ago
+  | - fact 37 the user mentioned some turns ago
+  | - fact 38 the user mentioned some turns ago
+a reply
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
 === a call the model announced as text, not as a call ===
 --- stdout ---
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)

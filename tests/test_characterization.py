@@ -73,6 +73,7 @@ def stub_fetch(url, timeout=None, follow_redirects=None):  # noqa: ANN001, ARG00
         raise httpx.ConnectError("connection refused")
     return httpx.Response(200, text=FIXED_PAGE, request=httpx.Request("GET", url))
 
+
 # Fixed so the memory-derived context budget cannot vary with the machine.
 FIXED_AVAILABLE_BYTES = 8 * 1024**3
 
@@ -302,6 +303,17 @@ def _scenarios() -> list[tuple]:
             ["hello", "/exit"],
             StubClient(capabilities=["completion"], turns=[["hello to you"]]),
             None,
+        ),
+        (
+            "the summary reaches its bound and facts are let go",
+            ["first message", "second message", "third message", "/exit"],
+            StubClient(
+                prompt_eval_count=190,
+                summary="\n".join(
+                    f"- fact {n} the user mentioned some turns ago" for n in range(40)
+                ),
+            ),
+            "200",
         ),
         (
             "a call the model announced as text, not as a call",

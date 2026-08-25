@@ -16,6 +16,28 @@ COMPACTION_TRIGGER_FRACTION = 0.90
 KEPT_PAIRS_LADDER = (10, 5, 2, 0)
 CHARS_PER_TOKEN_ESTIMATE = 4  # rough proxy for a hypothetical, not-yet-sent payload
 
+# Measured against real prompt_eval_count: the character estimate underestimates
+# in every sample, worst at 3.13 chars per token for code. For a check whose job
+# is to be safe, the direction that matters is the one that says a payload fits
+# when it does not - so the safety check divides by three, not four.
+SAFE_CHARS_PER_TOKEN = 3
+
+# How much of the context the summary may occupy. Half leaves room for the kept
+# pairs and the new message; a summary that fills the window has nowhere left to
+# put the conversation it is supposed to be serving.
+SUMMARY_FRACTION = 0.5
+
+# Ollama truncates an oversized prompt without raising, and reports what it
+# actually evaluated. Measured: ~4,100 estimated tokens sent came back as 258,
+# a ratio of 0.06; a normal turn was 630 reported against 906 estimated, 0.70.
+# The threshold sits between with room on both sides.
+TRUNCATION_RATIO = 0.35
+
+# And a floor, because the ratio alone is noise on a small payload: a five-token
+# estimate answered with one reported token is rounding, not a cut conversation.
+# Truncation only happens near the window, so the shortfall is always large.
+MIN_TRUNCATION_SHORTFALL = 100
+
 
 def _as_line(message: dict) -> str:
     """One message, as the summarizer sees it.
@@ -54,6 +76,82 @@ def estimated_tokens(messages: list[dict[str, str]]) -> int:
     """
     chars = sum(len(m["content"]) for m in messages)
     return chars // CHARS_PER_TOKEN_ESTIMATE
+
+
+def summary_limit(effective_context: int | None) -> int | None:
+    """Characters the summary may reach before the oldest facts are let go.
+
+    A fraction of the context rather than a constant, so it scales with the
+    model instead of being right for one window and wrong for every other.
+    """
+    if effective_context is None:
+        return None
+    return int(effective_context * SUMMARY_FRACTION * SAFE_CHARS_PER_TOKEN)
+
+
+KEEP_EARLIEST = 5
+
+
+def bounded(summary: str, limit: int) -> tuple[str, list[str]]:
+    """The summary cut to its bound, and the facts dropped to get there.
+
+    Compacting the summary again was tried and measured: it does not shrink,
+    because a summary is already a minimal list of distinct facts and the
+    instruction says omit nothing - and repeating the pass loses facts anyway.
+    Facts accumulate without bound and a bounded space cannot hold them, so
+    something has to go. The only question left is whether the user finds out,
+    and #32 asks that a long session never *silently* loses information.
+
+    **The middle goes, not the oldest.** Dropping oldest-first is simpler and
+    was tried first; it forgot "my cat is called Biscuit" from turn one, which
+    is exactly the case COMPACTION_INSTRUCTION already warns about - a brief
+    early statement matters as much as a later, longer topic. Early facts tend
+    to be the identity-shaped ones, said once and relevant throughout; recent
+    facts are the live context. What can be spared is between them.
+    """
+    lines = summary.splitlines()
+    if not lines:
+        return summary, []
+
+    header, facts = lines[0], lines[1:]
+    dropped: list[str] = []
+    while facts and len("\n".join([header, *facts])) > limit:
+        # Past the earliest few, take from the front of the rest - the oldest
+        # of the middle. When too few remain to have a middle, take the oldest
+        # that is left, which only happens at a limit too small to be useful.
+        position = KEEP_EARLIEST if len(facts) > KEEP_EARLIEST else 0
+        dropped.append(facts.pop(position))
+    return "\n".join([header, *facts]), dropped
+
+
+def too_large(
+    messages: list[dict[str, str]], effective_context: int | None
+) -> int | None:
+    """How many tokens the assembled payload is over the context, or None if it fits.
+
+    Uses the conservative divisor. This is the check that decides whether to
+    send at all, and being wrong optimistically means an answer built on a
+    prompt the model never fully saw.
+    """
+    if effective_context is None:
+        return None
+    chars = sum(len(message.get("content") or "") for message in messages)
+    tokens = chars // SAFE_CHARS_PER_TOKEN
+    return tokens - effective_context if tokens > effective_context else None
+
+
+def looks_truncated(estimated: int, reported: int | None) -> bool:
+    """Whether the model evidently saw far less than was sent.
+
+    There is no error to catch - Ollama accepts an oversized prompt, cuts it,
+    and answers confidently from the fragment. The only signal is the count of
+    what it actually evaluated coming back far short of what went out.
+    """
+    if not reported or estimated <= 0:
+        return False
+    if estimated - reported < MIN_TRUNCATION_SHORTFALL:
+        return False
+    return reported < estimated * TRUNCATION_RATIO
 
 
 def _turn_boundary(messages: list[dict[str, str]], index: int) -> int:
@@ -108,7 +206,9 @@ def compacted_history(
         new_facts = compact(backend, model, new_older) if new_older else ""
         content = prior_summary + (f"\n{new_facts}" if new_facts else "")
     else:
-        content = f"Summary of earlier conversation: {compact(backend, model, older)}"
+        # The header is its own line so that dropping the oldest fact does not
+        # take the header with it and leave the model an unlabelled list.
+        content = f"Summary of earlier conversation:\n{compact(backend, model, older)}"
 
     return [{"role": "system", "content": content}, *kept]
 
@@ -119,18 +219,19 @@ def maybe_compact(
     messages: list[dict[str, str]],
     running_usage: int | None,
     effective_context: int | None,
-) -> tuple[list[dict[str, str]], int | None]:
-    """(possibly-compacted messages, the kept_pairs level used - None if untouched).
+) -> tuple[list[dict[str, str]], int | None, list[str]]:
+    """(possibly-compacted messages, the kept_pairs level used, facts let go).
 
     Triggers on the REAL running usage from the last completed turn. Escalation
     levels are chosen with the character-based estimate - there is no real
     count for a payload not yet sent.
     """
     if running_usage is None or effective_context is None:
-        return messages, None
+        return messages, None, []
     if running_usage < effective_context * COMPACTION_TRIGGER_FRACTION:
-        return messages, None
+        return messages, None, []
 
+    limit = summary_limit(effective_context)
     for kept_pairs in KEPT_PAIRS_LADDER:
         candidate = compacted_history(backend, model, messages, kept_pairs)
         if candidate is messages:
@@ -140,5 +241,16 @@ def maybe_compact(
             or estimated_tokens(candidate)
             < effective_context * COMPACTION_TRIGGER_FRACTION
         ):
-            return candidate, kept_pairs
-    return messages, None
+            # Bounded only once a rung is chosen. Trimming candidates the ladder
+            # then discards would be work thrown away, and would report facts as
+            # forgotten that were never actually let go.
+            if limit is None:
+                return candidate, kept_pairs, []
+            trimmed, dropped = bounded(candidate[0]["content"], limit)
+            if dropped:
+                candidate = [
+                    {"role": "system", "content": trimmed},
+                    *candidate[1:],
+                ]
+            return candidate, kept_pairs, dropped
+    return messages, None, []

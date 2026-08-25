@@ -30,6 +30,10 @@ class Piece:
 
     text: str
     usage: int = 0
+    # Kept apart from `usage`, which is prompt + eval and is what compaction
+    # triggers on. Detecting a truncated prompt needs the prompt count alone:
+    # the eval half would mask a shortfall in the half that matters.
+    prompt_usage: int = 0
 
 
 @dataclass(frozen=True)
@@ -140,6 +144,7 @@ class OllamaBackend:
                 yield Piece(
                     chunk.message.content or "",
                     (chunk.prompt_eval_count or 0) + (chunk.eval_count or 0),
+                    chunk.prompt_eval_count or 0,
                 )
         except ollama.ResponseError as refused:
             raise BackendError(str(refused)) from refused

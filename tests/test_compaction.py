@@ -77,7 +77,11 @@ def test_compacted_history_replaces_everything_older_than_the_kept_window():
 
     assert result[0] == {
         "role": "system",
-        "content": "Summary of earlier conversation: summary of the old stuff",
+        # The header is on its own line so that dropping the oldest fact for
+        # size does not take the header with it and leave an unlabelled list.
+        # Same claim as before - the summary is marked as one - different
+        # separator.
+        "content": "Summary of earlier conversation:\nsummary of the old stuff",
     }
     assert result[1:] == messages[-10:], "the last 5 pairs (10 entries) must stay raw"
     assert len(result) == 11
@@ -116,7 +120,7 @@ def test_maybe_compact_leaves_history_untouched_below_the_trigger():
     client = RecordingBackend(summary="should not be called")
     messages = make_pairs(13)
 
-    result, kept_pairs = axiom.compaction.maybe_compact(
+    result, kept_pairs, _ = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=10, effective_context=1000
     )
 
@@ -133,7 +137,7 @@ def test_maybe_compact_leaves_history_untouched_when_context_is_unknown():
     client = RecordingBackend(summary="should not be called")
     messages = make_pairs(13)
 
-    result, kept_pairs = axiom.compaction.maybe_compact(
+    result, kept_pairs, _ = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=999_999, effective_context=None
     )
 
@@ -150,7 +154,7 @@ def test_maybe_compact_escalates_past_a_level_that_still_does_not_fit():
     client = RecordingBackend(summary=huge_summary)
     messages = make_pairs(13)
 
-    result, kept_pairs = axiom.compaction.maybe_compact(
+    result, kept_pairs, _ = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=100, effective_context=100
     )
 
@@ -182,7 +186,7 @@ def test_maybe_compact_still_compacts_older_pairs_even_when_kept_pairs_dominate(
         m["content"] = m["content"].ljust(100, "z")  # exactly 100 chars each
     messages = old_pair + kept_pairs_raw
 
-    result, kept_pairs = axiom.compaction.maybe_compact(
+    result, kept_pairs, _ = axiom.compaction.maybe_compact(
         client, "qwen2.5:7b", messages, running_usage=600, effective_context=600
     )
 
@@ -352,9 +356,9 @@ def test_compaction_never_keeps_a_tool_result_without_its_call():
     assert kept[0]["role"] == "user", "the kept window starts mid-turn"
     for position, message in enumerate(kept):
         if message["role"] == "tool":
-            assert any(
-                "tool_calls" in earlier for earlier in kept[:position]
-            ), "a tool result survived without the call that produced it"
+            assert any("tool_calls" in earlier for earlier in kept[:position]), (
+                "a tool result survived without the call that produced it"
+            )
 
 
 def test_what_was_asked_of_a_tool_reaches_the_summary():
@@ -396,3 +400,145 @@ def test_plain_conversations_are_sliced_exactly_as_before():
     )
 
     assert result[1:] == history[-10:]
+
+
+# --- #32: the summary itself outgrowing the window --------------------------
+
+
+def test_a_payload_that_fits_is_not_reported_as_too_large():
+    messages = [{"role": "user", "content": "a" * 300}]
+
+    assert axiom.compaction.too_large(messages, 1000) is None
+
+
+def test_a_payload_over_the_context_says_how_far_over():
+    """AC 3. The divisor is three, not four: measured against real token counts
+    the character estimate underestimates by up to 21%, and a check whose job is
+    to be safe must not be the one that says a payload fits when it does not.
+    """
+    messages = [{"role": "user", "content": "a" * 6000}]  # 2000 tokens at 3/char
+
+    over = axiom.compaction.too_large(messages, 1500)
+
+    assert over == 500
+
+
+def test_the_payload_check_is_silent_without_a_known_context():
+    """#28's fallback: with no context established there is nothing to check."""
+    assert (
+        axiom.compaction.too_large([{"role": "user", "content": "a" * 99999}], None)
+        is None
+    )
+
+
+def test_a_normal_turn_is_not_read_as_truncated():
+    """Measured: 630 reported against a 906 estimate on a turn that fit."""
+    assert axiom.compaction.looks_truncated(906, 630) is False
+
+
+def test_a_truncated_prompt_is_recognised():
+    """Measured: ~4,100 estimated sent, 258 reported, no error raised."""
+    assert axiom.compaction.looks_truncated(4134, 258) is True
+
+
+def test_a_small_payload_is_never_read_as_truncated():
+    """The ratio alone is noise here - a four-token shortfall is rounding.
+
+    Caught by the transcript: a stub reporting one token against a five-token
+    estimate produced a truncation warning on an ordinary reply.
+    """
+    assert axiom.compaction.looks_truncated(5, 1) is False
+    assert axiom.compaction.looks_truncated(120, 30) is False
+
+
+def test_no_report_without_a_count():
+    assert axiom.compaction.looks_truncated(5000, None) is False
+    assert axiom.compaction.looks_truncated(5000, 0) is False
+
+
+# --- #32: the summary reaching its bound ------------------------------------
+
+
+def a_summary(lines: int) -> str:
+    facts = "\n".join(f"- fact {n} about something" for n in range(lines))
+    return f"Summary of earlier conversation:\n{facts}"
+
+
+def test_a_summary_under_its_bound_keeps_everything():
+    trimmed, dropped = axiom.compaction.bounded(a_summary(3), limit=10_000)
+
+    assert dropped == []
+    assert trimmed == a_summary(3)
+
+
+def test_the_middle_goes_not_the_earliest():
+    """AC 1, and the reason it is the middle.
+
+    Dropping oldest-first was tried and measured: it forgot "my cat is called
+    Biscuit" from turn one. That is the exact case COMPACTION_INSTRUCTION
+    already warns about - a brief early statement matters as much as a later,
+    longer topic - so the earliest facts stay and the middle goes.
+    """
+    trimmed, dropped = axiom.compaction.bounded(a_summary(20), limit=250)
+
+    assert dropped, "nothing was let go despite being over the bound"
+    assert "- fact 0 about something" in trimmed, "an early fact was forgotten"
+    assert "- fact 19 about something" in trimmed, "the newest fact was forgotten"
+    assert any("fact 5" in fact or "fact 6" in fact for fact in dropped)
+    assert trimmed.startswith("Summary of earlier conversation")
+    assert len(trimmed) <= 250
+
+
+def test_what_was_dropped_is_returned_not_just_counted():
+    """AC 2 as amended: a fact may go, but not without the user being able to
+    see which. A count would say something went without saying whether it
+    mattered."""
+    _, dropped = axiom.compaction.bounded(a_summary(20), limit=250)
+
+    assert all(isinstance(fact, str) and fact for fact in dropped)
+    assert all("fact" in fact for fact in dropped), "a fact was dropped unnamed"
+
+
+def test_a_summary_is_never_emptied_completely():
+    """Even an impossible bound leaves something. A history of nothing at all
+    would be worse than one that is slightly too big, and the payload check is
+    what catches the remainder."""
+    trimmed, dropped = axiom.compaction.bounded(a_summary(10), limit=1)
+
+    assert trimmed, "the summary was emptied"
+    assert trimmed.startswith("Summary of earlier conversation")
+
+
+def test_the_bound_scales_with_the_context():
+    assert axiom.compaction.summary_limit(1000) > axiom.compaction.summary_limit(500)
+    assert axiom.compaction.summary_limit(None) is None
+
+
+def test_maybe_compact_reports_what_it_forgot():
+    """The path end to end: over the bound, trimmed, and the facts handed back
+    so the session can say what went."""
+    backend = RecordingBackend(
+        summary="\n".join(
+            f"- old fact {n}: something the user mentioned some turns ago"
+            for n in range(60)
+        )
+    )
+
+    result, kept, forgotten = axiom.compaction.maybe_compact(
+        backend, "m", make_pairs(13), running_usage=950, effective_context=1000
+    )
+
+    assert kept is not None
+    assert forgotten, "a summary far past its bound reported nothing forgotten"
+    assert len(result[0]["content"]) <= axiom.compaction.summary_limit(1000)
+
+
+def test_nothing_is_reported_forgotten_when_the_summary_fits():
+    backend = RecordingBackend(summary="- one small fact")
+
+    result, kept, forgotten = axiom.compaction.maybe_compact(
+        backend, "m", make_pairs(13), running_usage=950, effective_context=1000
+    )
+
+    assert kept is not None
+    assert forgotten == []
