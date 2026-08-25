@@ -1,53 +1,71 @@
 # Action
 
-**Reproduce the overflow before fixing anything.** Write no production code this cycle.
+Bound the summary, and check the payload before sending it. Cycle 1 measured everything this
+needs; nothing here should be guessed.
 
-#29's iteration-2 ran out of time here and its scope note says why it matters: the original
-compaction bug survived a green suite and eleven mocked criteria. This issue is the same
-shape - a failure that only appears in a long real session - and designing against an
-imagined version of it would produce a fix for the wrong thing.
+## AC 1 and AC 2: re-compact the summary, bounded
 
-## Drive a session to the boundary
+Today `compacted_history` appends new facts to a prior summary forever. Give the summary a
+size of its own: when appending would take it past that, **re-compact the summary itself**
+rather than growing it.
 
-Small `AXIOM_DEBUG_MAX_CONTEXT`, many turns, **natural and varied sentences**. #29 found that
-repeated filler sends a small model into a degenerate loop, which will look like this bug and
-is not.
+**AC 2 is the criterion that matters and it is the one that can silently fail.** #29's
+iteration-2 found that re-summarizing an already-compacted summary alongside newer turns
+dropped facts the first pass had preserved. This deliberately reintroduces that operation, so
+it must be done differently:
 
-Run it far enough that compaction fires repeatedly and the **summary itself** becomes the
-thing that no longer fits - not a single oversized message. Record, per compaction pass:
+- Re-compact the summary **alone**, not folded in with newer turns. Mixing the two is what
+  lost facts before.
+- Use the same `COMPACTION_INSTRUCTION` - extract every distinct fact, one per line, do not
+  narrate. That instruction was written for exactly this failure.
+- **Prove it with a planted fact, not a size assertion.** Cycle 1 showed a fact surviving six
+  passes today; the same fact must survive a session that goes through a re-compaction. A
+  summary that is bounded because it quietly drops things is worse than an unbounded one.
 
-- how long the carried-forward summary is
-- how many facts it still names
-- what the real `prompt_eval_count` was on the following turn
+Pick the bound from measurement: cycle 1's session reached 2129 characters against a
+700-token window. Express it as a fraction of the effective context rather than a constant,
+so it scales with the model.
 
-**The number that matters is whether the summary grows without bound.** Three passes showing
-it climbing is the reproduction; a plateau would mean #32 is not real as written and that is
-worth knowing before building anything.
+## AC 3: check the assembled payload
 
-## Then find out what happens at the limit
+Before sending, estimate the whole thing - summary, kept pairs, and the new message - and
+compare against the effective context.
 
-If the summary does reach the effective context, what does Ollama actually do? #29 found
-silent truncation with a raw oversized message. Confirm whether the same happens here, and
-whether `prompt_eval_count` on the reply reveals it - **AC 4 depends on that count being
-usable as a signal**, and if it is not, AC 4 needs rethinking rather than implementing.
+Use the measured figures: **the budget is the full `num_ctx`**, not half - cycle 1 nearly
+recorded that wrong. And `chars // 4` **underestimates by up to 21%**, so use a conservative
+divisor of **3** for a check whose job is to be safe. Leave `estimated_tokens` as it is for
+choosing a ladder rung; that is a different job and changing it would alter #29's behaviour.
 
-## Probe the token question
+If it will not fit, the user is told and it is not sent as one payload.
 
-AC 3 wants a check against the real assembled payload, and `estimated_tokens` is characters
-divided by four. Find out what better is available:
+## AC 4: catch the silent truncation
 
-- Does the `ollama` client expose a tokenize or count endpoint?
-- Does `show()` carry anything usable?
-- If nothing does, say so, and say what the estimate's error actually is - measure it against
-  a real `prompt_eval_count` on a payload of known character length, rather than assuming
-  four is wrong.
+Cycle 1 confirmed Ollama truncates without raising and reports what it actually evaluated. So
+after a reply, compare `prompt_eval_count` against what was sent. A count far short of the
+estimate means the prompt was cut and the answer is built on a fragment.
 
-An honest error bar on the estimate may be enough for AC 3. A guess is not.
+Treat it as a failure the user is told about, not a normal reply. **Pick the threshold from
+the measurements** - a truncated 3,700-token payload reported 258, so the gap is enormous and
+the check does not need to be delicate. It does need to not fire on the normal case, where
+630 was reported against a 680 estimate.
+
+## AC 5: say when the summary itself is re-compacted
+
+Distinct from the ordinary compaction notice, in `terminal.py` beside `note_compaction`. The
+user should be able to tell "I am summarizing old turns" from "the summary itself got too big",
+because the second says something about the session the first does not.
+
+## AC 6 and the transcript
+
+AC 6 is a long session that never lets the compacted history exceed the context - the
+reproduction from cycle 1, re-run against the fix, showing the summary bounded and the planted
+fact still there.
+
+The transcript gains a scenario for AC 5's message. Copy aside, regenerate, and **check the
+diff by command** rather than by eye.
 
 ## Record
 
-Baseline: `wc -l` across `src/`, the test count, the hermeticity check. Status for all 6
-criteria - most will be `not-started`, and the point is the reproduction.
-
-**If the overflow does not reproduce**, that is the finding. Say what was tried, how far the
-session was driven, and what the summary length actually did.
+Full suite and the hermeticity check. `wc -l` and test count against 1246 and 179. Status for
+all 6. If all six read `met-with-evidence`, **the goal is met**: follow `loop.md` exit 1 - and
+#32 is the last row, so say the queue is finished rather than starting nothing silently.
