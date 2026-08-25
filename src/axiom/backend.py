@@ -7,6 +7,7 @@ near-identical failure branches into one - by the time a failure crosses this
 boundary it belongs to a single family.
 """
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol
@@ -46,6 +47,32 @@ class Call:
     def as_message_part(self) -> dict:
         """This call as it goes back into history, for the model to match against."""
         return {"function": {"name": self.name, "arguments": self.arguments}}
+
+
+def call_from_text(text: str, known: set[str]) -> Call | None:
+    """A call a model announced as text instead of as a structured call.
+
+    Some models return the call as bare JSON in the reply, with no structured
+    tool_calls at all - qwen2.5-coder does, and this loop's cycle-7 log has the
+    captured shape. Recognised by the shape of the reply, never by the name of
+    the model: a per-model branch here would be the thing AC 4 and AC 5 forbid.
+
+    Returns None when the reply is not a call, and the caller then prints it -
+    so this must not claim anything it is unsure of. A reply that merely
+    happens to be JSON, or that names no tool we have, is prose.
+    """
+    stripped = text.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or parsed.get("name") not in known:
+        return None
+    # Arguments are passed on as they came. If they are unusable, running the
+    # tool reports that - which is a call axiom could not make, not silence.
+    return Call(parsed["name"], parsed.get("arguments"))
 
 
 class ModelBackend(Protocol):

@@ -146,6 +146,17 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, no tools - t
 
 --- ending --- returned normally (exit status 0)
 
+=== a call the model announced as text, not as a call ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+> axiom: read_file(path=<sandbox>/notes.txt)
+  | Biscuit the cat is ginger.
+The cat is ginger.
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
 === tools switched off for the session ===
 --- stdout ---
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, tools off)

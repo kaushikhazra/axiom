@@ -90,7 +90,12 @@ def note_tool(name: str, arguments: dict) -> None:
     comes out with every backslash doubled, which is not what the user typed
     and not what they would type to check it.
     """
-    detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
+    if isinstance(arguments, dict):
+        detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
+    else:
+        # A call announced as text can carry anything at all. Show it as it
+        # came - running it is what reports that it cannot be used.
+        detail = str(arguments)
     print(f"{VOICE} {name}({detail})")
 
 

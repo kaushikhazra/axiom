@@ -261,6 +261,9 @@ def run(name: str, arguments: dict, limits: Limits = DEFAULT_LIMITS) -> str:
     if tool is None:
         return f"error: there is no tool named {name!r}"
 
+    if not isinstance(arguments, dict):
+        return f"error: {name} was given arguments that are not a mapping"
+
     # Only what the tool declared. A model inventing an argument gets told so,
     # and cannot reach a keyword the schema does not offer it - the time limit,
     # for instance, which belongs to the user rather than to the model.

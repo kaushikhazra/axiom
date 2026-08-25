@@ -155,7 +155,9 @@ def _stable(text: str) -> str:
     verbatim would make the transcript fail on its own next run. The path is
     environment; everything else is recorded exactly as printed.
     """
-    return text.replace(str(SANDBOX), "<sandbox>")
+    return text.replace(str(SANDBOX), "<sandbox>").replace(
+        SANDBOX.as_posix(), "<sandbox>"
+    )
 
 
 def _scenarios() -> list[tuple]:
@@ -265,6 +267,20 @@ def _scenarios() -> list[tuple]:
             "a model that cannot use tools still chats",
             ["hello", "/exit"],
             StubClient(capabilities=["completion"], turns=[["hello to you"]]),
+            None,
+        ),
+        (
+            "a call the model announced as text, not as a call",
+            ["what colour is the cat?", "/exit"],
+            StubClient(
+                turns=[
+                    [
+                        '{"name": "read_file", "arguments": {"path": '
+                        f'"{SAMPLE.as_posix()}"}}}}'
+                    ],
+                    ["The cat is ginger."],
+                ]
+            ),
             None,
         ),
         (

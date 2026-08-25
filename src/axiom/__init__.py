@@ -7,7 +7,25 @@ EXIT_COMMANDS = {"/exit", "/quit"}
 
 # A turn may go model -> tool -> model more than once, but not forever: a model
 # that keeps calling tools without answering would otherwise never hand back.
-MAX_TOOL_ROUNDS = 5
+#
+# Eight rather than five on evidence: qwen2.5-coder was observed re-issuing an
+# identical call four times before answering a single-step question. It is not
+# deterministic - the same question answered in one round on a rerun - but a
+# genuine multi-step request plus that behaviour would have hit a bound of five
+# and returned an empty answer. The bound is here to stop a runaway, not to
+# ration work a model legitimately needs.
+MAX_TOOL_ROUNDS = 8
+
+
+def _could_still_be_a_call(reply: str) -> bool:
+    """Whether a part-finished reply might yet turn out to be a call in text.
+
+    A call announced as text is JSON, so it opens with a brace. Once the reply
+    opens with anything else it is an answer, and holding it back would be
+    withholding the thing the user asked for.
+    """
+    leading = reply.lstrip()
+    return leading == "" or leading.startswith("{")
 
 
 def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> None:
@@ -62,7 +80,13 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         last_usage = None
         try:
             for _round in range(MAX_TOOL_ROUNDS):
-                reply, calls = "", []
+                reply, calls, shown = "", [], 0
+                # Some models announce a call as bare JSON in the reply, token
+                # by token, so no single piece is recognisable. Hold the reply
+                # back only while it could still turn out to be one - and let
+                # it through the moment it cannot, or streaming would be lost
+                # for every model that behaves.
+                withholding = declarations is not None
                 for event in model_backend.stream(
                     settings.model, messages, chat_options, declarations
                 ):
@@ -70,8 +94,21 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                         calls.append(event)
                         continue
                     reply += event.text
-                    terminal.show_piece(event.text)
                     last_usage = event.usage
+                    if withholding and not _could_still_be_a_call(reply):
+                        withholding = False
+                    if not withholding:
+                        terminal.show_piece(reply[shown:])
+                        shown = len(reply)
+
+                if withholding:
+                    announced = backend.call_from_text(reply, set(tools.REGISTRY))
+                    if announced is not None:
+                        calls.append(announced)
+                        reply = ""  # the text was the call, not an answer
+                    else:
+                        terminal.show_piece(reply[shown:])
+
                 if not calls:
                     break
 
