@@ -141,6 +141,20 @@ def note_compaction(kept_pairs: int) -> None:
     print(f"{VOICE} compacting older history ({level})")
 
 
+def note_facts_forgotten(dropped: list[str]) -> None:
+    """Said when the summary reached its bound and the oldest facts were let go.
+
+    Named one by one rather than counted. #32 asks that a long session never
+    *silently* loses information - not that it never loses any, which is not
+    arithmetically available - and a count tells the user something went
+    without telling them whether it mattered. Seeing it is what lets them say
+    it again if it did.
+    """
+    print(f"{VOICE} the summary is full - forgetting {len(dropped)}:")
+    for fact in dropped:
+        print(f"  | {fact}")
+
+
 def report_too_large(over: int) -> None:
     """Said instead of sending a payload that would not fit."""
     print(

@@ -81,11 +81,13 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         if not line:
             continue
 
-        messages, kept_pairs, _shrunk = compaction.maybe_compact(
+        messages, kept_pairs, forgotten = compaction.maybe_compact(
             model_backend, settings.model, messages, running_usage, effective_context
         )
         if kept_pairs is not None:
             terminal.note_compaction(kept_pairs)
+        if forgotten:
+            terminal.note_facts_forgotten(forgotten)
 
         before = len(messages)
         messages.append({"role": "user", "content": line})
