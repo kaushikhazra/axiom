@@ -1,5 +1,7 @@
 """A terminal chat with a local Ollama model."""
 
+import json
+
 from . import backend, compaction, config, context, servers, terminal, tools
 from .backend import Call, ModelBackend
 
@@ -30,7 +32,11 @@ def _could_still_be_a_call(reply: str) -> bool:
 
 def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> None:
     settings = config.resolve(argv)
-    attached = servers.Servers(settings.mcp_servers)
+    attached = servers.Servers(
+        settings.mcp_servers,
+        start_timeout=settings.mcp_start_timeout,
+        call_timeout=settings.mcp_call_timeout,
+    )
     try:
         _chat(settings, attached, using)
     finally:
@@ -63,6 +69,9 @@ def _chat(
     # Connected before the startup line is printed, so that line can report
     # what actually connected rather than what was asked for.
     if declarations is not None:
+        # Said before the wait, not after: starting a server can take seconds,
+        # and a silent pause before the first prompt reads as a hang.
+        terminal.note_starting(len(settings.mcp_servers))
         attached.start()
         declarations = [*declarations, *attached.declarations]
 
@@ -96,7 +105,16 @@ def _chat(
         web=settings.web_enabled,
     )
     terminal.note_servers(
-        attached.connected, [*settings.mcp_problems, *attached.failures]
+        attached.connected,
+        [*settings.mcp_problems, *attached.failures],
+        bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
+        cost=compaction.estimated_tokens(
+            [
+                {"role": "system", "content": json.dumps(declaration)}
+                for declaration in declarations or []
+            ]
+        ),
+        window=effective_context,
     )
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a

@@ -13,6 +13,8 @@ DEFAULT_COMMAND_TIMEOUT = 30.0
 DEFAULT_SEARCH_RESULTS = 5
 DEFAULT_FETCH_TIMEOUT = 20.0
 DEFAULT_PAGE_CHARACTERS = 20_000
+DEFAULT_MCP_START_TIMEOUT = 30.0
+DEFAULT_MCP_CALL_TIMEOUT = 60.0
 OFF_VALUES = {"off", "0", "false", "no"}
 
 
@@ -34,6 +36,8 @@ class Settings:
     fetch_timeout: float = DEFAULT_FETCH_TIMEOUT
     page_characters: int = DEFAULT_PAGE_CHARACTERS
     web_enabled: bool = True
+    mcp_start_timeout: float = DEFAULT_MCP_START_TIMEOUT
+    mcp_call_timeout: float = DEFAULT_MCP_CALL_TIMEOUT
     mcp_servers: tuple["ServerSpec", ...] = ()
     # Named one by one rather than counted: a variable the user has not set is
     # fixed by setting that variable, and a count does not say which.
@@ -202,6 +206,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--mcp-start-timeout",
+        type=float,
+        default=float(
+            os.environ.get("AXIOM_MCP_START_TIMEOUT", DEFAULT_MCP_START_TIMEOUT)
+        ),
+        help=(
+            "Seconds a server may take to start. Overrides "
+            f"$AXIOM_MCP_START_TIMEOUT. Default: {DEFAULT_MCP_START_TIMEOUT:g}"
+        ),
+    )
+    parser.add_argument(
+        "--mcp-call-timeout",
+        type=float,
+        default=float(
+            os.environ.get("AXIOM_MCP_CALL_TIMEOUT", DEFAULT_MCP_CALL_TIMEOUT)
+        ),
+        help=(
+            "Seconds a server's tool may take. Overrides $AXIOM_MCP_CALL_TIMEOUT. "
+            f"Default: {DEFAULT_MCP_CALL_TIMEOUT:g}"
+        ),
+    )
+    parser.add_argument(
         "--mcp-file",
         default=os.environ.get("AXIOM_MCP_FILE"),
         help=(
@@ -238,8 +264,19 @@ def resolve(argv: list[str] | None = None) -> Settings:
 
 def _mcp(args: argparse.Namespace) -> dict:
     """The MCP half of the settings, read only when it is wanted."""
+    timeouts = {
+        "mcp_start_timeout": args.mcp_start_timeout,
+        "mcp_call_timeout": args.mcp_call_timeout,
+    }
     if args.no_mcp or args.no_tools:
-        return {"mcp_servers": (), "mcp_problems": ()}
+        # The bounds are still resolved, so what the user asked for is what
+        # `Settings` reports whether or not any server ends up using them.
+        return {"mcp_servers": (), "mcp_problems": (), **timeouts}
     path = Path(args.mcp_file) if args.mcp_file else DEFAULT_MCP_FILE
     servers, problems = read_servers(path)
-    return {"mcp_servers": servers, "mcp_problems": problems}
+    return {
+        "mcp_servers": servers,
+        "mcp_problems": problems,
+        "mcp_start_timeout": args.mcp_start_timeout,
+        "mcp_call_timeout": args.mcp_call_timeout,
+    }

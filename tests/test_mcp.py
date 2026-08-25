@@ -13,6 +13,7 @@ import pytest
 
 from axiom import config, servers, terminal, tools
 from axiom.config import ServerSpec
+from conftest import StubBackend
 
 HERE = Path(__file__).parent
 
@@ -250,6 +251,283 @@ def test_no_tools_takes_mcp_with_it(tmp_path, monkeypatch):
     written(tmp_path, {"mcpServers": {"s": {"command": "x"}}})
 
     assert config.resolve(["--no-tools"]).mcp_servers == ()
+
+
+# --- AC 10, 11, 12: choosing what the model is given ------------------------
+
+
+def test_only_the_named_tools_are_declared(running):
+    """AC 10."""
+    attached = running((ServerSpec(**{**vars(ours()), "tools": ("ping",)}),))
+
+    names = [d["function"]["name"] for d in attached.declarations]
+    assert names == ["tiny__ping"]
+
+
+def test_naming_no_tools_declares_all_of_them(running):
+    """AC 11."""
+    attached = running((ours(),))
+
+    assert attached.connected == {"tiny": 3}
+
+
+def test_a_tool_the_server_does_not_have_is_reported_by_name(running):
+    """AC 12: and the other named tools are still declared."""
+    attached = running(
+        (ServerSpec(**{**vars(ours()), "tools": ("ping", "not_a_real_tool")}),)
+    )
+
+    assert any("not_a_real_tool" in f for f in attached.failures)
+    assert [d["function"]["name"] for d in attached.declarations] == ["tiny__ping"]
+
+
+# --- AC 13: what the tools cost ---------------------------------------------
+
+
+def test_the_cost_of_the_declared_tools_is_shown(capsys):
+    """AC 13: before any conversation has started."""
+    terminal.note_servers({"tiny": 3}, [], cost=420, window=8192)
+
+    out = capsys.readouterr().out
+    assert "420 tokens" in out
+    assert "% of the window" in out
+
+
+# --- AC 19 and AC 20: the bounds are settings, and visible ------------------
+
+
+def test_the_bounds_have_defaults_and_can_be_changed(tmp_path, monkeypatch):
+    """AC 19."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AXIOM_MCP_START_TIMEOUT", raising=False)
+    monkeypatch.delenv("AXIOM_MCP_CALL_TIMEOUT", raising=False)
+
+    assert config.resolve([]).mcp_start_timeout == config.DEFAULT_MCP_START_TIMEOUT
+    assert config.resolve([]).mcp_call_timeout == config.DEFAULT_MCP_CALL_TIMEOUT
+
+    changed = config.resolve(["--mcp-start-timeout", "3", "--mcp-call-timeout", "9"])
+    assert (changed.mcp_start_timeout, changed.mcp_call_timeout) == (3.0, 9.0)
+
+
+def test_the_environment_sets_the_bounds_and_the_flag_wins(tmp_path, monkeypatch):
+    """AC 19: the command line beats the environment, as everywhere else."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AXIOM_MCP_START_TIMEOUT", "11")
+
+    assert config.resolve([]).mcp_start_timeout == 11.0
+    assert config.resolve(["--mcp-start-timeout", "4"]).mcp_start_timeout == 4.0
+
+
+def test_the_bounds_in_force_are_visible_at_startup(capsys):
+    """AC 20: the half that gets forgotten."""
+    terminal.note_servers({"tiny": 1}, [], bounds=(3.0, 9.0))
+
+    out = capsys.readouterr().out
+    assert "3s" in out
+    assert "9s" in out
+
+
+def test_the_bound_reaches_the_client(tmp_path, monkeypatch):
+    """AC 19: told is not the same as applied."""
+    monkeypatch.chdir(tmp_path)
+    attached = servers.Servers((), start_timeout=2.0, call_timeout=5.0)
+
+    assert (attached.start_timeout, attached.call_timeout) == (2.0, 5.0)
+
+
+# --- AC 21, 24, 25: when a server does not work -----------------------------
+
+
+def test_a_server_that_fails_to_start_does_not_stop_the_others(running):
+    """AC 21."""
+    attached = running((ServerSpec("bad", "no-such-program"), ours()))
+
+    assert attached.connected == {"tiny": 3}, "the good server was lost with the bad"
+    assert any(f.startswith("bad:") for f in attached.failures)
+    assert attached.run("tiny__ping", {}) == "pong"
+
+
+def test_a_server_that_dies_fails_only_its_own_tools(running):
+    """AC 24 and AC 25.
+
+    Kills the subprocess and checks a built-in still works in the same session -
+    the criterion is that *every other tool* keeps working, not that the call
+    fails politely.
+    """
+    import psutil
+
+    attached = running((ours(),))
+    assert attached.run("tiny__ping", {}) == "pong"
+
+    me = psutil.Process()
+    for child in me.children(recursive=True):
+        child.kill()
+
+    result = attached.run("tiny__ping", {})
+    assert result.startswith("error:"), "a dead server answered"
+    assert "tiny" in result, "the failure does not say which server"
+    # Every other tool is untouched.
+    assert tools.run("read_file", {"path": str(HERE / "mcp_server.py")}).startswith(
+        '"""A tiny MCP server'
+    )
+
+
+# --- AC 26, 27, 28: leaving -------------------------------------------------
+
+
+def children_of_this_process() -> set[int]:
+    import psutil
+
+    return {c.pid for c in psutil.Process().children(recursive=True)}
+
+
+def surviving(pids: set[int]) -> list[int]:
+    import psutil
+
+    alive = []
+    for pid in pids:
+        try:
+            process = psutil.Process(pid)
+            if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
+                alive.append(pid)
+        except psutil.NoSuchProcess:
+            pass
+    return alive
+
+
+def configured(tmp_path, monkeypatch) -> None:
+    """A real server, ours, named in a real config file."""
+    written(
+        tmp_path,
+        {
+            "mcpServers": {
+                "tiny": {
+                    "command": sys.executable,
+                    "args": [str(HERE / "mcp_server.py")],
+                }
+            }
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+
+
+class WatchesChildren(StubBackend):
+    """Snapshots the server processes *while axiom is running*.
+
+    Sampling after `main()` returns is the trap: `stop()` has already run by
+    then, so the set of "spawned" pids is empty and every assertion about
+    survivors passes without a server ever having been examined. Cycle 3 wrote
+    that test, watched it pass, and checked - the server really had started, 3
+    tools and 839 tokens, and the measurement was simply taken too late.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.seen: set[int] = set()
+
+    def stream(self, model, messages, options=None, tools=None):  # noqa: ANN001
+        self.seen |= children_of_this_process()
+        return super().stream(model, messages, options, tools)
+
+
+@pytest.mark.parametrize("leaving", ["/exit", "/quit", EOFError(), KeyboardInterrupt()])
+def test_every_route_out_stops_every_server(tmp_path, monkeypatch, capsys, leaving):
+    """AC 26: /exit, /quit, end of input, Ctrl-C.
+
+    A real subprocess, because "no server process outlives axiom" cannot be
+    shown by an object in the same process. The server is ours, per CLAUDE.md.
+    """
+    import axiom
+    from conftest import feed
+
+    configured(tmp_path, monkeypatch)
+    backend = WatchesChildren()
+    # One real turn first, so the servers are observed while they are alive.
+    feed(monkeypatch, ["hello", leaving])
+
+    axiom.main([], using=backend)
+    capsys.readouterr()
+
+    assert backend.seen, "no server was running - the test would prove nothing"
+    assert surviving(backend.seen) == [], (
+        f"a server outlived axiom leaving by {leaving!r}"
+    )
+
+
+def test_no_server_outlives_a_failure(tmp_path, monkeypatch, capsys):
+    """AC 27: including when axiom exits through one.
+
+    Cycle 1 measured that a hard kill leaves no survivors *by inheritance* -
+    the server exits when its stdin closes. Proving today's behaviour is not
+    the same as owning it, so this asserts the outcome.
+    """
+    import axiom
+    from conftest import feed
+
+    configured(tmp_path, monkeypatch)
+    backend = WatchesChildren()
+    feed(monkeypatch, ["hello", RuntimeError("something went wrong inside the loop")])
+
+    with pytest.raises(RuntimeError):
+        axiom.main([], using=backend)
+    capsys.readouterr()
+
+    assert backend.seen, "no server was running - the test would prove nothing"
+    assert surviving(backend.seen) == [], "a server outlived an axiom that died"
+
+
+def test_the_exit_status_is_unaffected(tmp_path, monkeypatch, capsys):
+    """AC 28."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    written(
+        tmp_path,
+        {
+            "mcpServers": {
+                "tiny": {
+                    "command": sys.executable,
+                    "args": [str(HERE / "mcp_server.py")],
+                }
+            }
+        },
+    )
+    monkeypatch.chdir(tmp_path)
+    feed(monkeypatch, ["hello", "/exit"])
+
+    assert axiom.main([], using=StubBackend()) is None
+    capsys.readouterr()
+
+
+# --- AC 9: nothing carries between runs -------------------------------------
+
+
+def test_each_run_starts_its_own_servers(running):
+    """AC 9."""
+    first = running((ours(),))
+    first_pids = children_of_this_process()
+    first.stop()
+
+    second = running((ours(),))
+    assert second.run("tiny__ping", {}) == "pong"
+    assert surviving(first_pids) == [], "the first run's servers are still going"
+
+
+# --- AC 4: what is said while waiting ---------------------------------------
+
+
+def test_the_user_is_told_while_servers_are_starting(capsys):
+    """AC 4: a silent pause before the first prompt reads as a hang."""
+    terminal.note_starting(2)
+
+    assert "starting 2 MCP servers" in capsys.readouterr().out
+
+
+def test_nothing_is_said_when_there_are_none(capsys):
+    """AC 1 again: a run with no server looks exactly as it did before."""
+    terminal.note_starting(0)
+
+    assert capsys.readouterr().out == ""
 
 
 # --- what the model is told about a result ----------------------------------

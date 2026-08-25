@@ -1,67 +1,72 @@
 # Action
 
-Finish the fifteen criteria cycle 2 did not close. Its log has the split; do not re-derive it.
+**Verify cold, then take the exit.** Cycles 2 and 3 wrote all thirty implementations and
+cycle 3 judged them met. This cycle's value comes entirely from not trusting that.
 
-## 1. AC 19 and AC 20 — the timeouts must be settings, not constants
+## 1. Read the criteria as written
 
-`START_TIMEOUT` and `CALL_TIMEOUT` are module constants in `servers.py`. The criteria ask for
-each to have a default, be changeable on the command line **and** in the environment with the
-command line winning, and for every value in force to be visible at startup.
+`gh issue view 43` **first** — before any log, before the diff. Those logs argue for their own
+conclusions.
 
-- Mirror `--command-timeout` and `--fetch-timeout` exactly; that pattern is established and
-  #41 already proved the model can be told about them without drift.
-- **Visible at startup** is AC 20, and it is the half that gets forgotten.
+Then `git diff master...HEAD -- src/ tests/`.
 
-## 2. AC 10, 11, 12 — selection
+## 2. Look for more vacuous tests
 
-`ServerSpec.tools` already filters and a missing tool already reports. Test all three,
-including the case that matters: a named tool the server does not offer is reported **by
-name**, and the other named tools are still declared.
+Cycle 3 found one: AC 26 and AC 27 asserted `surviving(spawned) == []` where `spawned` was
+measured after `stop()` had already run, so the set was empty and the assertion held for any
+implementation at all. It was caught by suspicion of a first-time pass, not by an attack.
 
-## 3. AC 22, 23, 24, 25 — when a server does not work
+**Assume there are others.** For each criterion, ask the question that found it: *could this
+test pass if the feature did nothing?* Then prove the answer by breaking the feature and
+watching the test go red — the technique is in cycle 3's log and takes one command.
 
-- **AC 22** — a server still not ready at the bound is given up on, and axiom says so rather
-  than waiting. A server that starts and never answers `list_tools` is the case; our own
-  script can be made to hang.
-- **AC 23** — a call past its bound is stopped, the model told, the turn carries on.
-- **AC 24** — a server that dies mid-session fails **only its own** tools. Kill the subprocess
-  with `psutil` and check a built-in still works in the same session.
-- **AC 25** — no failure of any kind ends the session or discards the conversation.
+The likeliest candidates, because they assert on absence or on a count:
 
-## 4. AC 26, 27, 28 — leaving
+- **AC 1, 2, 29, 30** — all assert nothing changed. A test that nothing happened passes
+  loudest when nothing is wired up at all.
+- **AC 16** — `all(secret not in failure)` is true when `failures` is empty. Cycle 3 guards
+  it with `assert attached.failures`, but check the same shape elsewhere.
+- **AC 12** — asserts a name appears in `failures`; confirm the *other* tools really are still
+  declared, not that the list is merely non-empty.
+- **AC 9** — `surviving(first_pids) == []` has exactly the shape of the bug already found.
 
-**This is where the shortcut will be tempting.** `CLAUDE.md`'s clause is explicit: the server
-is a script this repo owns, run by the same interpreter. `tests/mcp_server.py` already exists.
+## 3. Attack the four hardest
 
-- **AC 26** — every server is stopped on every route out: `/exit`, `/quit`, end of input,
-  Ctrl-C. Drive `main()` by each and check with `psutil` that the children are gone.
-- **AC 27** — including through a failure. Cycle 1 measured that a hard kill leaves no
-  survivors *by inheritance* — the server exits when its stdin closes. **Proving today's
-  behaviour is not the same as owning it**, so the test asserts the outcome, and if it ever
-  stops being free `tools._kill_tree` is there.
-- **AC 28** — the exit status is unaffected by anything a server did.
+- **AC 6.** The criterion is that a collision *cannot happen*. What about a server literally
+  named `read_file`, or a server whose name contains `__`? Does `split()` route those
+  correctly, or does a cleverly-named server reach another's tools?
+- **AC 16.** Three places, and the third is the one that gets missed: **anything the model is
+  told**. A tool result comes from the server. Can a server put its own configuration into a
+  result the model then sees? If so, say whether that is axiom's to prevent.
+- **AC 23.** `CALL_TIMEOUT` bounds a call, but the bound is enforced by
+  `future.result(timeout)` — which stops *waiting*. Does the call itself stop, or does the
+  server keep working while axiom moves on? #34 hit exactly this with `run_command` reporting
+  "stopped it" while the command kept running.
+- **AC 25.** "No server failure of any kind ends the session." Try a server that dies during
+  `list_tools`, one that returns malformed content, and one whose process vanishes between
+  turns.
 
-## 5. AC 4, 9, 13 — the rest
+## 4. Re-run everything
 
-- **AC 4** — the user is told while servers are starting, rather than facing a silent pause.
-  Cheap, and it belongs in `terminal.py` with every other print.
-- **AC 9** — each run starts its own servers, nothing carries over. Two runs, different pids.
-- **AC 13** — before any conversation, the user can see what the declared tools cost against
-  the context window. Computable from the declarations; #42 measured the system prompt at 205
-  tokens for the same reason. Decide where it goes and say why.
-
-## 6. Prove nothing moved
-
-- Full suite and the hermeticity command. **294 is the floor**, and it must still pass with
+- Full suite and the hermeticity command. **313 is the floor**, and it must still pass with
   no MCP server anywhere.
-- `diff .tmp/transcript-baseline-43.txt tests/baseline/transcript.txt` — **byte-identical**
-  with nothing configured. Check for removed lines explicitly.
+- `diff .tmp/transcript-baseline-43.txt tests/baseline/transcript.txt` — **byte-identical**.
+  Check for removed lines explicitly.
+- Confirm no orphaned server processes are left behind by the suite itself.
+
+## 5. Then take the exit
+
+**All thirty hold:** `loop.md` exit 1. Commit, push, PR referencing #43, merge, delete the
+branch. Then in the same run: delete the cron, mark #43 done in `queue.md` with the PR number
+and cycle count, and **say the queue is empty** — #43 is the last row, so there is nothing to
+scaffold and stopping silently would be wrong.
+
+**Any criterion does not hold:** do not merge. Fix it, record what the cold read caught, and
+write cycle 5's action.
 
 ## Record
 
-Status for all 30, and be explicit about anything still not started. Then write cycle 4's
-`action.md` — the cold check: criteria from GitHub before the diff and before any log,
-attacking each rather than confirming it. That pass has found a real defect in three
-consecutive issues.
+Status for all 30, judged against the criteria text rather than cycle 3's table. Where a
+verdict differs, say which reading was wrong and why.
 
-**Write no questions into it.** Decide, record the decision and the reasoning, carry on.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.

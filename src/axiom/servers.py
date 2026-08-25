@@ -91,8 +91,15 @@ class Servers:
     fresh run starts fresh servers.
     """
 
-    def __init__(self, specs: tuple[ServerSpec, ...]) -> None:
+    def __init__(
+        self,
+        specs: tuple[ServerSpec, ...],
+        start_timeout: float = START_TIMEOUT,
+        call_timeout: float = CALL_TIMEOUT,
+    ) -> None:
         self.specs = specs
+        self.start_timeout = start_timeout
+        self.call_timeout = call_timeout
         self.declarations: list[dict] = []
         self.connected: dict[str, int] = {}  # server -> tools declared
         self.failures: list[str] = []  # server -> why it did not start
@@ -111,7 +118,7 @@ class Servers:
         self._thread.start()
         # The bound covers all of them together; a single slow server cannot
         # hold the prompt back indefinitely.
-        self._ready.wait(START_TIMEOUT * len(self.specs) + START_TIMEOUT)
+        self._ready.wait(self.start_timeout * len(self.specs) + self.start_timeout)
 
     def stop(self) -> None:
         """Close every session, and with it every subprocess.
@@ -123,7 +130,7 @@ class Servers:
         if not self._thread.is_alive() or self._stop is None:
             return
         self._loop.call_soon_threadsafe(self._stop.set)
-        self._thread.join(START_TIMEOUT)
+        self._thread.join(self.start_timeout)
 
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -172,9 +179,9 @@ class Servers:
                 sessions.enter_async_context(
                     Client(stdio_client(parameters, errlog=quiet))
                 ),
-                START_TIMEOUT,
+                self.start_timeout,
             )
-            listed = await asyncio.wait_for(client.list_tools(), START_TIMEOUT)
+            listed = await asyncio.wait_for(client.list_tools(), self.start_timeout)
         except Exception as failed:  # noqa: BLE001
             # Whatever a third-party server does on the way down, it costs that
             # server and nothing else.
@@ -214,9 +221,9 @@ class Servers:
             future = asyncio.run_coroutine_threadsafe(
                 client.call_tool(tool, arguments), self._loop
             )
-            return as_text(future.result(CALL_TIMEOUT))
+            return as_text(future.result(self.call_timeout))
         except TimeoutError:
-            return f"error: {server} did not answer within {CALL_TIMEOUT:g} seconds"
+            return f"error: {server} did not answer within {self.call_timeout:g} seconds"
         except Exception as failed:  # noqa: BLE001
             # A server that died mid-session fails its own tools with a reason,
             # and every other tool keeps working.
