@@ -69,6 +69,23 @@ def announce(
     print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
 
 
+def note_servers(connected: dict[str, int], problems: list[str]) -> None:
+    """Which MCP servers answered, and what went wrong with the rest.
+
+    Said after the startup line and only when there is something to say, so a
+    run with nothing configured looks exactly as it did before MCP existed.
+
+    Problems are named one by one rather than counted: each is fixed by a
+    different action - setting a variable, correcting a command, removing a
+    tool that does not exist - and a count says none of that.
+    """
+    for name, count in connected.items():
+        tools_word = "tool" if count == 1 else "tools"
+        print(f"{VOICE} {name}: {count} {tools_word}")
+    for problem in problems:
+        print(f"{VOICE} {problem}", file=sys.stderr)
+
+
 def read_line() -> str | None:
     """The next line the user types, or None if they are leaving."""
     try:
