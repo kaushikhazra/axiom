@@ -1,76 +1,78 @@
 # Action
 
-**Cycle 1 writes no production code.** Record the baseline, and probe the two things in this
-issue that can quietly break something else. A fix designed against an imagined failure is a
-fix for the wrong thing.
+Build the prompt and the three message changes. Cycle 1 measured everything this needs and
+its findings are in `logs/cycle-1.md` — do not re-derive them.
 
-## 1. Record the baseline
+## 1. The system prompt, outside `messages`
 
-- Full suite and the hermeticity check. Confirm 229 green.
-- Copy `tests/baseline/transcript.txt` to `.tmp/transcript-baseline-41.txt`. **AC 12 is
-  measured by this file**, so a later check must be a diff command rather than a memory.
-- Record the exact strings AC 7 and AC 8 are about, as they read today, by running them -
-  not by quoting the source.
-- Record what a turn looks like today when it exhausts `MAX_TOOL_ROUNDS`: drive a stub that
-  calls a tool every round and never answers, and write down exactly what the user sees.
-  That is AC 10's before.
+Decided in cycle 1 on measurement: the prompt is **not** stored in `messages`. It is held by
+`main()` and prepended at send time, so `compaction.py` never sees it.
 
-## 2. Probe the system prompt against compaction
+- Built from the resolved `Limits`, so AC 2 is true by construction rather than by a second
+  copy of the values that can drift. Changing `--command-timeout` changes what the model is
+  told, because it is the same object.
+- **Describe the limits, not the inventory.** No tool count, no tool names — #43 makes the
+  tool list vary by run and a prompt naming "seven tools" would be wrong in two loops.
+- **`estimated_tokens` and `too_large` must count it.** They assemble from `messages`, which
+  no longer holds the whole payload. Miss this and the size check under-counts by exactly the
+  prompt, every turn. Cycle 1 measured the cost at 56 tokens for a draft; a fuller prompt
+  will be larger.
+- AC 4's instruction goes in the same prompt: keep work inside the working directory, go
+  outside it only when the user names a path outside. **No enforcement** — `assumption.md`
+  settles that, and AC 5 exists to stop a guard being built.
 
-This is the sharpest edge in the issue and it is cheap to measure.
+**The working directory needs shaping.** Cycle 1's probe: asked how long a command may run,
+`qwen2.5:7b` answered from the prompt correctly; asked what directory it was working in, it
+called `read_file` and said nothing — from the same list. A duration reads as a fact and a
+path reads as something to go and look up. Try stating it as the place work lands rather than
+as a value in a list. If a small model still will not recall it, **make axiom state it rather
+than ask the model to** — that is #35 AC 12's lesson and it bounds how far to chase this.
 
-`compaction.compacted_history` checks whether the older half of the history begins with a
-system message and, if so, treats it as a carried-forward summary and appends to it. A
-permanent system prompt would sit at index 0 forever.
+## 2. AC 7 and AC 10, the two messages
 
-Drive a session with a system prompt at index 0, past a compaction, with
-`AXIOM_DEBUG_MAX_CONTEXT` small enough to force one. Record:
+- **AC 7.** Today: `error: still running after 1 seconds - stopped it`, which reads like the
+  control failure `error: exited with status 3`. Make it say the bound is a rule that will
+  apply again to the same command. Fix "1 seconds" while there.
+- **AC 10.** Today the round loop falls out of `range(MAX_TOOL_ROUNDS)` and the user gets
+  `'\n\n'` — no answer, no reason. Say the turn ended because it reached the round limit.
+  **Not by raising the limit.** `terminal.py` owns the printing.
 
-- Does the prompt get absorbed into the summary, duplicated, or dropped?
-- Does it survive compaction at all? A model that loses its limits mid-session fails AC 1
-  for every turn after the first compaction, and nothing would report it.
-- What does it cost against the window? Measure the characters, and say what fraction of a
-  small context it takes.
+## 3. AC 9, and be precise about "the same"
 
-**If it breaks compaction, say so plainly and design around it in cycle 2.** The options -
-keeping the prompt outside `messages` and prepending at send time, or teaching
-`compacted_history` to distinguish the two kinds of system message - are both cheap. Pick on
-evidence, not preference.
+The same command failing the same way twice in one turn is not run a third time. Both halves
+are load-bearing:
 
-## 3. Probe what a real model does with being told
+- **Same command** — the exact string, and say so in the code.
+- **Same failure** — say in a comment what this is compared on. A command that fails
+  differently the second time is not this case; a *different* command failing the same way is
+  not either.
 
-`observe.md` requires a live model for AC 1, 3, 4 and 5. Find out now whether the local
-models comply at all, because the answer shapes the whole issue.
+Scope is one turn. Nothing carries between turns.
 
-Working directory `C:/Projects/.tmp/axiom-tool-sandbox`, non-destructive requests only, per
-`CLAUDE.md`. With a draft prompt stating the limits:
+## 4. AC 8 is already met — pin it, do not rebuild it
 
-- Ask something that would exceed the command timeout. Does it say so instead of trying?
-- Ask it to change the timeout. Is it refused, and does it accept that?
-- Ask it to create a file with a bare relative name. Does it land in the working directory?
-- Ask it to create a file at an explicit path outside. Is that still honoured? **AC 5 fails
-  if the instruction makes it refuse.**
+Cycle 1 checked it honestly and it holds: `[cut here - N more characters not included]`
+against a bare page with no marker. Write a test that pins the distinction so a later change
+cannot erode it, and spend no further effort there.
 
-Record what each model actually did. If a model ignores the prompt entirely, that is the
-most important finding in the cycle and #35 AC 12's lesson applies: make axiom do the thing
-rather than ask the model to.
+## 5. Prove it, and prove nothing else moved
 
-## 4. Check AC 8 honestly
-
-The current cut message may already satisfy it. Read the criterion, read the message, and
-say met or not met with the reasoning. **Do not invent a change to justify the criterion** -
-inventing work is as wrong as skipping it.
-
-## 5. Say what the fix will be
-
-One paragraph per criterion group, no code. Where the prompt lives, what it says, how AC 9
-compares "the same failure", and what AC 10 prints. If a probe shows the obvious approach is
-wrong, say that instead.
+- Unit tests for each of AC 2, 6, 7, 8, 9, 10, 11, 12.
+- **AC 12 is the transcript.** `diff .tmp/transcript-baseline-41.txt tests/baseline/transcript.txt`.
+  A system prompt is not output, but anything leaking it to the screen is. If a scenario
+  genuinely moves, regenerate deliberately and say which lines and why.
+- Full suite and the hermeticity command. 229 is the floor.
+- **AC 1, 3, 4 and 5 need the live probe**, extended to cover AC 4 and AC 5: a relative
+  filename lands in the working directory, and an explicitly named outside path is still
+  honoured. `.tmp/probe_live_41.py` is the starting point. Working directory
+  `C:/Projects/.tmp/axiom-tool-sandbox`, non-destructive only, never the repo. Run more than
+  one model — cycle 1 only covered `qwen2.5:7b`, and `gemma4:e2b`, `ornith:9b` and
+  `qwen2.5-coder:7b` all report tool support.
 
 ## Record
 
-Status for all 12 - most will read `not-started`, which is correct for this cycle. Then
-write cycle 2's `action.md`.
+Status for all 12. Then write cycle 3's `action.md`, which is the cold check: criteria from
+GitHub before the diff and before this log, attacking each rather than confirming it.
 
 **Write no questions into it.** Decide, record the decision and the reasoning in the log,
 carry on. Nobody is reading between firings.

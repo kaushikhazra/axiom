@@ -15,9 +15,21 @@ hermetic** at scaffold time.
   issue and the one most likely to have side effects.
 - **`compaction.py` treats a leading system message as a carried-forward summary.**
   `compacted_history` checks whether `older` begins with a system message and appends newly
-  summarized facts to it. A permanent system prompt sitting at index 0 lands directly in
-  that path. **Check it before assuming compaction is unaffected** - this is the sharpest
-  edge in the issue.
+  summarized facts to it. Measured in cycle 1, with a permanent prompt at index 0: it
+  survives one compaction, five compactions, and #32's `bounded()`. Two things spoil it:
+  - **A leading system message suppresses the summary header.** The `"Summary of earlier
+    conversation:"` line is only added in the `else` branch, so the conversation's facts get
+    appended straight onto the prompt with nothing labelling them. That header is
+    deliberate - its own comment explains it sits on its own line so dropping the oldest
+    fact cannot take it away.
+  - **`bounded()` keeps the front of the string**, so a prompt at index 0 survives by
+    accident of #32's choice to forget the middle. Nothing records the dependency, and a
+    future change to the bounding strategy would start eating the model's limits silently.
+- **Decided in cycle 1: the system prompt lives outside `messages`** and is prepended at
+  send time. Compaction never sees it, the header logic is untouched, and `bounded()` gains
+  no hidden dependant. **`estimated_tokens` and `too_large` must count it**, or the size
+  check under-counts by exactly the prompt on every turn - flag this to #42, which owns that
+  check.
 - **`MAX_TOOL_ROUNDS = 8` in `__init__.py`**, with a comment explaining why it is eight and
   not five. AC 10 is about what the user is told when the loop exhausts it: today the `for
   _round in range(...)` simply ends and whatever `reply` holds is shown, which may be
