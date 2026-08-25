@@ -93,6 +93,60 @@ def test_nothing_is_refused_before_compaction_has_run(monkeypatch, capsys):
         assert backend.compactions >= 1, "refused without compacting first"
 
 
+def test_the_message_the_user_just_typed_is_never_compacted_away(monkeypatch, capsys):
+    """The bug cycle 3 found by attacking AC 3, and the worst one in this issue.
+
+    `maybe_compact` runs *before* the user's line is appended, which is what
+    keeps compaction to history. `compact_to_fit` runs after it, so the new
+    message was itself a compaction candidate - and at `kept_pairs=0` it was
+    replaced by a summary of itself. The model received the system prompt and
+    "Summary of earlier conversation: - the user asked a long question", with
+    no user message at all, and answered a question it had never seen. Nothing
+    was said about it. That is worse than the refusal it replaced.
+    """
+    marker = "WHAT-IS-THE-CAPITAL-OF-PERU"
+    question = marker + " " + ("and here is a great deal more detail " * 90)
+    backend = Watched(
+        info={"qwen2.context_length": 1200},
+        usage=1,
+        summary="- the user asked a long question",
+    )
+    feed(monkeypatch, [question, "/exit"])
+
+    axiom.main([], using=backend)
+    err = capsys.readouterr().err
+
+    for sent in backend.streamed:
+        assert any(marker in (m.get("content") or "") for m in sent), (
+            "the model was sent a turn without the question it was meant to answer"
+        )
+    # Too large to send at all here, which is the honest outcome - and the
+    # advice is one the user can act on.
+    assert "this message is about" in err
+    assert "shorter" in err
+
+
+def test_history_behind_the_new_message_is_still_compacted(monkeypatch, capsys):
+    """The other half: holding the message out must not stop compaction working.
+
+    A fix that simply skipped compaction whenever a message was pending would
+    pass the test above and undo the whole issue.
+    """
+    backend = Watched(
+        info={"qwen2.context_length": 2000},
+        usage=1,
+        summary="- the user asked several long things",
+    )
+    feed(monkeypatch, [long_message(200)] * 5 + ["a short follow-up", "/exit"])
+
+    axiom.main([], using=backend)
+    err = capsys.readouterr().err
+
+    assert backend.compactions >= 1, "history behind the message was never compacted"
+    assert "too large" not in err
+    assert len(backend.streamed) == 6
+
+
 # --- AC 3 and AC 4: the session carries on ----------------------------------
 
 

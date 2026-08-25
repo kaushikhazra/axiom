@@ -31,6 +31,63 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 
 --- ending --- returned normally (exit status 0)
 
+=== a message too large to send says so, and the session carries on ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
+> > a reply
+> 
+--- stderr ---
+error: this message is about 538 tokens too large to send - try a shorter one
+
+--- ending --- returned normally (exit status 0)
+
+=== the conversation outgrows what is left and says a new session is needed ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 7 tools including web)
+> a reply
+> a reply
+> a reply
+> a reply
+> axiom: compacting older history (everything)
+axiom: the summary is full - forgetting 17:
+  | - fact 5 the user mentioned earlier
+  | - fact 6 the user mentioned earlier
+  | - fact 7 the user mentioned earlier
+  | - fact 8 the user mentioned earlier
+  | - fact 9 the user mentioned earlier
+  | - fact 10 the user mentioned earlier
+  | - fact 11 the user mentioned earlier
+  | - fact 12 the user mentioned earlier
+  | - fact 13 the user mentioned earlier
+  | - fact 14 the user mentioned earlier
+  | - fact 15 the user mentioned earlier
+  | - fact 16 the user mentioned earlier
+  | - fact 17 the user mentioned earlier
+  | - fact 18 the user mentioned earlier
+  | - fact 19 the user mentioned earlier
+  | - fact 20 the user mentioned earlier
+  | - fact 21 the user mentioned earlier
+> axiom: compacting older history (everything)
+> axiom: compacting older history (everything)
+> axiom: compacting older history (everything)
+> 
+--- stderr ---
+error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
+error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
+error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
+error: the conversation so far is about 51 tokens too large to send, and it has already been compacted as far as it goes - start a new session to carry on
+
+--- ending --- returned normally (exit status 0)
+
+=== a context too small for any message at all ends the session ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 7 tools including web)
+> 
+--- stderr ---
+error: this session cannot continue - the context is too small to hold even an empty message, so nothing you type will fit. Start axiom with a larger context.
+
+--- ending --- returned normally (exit status 0)
+
 === compaction fires and says so ===
 --- stdout ---
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)

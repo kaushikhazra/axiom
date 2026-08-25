@@ -146,13 +146,26 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
             # the measurement rather than by usage, so it runs whatever the
             # last turn reported - including on a first turn, where usage is
             # None and compaction has never run at all.
+            # The line the user just typed is held out of it. `maybe_compact`
+            # runs *before* this line is appended, which is what keeps it to
+            # history; `compact_to_fit` runs after, so without this the new
+            # message is itself a compaction candidate. At kept_pairs=0 it was
+            # replaced by a summary of itself and the model was sent a prompt
+            # and "the user asked a long question" - answering a question it
+            # had never seen, with nothing said about it. Worse than the
+            # refusal it replaced.
+            #
+            # Passed as overhead instead: compact the history until the
+            # history, the prompt and this message fit together.
+            pending = messages.pop()
             messages, squeezed, let_go = compaction.compact_to_fit(
                 model_backend,
                 settings.model,
                 messages,
                 effective_context,
-                len(instructions["content"]),
+                len(instructions["content"]) + len(pending["content"]),
             )
+            messages.append(pending)
             # Reported through the same two lines a usage-triggered compaction
             # uses. A second path that forgot silently would undo #32.
             if squeezed is not None:
