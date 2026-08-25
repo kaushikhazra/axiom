@@ -6,6 +6,8 @@ from dataclasses import dataclass
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen2.5:7b"
+DEFAULT_COMMAND_TIMEOUT = 30.0
+OFF_VALUES = {"off", "0", "false", "no"}
 
 
 @dataclass(frozen=True)
@@ -19,6 +21,9 @@ class Settings:
     host: str
     model: str
     debug_max_context: int | None = None
+    working_directory: str | None = None
+    command_timeout: float = DEFAULT_COMMAND_TIMEOUT
+    tools_enabled: bool = True
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -35,6 +40,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=os.environ.get("AXIOM_MODEL", DEFAULT_MODEL),
         help=f"Model to chat with. Overrides $AXIOM_MODEL. Default: {DEFAULT_MODEL}",
     )
+    parser.add_argument(
+        "--working-directory",
+        default=os.environ.get("AXIOM_WORKING_DIRECTORY"),
+        help=(
+            "Directory tools act in. Overrides $AXIOM_WORKING_DIRECTORY. "
+            "Default: where axiom was started"
+        ),
+    )
+    parser.add_argument(
+        "--command-timeout",
+        type=float,
+        default=float(os.environ.get("AXIOM_COMMAND_TIMEOUT", DEFAULT_COMMAND_TIMEOUT)),
+        help=(
+            "Seconds a command may run before it is stopped. Overrides "
+            f"$AXIOM_COMMAND_TIMEOUT. Default: {DEFAULT_COMMAND_TIMEOUT:g}"
+        ),
+    )
+    parser.add_argument(
+        "--no-tools",
+        action="store_true",
+        default=os.environ.get("AXIOM_TOOLS", "").lower() in OFF_VALUES,
+        help="Chat without tools. Overrides $AXIOM_TOOLS. Default: tools on",
+    )
     return parser.parse_args(argv)
 
 
@@ -46,4 +74,7 @@ def resolve(argv: list[str] | None = None) -> Settings:
         host=args.host,
         model=args.model,
         debug_max_context=int(override) if override is not None else None,
+        working_directory=args.working_directory,
+        command_timeout=args.command_timeout,
+        tools_enabled=not args.no_tools,
     )

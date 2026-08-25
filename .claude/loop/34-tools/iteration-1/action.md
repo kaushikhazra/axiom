@@ -1,60 +1,63 @@
 # Action
 
-Wire configuration and the startup line. This is the cycle where the transcript changes
-deliberately, so make that the headline rather than a side effect.
+Close AC 20, AC 30 and AC 31. Take AC 20 first - it is the one carrying an unknown, and the
+other two are small.
 
-## Configuration first
+## AC 20: what compaction makes of tool history
 
-`config.Settings` gains the two things tools need, each with a default and an override
-(AC 32, AC 33), plus a switch (AC 34):
+`compacted_history` was written for a conversation of `{role, content}` pairs. Tool use
+breaks both halves of that assumption:
 
-- the directory commands run in - default: wherever axiom was started
-- the command time limit - default: the current 30 seconds
-- tools on or off for the session
+- an assistant message carrying only `tool_calls` has `content=""`
+- a `tool`-role message is not part of a user/assistant pair at all
 
-Resolve them in `config.resolve()` alongside host and model, same precedence: command line,
-then environment, then default. Then hand them to `tools` rather than leaving
-`WORKING_DIRECTORY` and `COMMAND_TIMEOUT_SECONDS` as module constants nothing sets.
+Nothing has checked what happens. **Find out before deciding anything.** Build a history
+containing a tool exchange, run `maybe_compact` over it, and record exactly what comes back -
+whether the tool calls survive, whether the pair arithmetic still lines up, and whether the
+summary the model is given still describes what was done.
 
-**How they are handed over is the design decision.** Module-level globals that `main()`
-mutates would work and would be the wrong shape - `tools.run()` would depend on assignment
-order, and two tests running in either order would interfere. Prefer passing what a tool
-needs into `run()`, and keep it out of the model-visible schema so the argument filter added
-in cycle 4 still refuses it from a model.
+Then decide, and say which it is:
 
-## Then the startup line
+- the existing behaviour is already correct, and a test now pins it; or
+- it is wrong, and here is the fix.
 
-AC 1: tools are available, shown alongside model, host and context.
-AC 2: a model that cannot call tools is said so in plain terms, and chat still works.
-AC 34: when tools are off, the line says so.
+**Do not assume it is broken.** A conversation whose older turns are replaced by a system
+summary may lose nothing that matters - the summary says a file was read and what it said.
+The criterion asks that compaction *treats them as history*, not that the calls survive
+verbatim.
 
-Three states, one line. `terminal.announce()` already formats the startup line and should
-keep doing it - do not assemble the text in `main()` and pass a finished string.
+The sharp end is AC 20's second half: a compacted session must still be able to refer to work
+done before the compaction. Test that directly - a tool result from turn one, a compaction,
+then a question in turn ten whose answer depends on it.
 
-## Then regenerate the transcript, deliberately
+## AC 30: Ctrl-C during a running tool
 
-Every one of the sixteen scenarios starts with that line, so all sixteen change. This is the
-legitimate regeneration `observe.md` describes.
+The turn loop already catches `KeyboardInterrupt` around the whole turn, so the session
+survives. The question is what happens to the **process**.
 
-**Follow the cycle-3 procedure, which earned itself:** copy the baseline aside first,
-regenerate, then `diff` old against new and put the diff in the log. Confirm every changed
-line is the startup line and nothing else moved. A regeneration reviewed without a diff is
-how a real regression gets committed as an intended change.
+`run_command` blocks in `communicate()`. An interrupt there propagates out with the child
+still running - the same class of bug as cycle 4's timeout, and this one leaves a process
+behind after the user thinks they cancelled. Handle it where the timeout is handled, kill the
+tree, and re-raise so the turn still unwinds.
 
-Add scenarios for the states that do not exist yet: tools switched off, and a model that
-cannot use them (the latter exists but its startup line is about to gain meaning).
+Test it the way cycle 4's timeout was tested: have the command write a marker after the
+interrupt should have killed it, and assert the marker never appears. Asserting only that the
+session survived would pass against a program that leaks processes.
 
-## Then AC 30 and AC 31 if there is room
+## AC 31: telling failures apart
 
-Ctrl-C during a running tool, and a tool failure being distinguishable from a model or
-connection failure. If the cycle is full, leave them - they are small and independent.
+A tool that failed, a model that refused, and a connection that dropped must not read the
+same. Two of the three already differ. Check the third and close the gap if there is one -
+`report_failure` handles model and connection failures; a tool failure currently arrives as
+`  | error: ...` in the tool output, which may already be distinct enough. Decide with the
+transcript in front of you rather than from the code.
 
-## Do not
+## Then, if the cycle has room
 
-Touch the live models. That is its own cycle, and it needs the startup line settled first so
-what it verifies is the finished behaviour.
+Nothing. Leave the live model pass to its own cycle - it needs three model loads and should
+not be squeezed into the end of another.
 
 ## Record
 
-Full suite and the hermeticity check. `wc -l` and test count against 828 and 106. Status for
-all 35. The diff, in full.
+Full suite and the hermeticity check. Status for all 35. If the transcript changes, diff it
+and put the diff in the log.

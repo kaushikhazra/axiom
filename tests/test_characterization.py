@@ -111,7 +111,13 @@ class StubClient:
             yield chunk(action, self.prompt_eval_count, 0)
 
 
-def _run(name: str, lines: list, client: StubClient, debug_context: str | None) -> str:
+def _run(
+    name: str,
+    lines: list,
+    client: StubClient,
+    debug_context: str | None,
+    argv: list[str] | None = None,
+) -> str:
     out, err = io.StringIO(), io.StringIO()
     ending = "returned normally (exit status 0)"
 
@@ -130,7 +136,7 @@ def _run(name: str, lines: list, client: StubClient, debug_context: str | None) 
         feed(mp, lines)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
-                axiom.main([])
+                axiom.main(argv or [])
             except SystemExit as exit_called:
                 ending = f"SystemExit({exit_called.code})"
             except BaseException as escaped:  # noqa: BLE001
@@ -152,7 +158,7 @@ def _stable(text: str) -> str:
     return text.replace(str(SANDBOX), "<sandbox>")
 
 
-def _scenarios() -> list[tuple[str, list, StubClient, str | None]]:
+def _scenarios() -> list[tuple]:
     """Built fresh on every call - a stub carries per-run state."""
     return [
         (
@@ -260,6 +266,13 @@ def _scenarios() -> list[tuple[str, list, StubClient, str | None]]:
             ["hello", "/exit"],
             StubClient(capabilities=["completion"], turns=[["hello to you"]]),
             None,
+        ),
+        (
+            "tools switched off for the session",
+            ["hello", "/exit"],
+            StubClient(turns=[["hello to you"]]),
+            None,
+            ["--no-tools"],
         ),
     ]
 

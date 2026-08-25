@@ -32,13 +32,34 @@ PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
-def announce(model: str, host: str, context: int | None, overridden: bool) -> None:
-    """The startup line: what we are talking to, and with how much room."""
+def announce(
+    model: str,
+    host: str,
+    context: int | None,
+    overridden: bool,
+    tools: int | None,
+) -> None:
+    """The startup line: what we are talking to, with how much room, and what
+    it can do.
+
+    `tools` is how many are available, 0 when the user switched them off, and
+    None when the model cannot call them at all. The three read differently
+    because the user can act on them differently - one is their own choice,
+    one is a fact about the model.
+    """
     if context is None:
-        note = "Ollama default"
+        room = "Ollama default"
     else:
-        note = f"{context} tokens{', debug override' if overridden else ''}"
-    print(f"{VOICE} {model} at {host} (context: {note})")
+        room = f"{context} tokens{', debug override' if overridden else ''}"
+
+    if tools is None:
+        can_do = "no tools - this model cannot call them"
+    elif tools == 0:
+        can_do = "tools off"
+    else:
+        can_do = f"{tools} tools"
+
+    print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
 
 
 def read_line() -> str | None:

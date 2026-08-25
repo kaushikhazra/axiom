@@ -13,8 +13,8 @@ from axiom import tools
 PYTHON = sys.executable
 
 
-def run(command: str) -> str:
-    return tools.run("run_command", {"command": command})
+def run(command: str, limits: tools.Limits = tools.DEFAULT_LIMITS) -> str:
+    return tools.run("run_command", {"command": command}, limits)
 
 
 def test_a_command_returns_its_output():
@@ -74,42 +74,43 @@ def test_a_command_with_no_output_says_so_rather_than_looking_broken():
     assert "error" not in result
 
 
-def test_a_command_that_will_not_finish_is_stopped(monkeypatch):
+def test_a_command_that_will_not_finish_is_stopped():
     """AC 27: stopped at the limit, and the user told it was stopped."""
-    monkeypatch.setattr(tools, "COMMAND_TIMEOUT_SECONDS", 0.5)
-
     started = time.monotonic()
-    result = run(f'{PYTHON} -c "import time; time.sleep(30)"')
+    result = run(
+        f'{PYTHON} -c "import time; time.sleep(30)"',
+        tools.Limits(command_timeout=0.5),
+    )
     elapsed = time.monotonic() - started
 
     assert "stopped" in result
     assert elapsed < 10, "waited for the command instead of stopping it"
 
 
-def test_a_stopped_command_is_actually_killed(monkeypatch, tmp_path):
+def test_a_stopped_command_is_actually_killed(tmp_path):
     """A command reported as stopped must not still be running.
 
     Telling the user it was stopped while it carries on working is worse than
     not stopping it at all - they believe nothing is happening.
     """
     marker = tmp_path / "survived.txt"
-    monkeypatch.setattr(tools, "COMMAND_TIMEOUT_SECONDS", 0.5)
 
     script = (
         "import time, pathlib; time.sleep(2); "
         f"pathlib.Path(r'{marker}').write_text('still here')"
     )
-    result = run(f'{PYTHON} -c "{script}"')
+    result = run(f'{PYTHON} -c "{script}"', tools.Limits(command_timeout=0.5))
 
     assert "stopped" in result
     time.sleep(3)  # long enough for the child to have finished, had it survived
     assert not marker.exists(), "the stopped command kept running"
 
 
-def test_the_working_directory_is_where_commands_run(monkeypatch, tmp_path):
-    """AC 32's mechanism. Its default and override are wired to config later."""
-    monkeypatch.setattr(tools, "WORKING_DIRECTORY", str(tmp_path))
-
-    result = run(f'{PYTHON} -c "import os; print(os.getcwd())"')
+def test_the_working_directory_is_where_commands_run(tmp_path):
+    """AC 32's mechanism."""
+    result = run(
+        f'{PYTHON} -c "import os; print(os.getcwd())"',
+        tools.Limits(working_directory=str(tmp_path)),
+    )
 
     assert str(tmp_path) in result

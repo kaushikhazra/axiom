@@ -15,10 +15,13 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
     model_backend = using or backend.OllamaBackend(settings.host)
 
     # Asked once, before anything is sent: a model with no tool support is told
-    # nothing about tools rather than being sent some and refusing.
-    declarations = (
-        tools.declarations() if model_backend.supports_tools(settings.model) else None
-    )
+    # nothing about tools rather than being sent some and refusing. `available`
+    # is None for "cannot", 0 for "switched off", a count otherwise - three
+    # states the startup line reports differently.
+    capable = model_backend.supports_tools(settings.model)
+    declarations = tools.declarations() if capable and settings.tools_enabled else None
+    available = len(declarations) if declarations else (0 if capable else None)
+    limits = tools.Limits(settings.working_directory, settings.command_timeout)
 
     effective_context = context.effective_context(
         model_backend.model_info(settings.model)
@@ -34,6 +37,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         settings.host,
         effective_context,
         overridden=settings.debug_max_context is not None,
+        tools=available,
     )
 
     messages: list[dict[str, str]] = []
@@ -85,7 +89,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                 )
                 for call in calls:
                     terminal.note_tool(call.name, call.arguments)
-                    result = tools.run(call.name, call.arguments)
+                    result = tools.run(call.name, call.arguments, limits)
                     terminal.show_tool_result(result)
                     messages.append(
                         {"role": "tool", "content": result, "tool_name": call.name}

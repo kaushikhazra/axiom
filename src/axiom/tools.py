@@ -26,10 +26,23 @@ class Tool:
     description: str
     parameters: dict
     run: Callable[..., str]
+    needs_limits: bool = False
 
 
-COMMAND_TIMEOUT_SECONDS = 30.0
-WORKING_DIRECTORY: str | None = None  # None means wherever axiom was started
+@dataclass(frozen=True)
+class Limits:
+    """Operational settings a tool may need.
+
+    Never model-visible: these belong to the user, and run() refuses any
+    argument a tool did not declare in its schema, so a model cannot set them
+    by asking.
+    """
+
+    working_directory: str | None = None  # None means where axiom was started
+    command_timeout: float = 30.0
+
+
+DEFAULT_LIMITS = Limits()
 
 
 def read_file(path: str) -> str:
@@ -105,22 +118,22 @@ def _kill_tree(pid: int) -> None:
             pass  # already gone, which is the outcome we wanted
 
 
-def run_command(command: str) -> str:
+def run_command(command: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
     process = subprocess.Popen(  # noqa: S602
         command,
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        cwd=WORKING_DIRECTORY,
+        cwd=limits.working_directory,
     )
     try:
-        stdout, stderr = process.communicate(timeout=COMMAND_TIMEOUT_SECONDS)
+        stdout, stderr = process.communicate(timeout=limits.command_timeout)
     except subprocess.TimeoutExpired:
         _kill_tree(process.pid)
         process.communicate()  # returns now that nothing holds the pipes open
         return (
-            f"error: still running after {COMMAND_TIMEOUT_SECONDS:g} seconds "
+            f"error: still running after {limits.command_timeout:g} seconds "
             f"- stopped it"
         )
     return _report(stdout, stderr, process.returncode)
@@ -209,6 +222,7 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["command"],
             },
             run=run_command,
+            needs_limits=True,
         ),
     )
 }
@@ -229,7 +243,7 @@ def declarations() -> list[dict]:
     ]
 
 
-def run(name: str, arguments: dict) -> str:
+def run(name: str, arguments: dict, limits: Limits = DEFAULT_LIMITS) -> str:
     """Run a call and return what the model should be told.
 
     A failure is returned rather than raised: the model is the one that has to
@@ -249,6 +263,8 @@ def run(name: str, arguments: dict) -> str:
         return f"error: {name} does not take {', '.join(unexpected)}"
 
     try:
+        if tool.needs_limits:
+            return tool.run(**arguments, limits=limits)
         return tool.run(**arguments)
     except TypeError as wrong_arguments:
         return f"error: {name} was called wrongly - {wrong_arguments}"
