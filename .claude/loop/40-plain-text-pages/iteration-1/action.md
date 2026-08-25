@@ -1,82 +1,78 @@
 # Action
 
-**Cycle 1 writes no production code.** Measure what is actually true, record the baseline
-the preservation criteria will be judged against, and settle the two contradictions. A fix
-designed against an imagined failure is a fix for the wrong thing - that is why #32 spent
-its first cycle this way and why its second cycle overturned the plan.
+Write the classifier and the three outcomes. Cycle 1 measured everything this needs; the
+plan is in `logs/cycle-1.md` section 5 and is not to be re-derived.
 
-## 1. Probe the library
+## 1. The classifier
 
-One short script in `.tmp/`, not a test. Call `trafilatura.extract` directly on bodies you
-construct and record the exact return value for each:
+A small function in `tools.py` that turns a response into one of three answers: HTML, text,
+or not readable.
 
-- a plain-text body with indentation and blank lines
-- a markdown body
-- a csv body
-- a javascript body
-- an empty string
-- an HTML body with real prose, as the control
+- Take `page.headers.get("content-type")`, split on `;`, first field, `.strip().lower()`.
+  Cycle 1 measured all three shapes this has to survive: `text/plain; charset=utf-8`, a bare
+  `text/plain`, and `application/pdf; qs=0.001`.
+- **HTML**: `text/html`, `application/xhtml+xml`.
+- **Text**: anything else under `text/`, plus the text-ish `application/*` types -
+  `application/json`, `application/javascript`, `application/xml`, and the `+json` / `+xml`
+  suffixes. Raw hosts serve markdown, rst, csv and javascript as `text/plain`, but other
+  hosts will not.
+- **Text**, also, when the header is missing or blank. That is Kaushik's decision in
+  `assumption.md`: text is the only treatment that can hand back exactly what was served.
+- **Not readable**: everything else.
 
-Record what came back verbatim - `None`, `''`, or text. If any of these returns usable text,
-the shape of the fix changes, so measure rather than assume.
+Test the classifier directly on header strings, including the three measured shapes, an
+absent header, an empty string, and an uppercase `TEXT/PLAIN`.
 
-## 2. Probe what real servers actually send
+## 2. The three outcomes in `fetch_page`
 
-The branch this fix keys on is `Content-Type`, so record what real ones look like. Fetch
-each and record the exact header, the status, and the first line of the body:
+Order is load-bearing. `httpx.get` and the `status_code >= 400` guard do not move - AC 12
+depends on that, and cycle 1 recorded the four strings it protects.
 
-- a raw source file (`raw.githubusercontent.com`)
-- a README served raw
-- a `robots.txt`
-- a licence file
-- a PDF
-- an image
-- something serving no `Content-Type` at all, if one can be found
+- **HTML** - today's path unchanged: `trafilatura.extract(page.text)`, and the existing
+  `error: {url} has no readable text` when it returns None. AC 4 and AC 5 are preserved by
+  not touching this branch.
+- **Text** - `page.text` verbatim. No extraction. Indentation and line breaks survive,
+  which is AC 2. Then the existing `page_characters` cut with its existing
+  `[cut here - N more characters not included]` message, which is AC 9.
+- **Not readable** - return an `error:` naming the type, and **never access `page.text`**.
+  Not truncated, not decoded, not sampled. Cycle 1 confirmed `page.text` returns
+  `'�PNG\r\n\x1a\n…'` for a PNG without raising, so this is a real path to guard, not a
+  theoretical one.
 
-Note charset suffixes, casing, and whitespace exactly as they arrive. AC 3 names markdown,
-rst, csv and javascript specifically - find out what types those are really served as,
-because "text/*" may not cover all of them and `application/json` and
-`application/javascript` are the obvious traps.
+**Empty**, across both readable branches: a body that is empty or only whitespace returns
+`warning: {url} is empty`. Not an error. An HTML body that has content but no extractable
+prose keeps today's `error: … has no readable text` - AC 5 and AC 8 are different cases and
+stay different messages.
 
-## 3. Record the baseline
+## 3. The source seam
 
-- Full suite and the hermeticity check. Confirm 193 green.
-- Copy `tests/baseline/transcript.txt` aside so a later diff is a command, not a memory.
-- Run the four AC 12 failures as they behave **today** and record their exact messages:
-  unreachable address, error status, fetch past the time limit, cancelled fetch. These are
-  the strings AC 12 says must not change.
-- Record today's behaviour for a plain-text page and for a PDF, so the before/after is on
-  the record rather than described.
+Decided in cycle 1 section 4, on the precedent of `addresses_in()` in the same module:
+*"Parser and format live together deliberately; splitting them is how one drifts from the
+other."*
 
-## 4. Find the seam for the third state
+- A named function in `tools.py` answers whether a `fetch_page` result means the page was
+  read. It knows about both prefixes because it sits beside the code that writes them.
+- `__init__.py` calls it instead of testing `not result.startswith("error:")` itself.
+- Do not widen this to other tools and do not generalise it for #43. Cycle 1 established
+  that #43 does not pressure this decision - the call site is already gated on
+  `call.name == "fetch_page"`.
 
-The three outcomes are decided and recorded in `assumption.md`. What is **not** decided is
-how the middle one travels, and that is a code question, not a judgement call.
+## 4. Prove it, and prove nothing else moved
 
-`__init__.py` decides a source with `not result.startswith("error:")`. An empty page must
-reach the user as a warning, must not be an error, and must not be a source - which that
-single test cannot express. Read the call site and say what the smallest honest change is.
-Options worth weighing, in one line each: a second recognised prefix; `fetch_page` returning
-something richer than a bare string; or the source decision moving out of `__init__.py` and
-into `tools.py` where the outcome is actually known.
-
-Weigh them against #43, which will add tools from MCP servers whose results axiom does not
-author. A source rule that only works for strings axiom wrote itself is a rule that breaks
-in two loops' time. Recommend one and say what it costs.
-
-## 5. Say what the fix will be
-
-One paragraph, no code. Which branch goes where in `fetch_page`, what decides text from
-not-text given that a missing type now means text, and how each of the three outcomes leaves
-the function. If the probes show the obvious fix is wrong, say that instead - that is a
-better cycle 1 than a plan that survives because nothing tested it.
+- Unit tests for each branch, with stubbed responses, asserting on **what the function
+  returned** - never on what was printed. AC 6's test asserts the PNG's bytes appear nowhere
+  in the result, not that the message says "not readable".
+- Run the four AC 12 probes again and diff against the strings in cycle 1's log. They are
+  quoted there exactly.
+- Full suite and the hermeticity command. 193 is the floor; it should only grow.
+- `diff` the golden transcript against `.tmp/transcript-baseline-cycle1.txt`. If it moved,
+  say which lines and why, and only regenerate deliberately with `AXIOM_WRITE_BASELINE=1`.
 
 ## Record
 
-Status for all 12 criteria - most will read `not-started`, and that is the correct result
-for this cycle. AC 12's four behaviours get their baseline strings recorded, which makes
-them `attempted` at best, not met. Then write cycle 2's `action.md`.
+Status for all 12. AC 1, 2, 3, 6, 7 and 9 should reach `met-with-evidence` this cycle if the
+branches land; AC 8, 10 and 11 depend on the source seam and may follow in cycle 3. Then
+write cycle 3's `action.md`.
 
-**Write no questions into it.** If cycle 1 turns up something ambiguous, decide it, record
-the decision and the reasoning in the log, and carry on - see `observe.md`. Nobody is
-reading between firings.
+**Write no questions into it.** Decide, record the decision and the reasoning in the log,
+carry on. Nobody is reading between firings.

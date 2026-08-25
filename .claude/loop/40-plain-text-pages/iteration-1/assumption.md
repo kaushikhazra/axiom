@@ -16,7 +16,20 @@ tests, green and hermetic** at scaffold time.
   which falls into the `if not text` branch and becomes
   `error: {url} has no readable text`. **That is the whole bug.** It is not a
   configuration of trafilatura that was missed - it is the wrong tool for a body that is
-  already text.
+  already text. Measured in cycle 1 across six body types: plain text, markdown, csv,
+  javascript and the empty string all return `None`.
+- **`trafilatura.extract` is also lossy on the input it is right for** (cycle 1). The HTML
+  control came back with two `<p>` elements joined into one line and the `<nav>` dropped.
+  That is correct for HTML, where markup is not content, and **wrong for text, where the
+  line breaks are the content**. So AC 2 cannot be met by routing text through `extract` -
+  not even "just to normalise it". Text bypasses it entirely.
+- **Content types arrive with parameters, and sometimes without.** Measured against real
+  servers in cycle 1: `text/plain; charset=utf-8` from raw hosts, a bare `text/plain` from
+  `python.org/robots.txt`, and **`application/pdf; qs=0.001`** - a parameter on a binary
+  type, which defeats any equality test. Split on `;`, take the first field, strip,
+  lowercase, then compare. Raw hosts serve markdown, rst, csv and javascript all as
+  `text/plain`, but other hosts will not, so the rule covers text-ish `application/*` types
+  as well as `text/*`.
 - **The `error:` prefix is the sources contract.** `__init__.py` appends to `read` when a
   `fetch_page` result does not start with `error:`, and `terminal.show_sources(read, seen)`
   prints it. There is no other channel. AC 10 and AC 11 are settled through this prefix and
