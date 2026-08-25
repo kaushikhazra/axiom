@@ -225,6 +225,22 @@ def fetch_page(url: str, limits: "Limits" = None) -> str:
         # which is right for markup and wrong here - in a source file the line
         # breaks and the indentation *are* the content.
         text = page.text
+
+        # A page announcing no type is *judged by its content*, not assumed
+        # readable - so a body that is not text is refused even though the
+        # missing header sent it down this branch. A NUL is the same test
+        # `file` and git use: binary formats carry them and text does not.
+        #
+        # Read from the decoded text rather than the raw bytes deliberately.
+        # utf-16 is half zero bytes and would fail a raw check, but decodes
+        # through its declared charset into ordinary text with no NUL in it.
+        #
+        # Applied to every text body, not only the typeless one. A server that
+        # announces `text/plain` over a PNG is lying, and the cost of not
+        # believing it is nothing: real text does not contain NUL.
+        if "\x00" in text:
+            return f"error: {url} is binary - not readable as text"
+
         if not text.strip():
             return f"warning: {url} is empty"
 

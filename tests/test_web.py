@@ -306,6 +306,71 @@ def test_a_page_announcing_no_type_is_read_as_text(monkeypatch):
     assert fetch() == SOURCE
 
 
+def test_a_typeless_page_that_is_not_text_is_still_refused(monkeypatch):
+    """#40 AC 7: *judged by its content*, not assumed readable.
+
+    Found by cycle 3's cold read of the criterion. Cycle 2 treated a missing
+    type as text unconditionally and only ever tested it with a text body, so
+    a typeless PNG had its bytes returned as content and counted as a source.
+    Defaulting to text is right; skipping the judgement is not.
+    """
+    given_page(monkeypatch, body=PNG_BYTES, content_type=None)
+
+    result = fetch()
+
+    assert result.startswith("error:")
+    assert "not readable" in result
+    assert "secret" not in result
+    assert "IHDR" not in result
+
+
+def test_a_server_lying_about_the_type_still_leaks_nothing(monkeypatch):
+    """#40 AC 6: believing the header is not required to be reckless.
+
+    `text/plain` announced over a PNG. Real text does not contain NUL, so the
+    cost of not believing it is nothing.
+    """
+    given_page(monkeypatch, body=PNG_BYTES, content_type="text/plain; charset=utf-8")
+
+    result = fetch()
+
+    assert result.startswith("error:")
+    assert "secret" not in result
+
+
+def test_utf16_text_is_not_mistaken_for_binary(monkeypatch):
+    """#40 AC 2, guarding the shape of the binary check.
+
+    utf-16 is half zero bytes, so a check against the *raw* body would refuse
+    perfectly good text. The check reads the decoded string instead, and this
+    test is what stops a later cycle "simplifying" it back onto the bytes.
+    """
+    body = "café\n    indented\nsecond line\n".encode("utf-16")
+    given_page(monkeypatch, body=body, content_type="text/plain; charset=utf-16")
+
+    assert fetch() == body.decode("utf-16")
+
+
+@pytest.mark.parametrize(
+    ("charset", "encoding"),
+    [("latin-1", "latin-1"), ("utf-8", "utf-8")],
+)
+def test_contents_survive_their_declared_charset(monkeypatch, charset, encoding):
+    """#40 AC 2: as they were served, whatever they were served in."""
+    body = "café naïve\n    indented\n".encode(encoding)
+    given_page(monkeypatch, body=body, content_type=f"text/plain; charset={charset}")
+
+    assert fetch() == body.decode(encoding)
+
+
+def test_windows_line_endings_are_left_alone(monkeypatch):
+    """#40 AC 2: the line breaks are the content, including how they end."""
+    body = b"line one\r\nline two\r\n\r\nline four\r\n"
+    given_page(monkeypatch, body=body, content_type="text/plain")
+
+    assert fetch() == body.decode()
+
+
 # A real PNG header, and bytes that decode into control characters rather than
 # raising - which is precisely why the type is checked before `page.text`.
 PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x02D\x00\x00\x00\xd0secret"
