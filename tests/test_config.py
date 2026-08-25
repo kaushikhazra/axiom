@@ -95,3 +95,65 @@ def test_tools_stay_on_unless_the_value_means_off(monkeypatch):
     for value in ("off", "0", "false", "no", "OFF"):
         monkeypatch.setenv("AXIOM_TOOLS", value)
         assert config.resolve([]).tools_enabled is False
+
+
+def test_web_settings_have_defaults(monkeypatch):
+    """AC 28."""
+    for name in ("AXIOM_SEARCH_RESULTS", "AXIOM_FETCH_TIMEOUT",
+                 "AXIOM_PAGE_CHARACTERS", "AXIOM_WEB"):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = config.resolve([])
+
+    assert settings.search_results == config.DEFAULT_SEARCH_RESULTS
+    assert settings.fetch_timeout == config.DEFAULT_FETCH_TIMEOUT
+    assert settings.page_characters == config.DEFAULT_PAGE_CHARACTERS
+    assert settings.web_enabled is True
+
+
+def test_web_settings_take_environment_then_command_line(monkeypatch):
+    monkeypatch.setenv("AXIOM_SEARCH_RESULTS", "3")
+    monkeypatch.setenv("AXIOM_FETCH_TIMEOUT", "9")
+    monkeypatch.setenv("AXIOM_PAGE_CHARACTERS", "1000")
+
+    from_env = config.resolve([])
+    assert (from_env.search_results, from_env.fetch_timeout) == (3, 9.0)
+    assert from_env.page_characters == 1000
+
+    from_flags = config.resolve(
+        ["--search-results", "8", "--fetch-timeout", "2", "--page-characters", "50"]
+    )
+    assert (from_flags.search_results, from_flags.fetch_timeout) == (8, 2.0)
+    assert from_flags.page_characters == 50
+
+
+def test_switching_off_the_web_leaves_the_other_tools_on():
+    """AC 29: --no-web is not --no-tools. Losing read_file because the network
+    was switched off would be a surprise."""
+    settings = config.resolve(["--no-web"])
+
+    assert settings.web_enabled is False
+    assert settings.tools_enabled is True
+
+
+def test_switching_off_tools_switches_off_the_web_too():
+    """The obvious answer rather than the clever one."""
+    settings = config.resolve(["--no-tools"])
+
+    assert settings.tools_enabled is False
+    assert settings.web_enabled is False
+
+
+def test_both_switches_together_are_not_a_puzzle():
+    settings = config.resolve(["--no-tools", "--no-web"])
+
+    assert settings.tools_enabled is False
+    assert settings.web_enabled is False
+
+
+def test_the_web_can_be_switched_off_by_environment(monkeypatch):
+    monkeypatch.setenv("AXIOM_WEB", "off")
+    assert config.resolve([]).web_enabled is False
+
+    monkeypatch.setenv("AXIOM_WEB", "on")
+    assert config.resolve([]).web_enabled is True

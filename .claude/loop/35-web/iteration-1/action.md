@@ -1,60 +1,65 @@
 # Action
 
-Configuration, the startup line, and the plumbing that #34 should already give. End the cycle
-with a deliberate transcript regeneration.
+AC 24 first - it is small and it is code. Then the live pass, which is everything else.
 
-## Configuration
+## AC 24: Ctrl-C during a search or a fetch
 
-`config.Settings` gains the three from `Limits` - result count, fetch time limit, page
-characters kept - each with a default, an environment variable and a flag, resolved in the
-same precedence as everything else (AC 28). Then hand them into the `Limits` that `main()`
-already builds.
+#34 found that `run_command` leaked a process on interrupt, because it held a subprocess and
+the turn unwound without killing it. `search_web` and `fetch_page` hold a socket rather than
+a child.
 
-Then a **web switch separate from `--no-tools`** (AC 29). Switching off the web must leave
-`read_file` and `run_command` working; switching off tools must switch off the web too.
-Decide how that composes and say so in the log - the two flags interact, and a user who
-passes both should get something obvious rather than something clever.
+**Check rather than assume.** An interrupt during `httpx.get` should leave nothing behind -
+but that is a claim. Test the world the way #34's timeout test did: assert on what is left
+running or open, not on the message.
 
-## The startup line
+If there is nothing to clean up, say so plainly with the evidence, and the criterion is met
+by the turn loop already catching `KeyboardInterrupt`.
 
-AC 1 wants web availability shown; AC 29 wants the off state shown. The line already carries
-a tool count, and `7 tools` says nothing about whether the web is reachable.
+## The live pass
 
-Three web states - available, switched off, and unavailable because tools are off entirely -
-against the three tool states already there. **Do not let this become a matrix of nine
-sentences.** Find the reading that stays one short line and says the true thing.
+Seven criteria, one model, real network. `qwen2.5:7b` is enough - AC 3 across families is
+#34's concern and was settled there; this is about what a model does with search and fetch.
 
-## Then the plumbing, by verification rather than construction
+Drive the real program through a pipe, as before. **A handful of searches, not a loop** -
+throttling is routine and burning the IP costs the next cycles.
 
-These should already work. Confirm each against these tools, and if one does not, that is the
-finding:
+- **AC 2** - ask something needing current information; it searches and answers from results.
+- **AC 5** - give it an address; it reads and answers from the content.
+- **AC 7** - one question that needs both, answered without prompting between.
+- **AC 8** - give an address and confirm **no search happens**. The transcript shows the query
+  before a search, so its absence is observable rather than inferred.
+- **AC 9** - ask something the snippets alone answer, and confirm no fetch.
 
-- **AC 13, 14** - `note_tool` shows the query before a search and the address before a fetch.
-- **AC 15** - `show_tool_result` marks fetched content.
-- **AC 24** - Ctrl-C during a fetch. `run_command` needed explicit killing because it held a
-  subprocess; httpx holds a socket. Check whether an interrupt leaves anything behind, and
-  test the world rather than the message.
-- **AC 25, 26** - results and pages enter history, and survive compaction with their
-  addresses. #34 cycle 6 made compaction render call arguments, so the address should
-  survive - **test that specifically**, since AC 26 names it.
-- **AC 30** - exits, re-verified with the web tools registered.
+Record each run verbatim, including any that misbehave.
 
-## AC 23: no network at all
+## AC 11 and AC 12, honestly
 
-Not the same as an unreachable host. Force it - point the process at a network that cannot
-resolve, or patch at the transport layer - and confirm both tools fail with a plain
-explanation **and that chat still works for anything not needing the web**. That second half
-is the criterion's real content.
+**AC 11** - an answer drawn from the web names the addresses it came from.
 
-## Then regenerate the transcript
+**AC 12** - axiom does not present an address as a source unless it actually read that page.
 
-All eighteen scenarios change, plus new ones: a search running, a page read, a throttled
-search, an unreachable address, web switched off.
+Both are claims about what the *model* does, not what the code does. A model handed five
+snippets can name all five as sources having read none.
 
-Copy aside, regenerate, diff, and put the diff in the log. Confirm every changed line is the
-startup line and the additions are additions.
+Try it. Then say plainly which of these is true:
+
+1. The model already behaves. Record the runs; note the sample is small.
+2. It does not, and a system prompt fixes it. Add one, say what it says, and re-run.
+3. It does not, and a prompt does not reliably fix it. **Then say the criterion cannot be met
+   as written** and what would replace it - for instance, axiom listing the addresses it
+   actually fetched rather than relying on the model to be honest about it.
+
+Option 3 is a real outcome, not a failure. A criterion that depends on a 7B model's candour
+may simply be the wrong criterion, and the honest move is to say so rather than accept one
+lucky run as evidence.
+
+## Safety
+
+Read-only. Stable public pages. No live model chooses an address to fetch except through the
+normal flow being tested, and nothing destructive is in reach of these two tools anyway.
 
 ## Record
 
-Full suite and the hermeticity check. `wc -l` and test count against 1116 and 150. Status for
-all 30. What is left after this should be only the criteria a live model has to demonstrate.
+Full suite and the hermeticity check afterwards - a live cycle must not leave the suite red.
+Status for all 30. If all 30 read `met-with-evidence`, **the goal is met**: follow `loop.md`
+exit 1, then hand over to the next loop in `queue.md`.

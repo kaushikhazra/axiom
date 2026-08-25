@@ -51,6 +51,10 @@ class Limits:
 
 DEFAULT_LIMITS = Limits()
 
+# The tools that reach the network. Named here so a caller can leave them out
+# without knowing how they are implemented.
+WEB_TOOLS = frozenset({"search_web", "fetch_page"})
+
 
 def read_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")

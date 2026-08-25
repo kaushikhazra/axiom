@@ -38,8 +38,20 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
     # states the startup line reports differently.
     capable = model_backend.supports_tools(settings.model)
     declarations = tools.declarations() if capable and settings.tools_enabled else None
+    if declarations is not None and not settings.web_enabled:
+        declarations = [
+            tool
+            for tool in declarations
+            if tool["function"]["name"] not in tools.WEB_TOOLS
+        ]
     available = len(declarations) if declarations else (0 if capable else None)
-    limits = tools.Limits(settings.working_directory, settings.command_timeout)
+    limits = tools.Limits(
+        working_directory=settings.working_directory,
+        command_timeout=settings.command_timeout,
+        search_results=settings.search_results,
+        fetch_timeout=settings.fetch_timeout,
+        page_characters=settings.page_characters,
+    )
 
     effective_context = context.effective_context(
         model_backend.model_info(settings.model)
@@ -56,6 +68,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         effective_context,
         overridden=settings.debug_max_context is not None,
         tools=available,
+        web=settings.web_enabled,
     )
 
     messages: list[dict[str, str]] = []

@@ -278,3 +278,160 @@ def test_operational_settings_are_not_offered_to_the_model(name):
     declared = set(tools.REGISTRY[name].parameters["properties"])
 
     assert not declared & {"limits", "max_results", "timeout", "page_characters"}
+
+
+# --- what #34's machinery should already give -------------------------------
+
+
+def a_search_call(query: str = "what is a pathlib"):
+    from axiom.backend import Call
+
+    return Call("search_web", {"query": query})
+
+
+def a_fetch_call(url: str = PAGE):
+    from axiom.backend import Call
+
+    return Call("fetch_page", {"url": url})
+
+
+def test_the_query_is_shown_before_a_search_runs(monkeypatch, capsys):
+    """AC 13."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_results(monkeypatch, [{"title": "T", "href": "https://x/y", "body": "b"}])
+    feed(monkeypatch, ["find out", "/exit"])
+
+    axiom.main([], using=StubBackend(turns=[[a_search_call("teal cats")], ["done"]]))
+
+    assert "search_web(query=teal cats)" in capsys.readouterr().out
+
+
+def test_the_address_is_shown_before_a_page_is_fetched(monkeypatch, capsys):
+    """AC 14."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(monkeypatch, "<html><body><article><p>" + "text " * 30 + "</p></article></body></html>")
+    feed(monkeypatch, ["read it", "/exit"])
+
+    axiom.main([], using=StubBackend(turns=[[a_fetch_call()], ["done"]]))
+
+    assert f"fetch_page(url={PAGE})" in capsys.readouterr().out
+
+
+def test_fetched_content_is_marked_apart_from_axioms_words(monkeypatch, capsys):
+    """AC 15."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(
+        monkeypatch,
+        "<html><body><article><p>" + "Distinctive sentence. " * 20 + "</p></article></body></html>",
+    )
+    feed(monkeypatch, ["read it", "/exit"])
+
+    axiom.main([], using=StubBackend(turns=[[a_fetch_call()], ["My own words."]]))
+    out = capsys.readouterr().out
+
+    assert "  | Distinctive sentence." in out
+    assert "My own words." in out
+    assert "  | My own words." not in out
+
+
+def test_a_page_becomes_part_of_the_conversation(monkeypatch, capsys):
+    """AC 25: a later turn can refer to what was read."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(
+        monkeypatch,
+        "<html><body><article><p>" + "Biscuit is ginger. " * 20 + "</p></article></body></html>",
+    )
+    backend = StubBackend(turns=[[a_fetch_call()], ["noted"]])
+    feed(monkeypatch, ["read it", "/exit"])
+
+    axiom.main([], using=backend)
+    capsys.readouterr()
+
+    tool_message = [m for m in backend.streamed[1] if m.get("role") == "tool"][0]
+    assert "Biscuit is ginger." in tool_message["content"]
+    assert tool_message["tool_name"] == "fetch_page"
+
+
+def test_a_cited_address_survives_compaction():
+    """AC 26 names the addresses specifically.
+
+    #34 cycle 6 made compaction render a call's arguments, which is what
+    carries the address into the summary. Without it a summary would record
+    what a page said and not which page.
+    """
+    import axiom
+
+    history = [
+        {"role": "user", "content": "what does it say?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "fetch_page", "arguments": {"url": PAGE}}}
+            ],
+        },
+        {"role": "tool", "content": "Biscuit is ginger.", "tool_name": "fetch_page"},
+        {"role": "assistant", "content": "It says Biscuit is ginger."},
+    ] * 3
+
+    class Recorder:
+        def __init__(self):
+            self.saw = ""
+
+        def complete(self, model, messages):  # noqa: ANN001, ARG002
+            self.saw = messages[0]["content"]
+            return "S"
+
+    recorder = Recorder()
+    axiom.compaction.compacted_history(recorder, "m", history, kept_pairs=0)
+
+    assert PAGE in recorder.saw, "the address did not reach the summary"
+    assert "fetch_page" in recorder.saw
+
+
+def test_with_no_network_the_web_fails_plainly_and_chat_still_works(
+    monkeypatch, capsys
+):
+    """AC 23, and the second half is the point.
+
+    Ollama is local. Losing the network must cost the web and nothing else -
+    a session that stopped answering because DuckDuckGo was unreachable would
+    be broken in a way the user cannot fix.
+    """
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_search_raises(monkeypatch, OSError("getaddrinfo failed"))
+    given_page(monkeypatch, raises=httpx.ConnectError("getaddrinfo failed"))
+
+    assert search().startswith("error:")
+    assert fetch().startswith("error:")
+
+    feed(monkeypatch, ["what is two plus two?", "/exit"])
+    axiom.main([], using=StubBackend(turns=[["Four."]]))
+
+    assert "Four." in capsys.readouterr().out
+
+
+def test_the_web_tools_are_absent_when_the_web_is_switched_off(monkeypatch, capsys):
+    """AC 29: and the other tools survive it."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    backend = StubBackend(turns=[["hello"]])
+    feed(monkeypatch, ["hi", "/exit"])
+
+    axiom.main(["--no-web"], using=backend)
+    capsys.readouterr()
+
+    offered = {t["function"]["name"] for t in backend.tools_sent[0]}
+    assert not offered & tools.WEB_TOOLS, "web tools were offered with --no-web"
+    assert "read_file" in offered, "switching off the web took away the file tools"

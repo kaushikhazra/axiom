@@ -38,6 +38,7 @@ def announce(
     context: int | None,
     overridden: bool,
     tools: int | None,
+    web: bool = False,
 ) -> None:
     """The startup line: what we are talking to, with how much room, and what
     it can do.
@@ -46,6 +47,10 @@ def announce(
     None when the model cannot call them at all. The three read differently
     because the user can act on them differently - one is their own choice,
     one is a fact about the model.
+
+    `web` only means anything when tools are available, which is what keeps
+    two three-state settings from becoming nine sentences: with no tools there
+    is nothing to say about the web, and the line stays one line.
     """
     if context is None:
         room = "Ollama default"
@@ -56,8 +61,10 @@ def announce(
         can_do = "no tools - this model cannot call them"
     elif tools == 0:
         can_do = "tools off"
+    elif web:
+        can_do = f"{tools} tools including web"
     else:
-        can_do = f"{tools} tools"
+        can_do = f"{tools} tools, web off"
 
     print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
 
