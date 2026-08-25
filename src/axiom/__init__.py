@@ -196,8 +196,9 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                         )
                     else:
                         result = tools.run(call.name, call.arguments, limits)
-                        if command is not None and result.startswith("error:"):
-                            failures.setdefault(command, []).append(result)
+                        kind = tools.failure_kind(result)
+                        if command is not None and kind:
+                            failures.setdefault(command, []).append(kind)
                     if call.name == "fetch_page" and tools.was_read(result):
                         read.append(str(call.arguments.get("url")))
                     elif call.name == "search_web":

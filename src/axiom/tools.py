@@ -390,6 +390,26 @@ def _report(stdout: str, stderr: str, status: int) -> str:
     return "\n".join(parts)
 
 
+def failure_kind(result: str) -> str:
+    """What kind of failure a result is, with the command's own output removed.
+
+    #41 AC 9 asks whether a command failed "the same way" twice. Comparing
+    whole results answers a different question: a command whose output carries
+    a pid, a timestamp, a duration or a temp path never produces the same
+    string twice, so the check never fires and the criterion is decorative.
+
+    Found by attacking it in cycle 4 - the same command exiting 9 twice gave
+    'stderr:\\n24136\\nerror: exited with status 9' and
+    'stderr:\\n20664\\nerror: exited with status 9'. Same command, same
+    failure, different pid.
+
+    The failure is the `error:` line `_report` adds. Everything else is what
+    the command printed. Parser and format live together, as with
+    `addresses_in` and `was_read`.
+    """
+    return "\n".join(line for line in result.splitlines() if line.startswith("error:"))
+
+
 def _kill_tree(pid: int) -> None:
     """Kill a process and everything it started.
 

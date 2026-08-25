@@ -311,6 +311,45 @@ def test_a_different_command_failing_the_same_way_is_still_run(monkeypatch, caps
     assert "not running it a third time" not in capsys.readouterr().out
 
 
+def test_a_failure_whose_output_varies_is_still_the_same_failure(monkeypatch, capsys):
+    """AC 9, and the reason it needed fixing.
+
+    Cycle 4 attacked the criterion and broke it. The block compared whole
+    result strings, so a command whose output carries a pid, a timestamp or a
+    temp path never matched twice and the block never fired - the criterion was
+    decorative for a large class of real commands.
+    """
+    varying = (
+        'python -c "import os,sys; sys.stderr.write(str(os.getpid())); '
+        'raise SystemExit(9)"'
+    )
+    call = Call("run_command", {"command": varying})
+    backend = StubBackend(turns=[[call], [call], [call], ["giving up"]])
+    feed(monkeypatch, ["do it", "/exit"])
+
+    axiom.main([], using=backend)
+    out = capsys.readouterr().out
+
+    assert "not running it a third time" in out
+    assert out.count("status 9") == 2, "the varying pid defeated the block again"
+
+
+def test_the_failure_kind_ignores_what_the_command_printed():
+    """AC 9 at the seam.
+
+    The failure is the `error:` line. Everything else is the command's own
+    output and says nothing about *how* it failed.
+    """
+    assert tools.failure_kind(
+        "stderr:\n24136\nerror: exited with status 9"
+    ) == tools.failure_kind("stderr:\n20664\nerror: exited with status 9")
+
+    assert tools.failure_kind("error: exited with status 1") != tools.failure_kind(
+        "error: exited with status 2"
+    )
+    assert tools.failure_kind("all fine, no error at all") == ""
+
+
 def test_the_block_does_not_carry_between_turns(monkeypatch, capsys):
     """AC 9 is scoped to one turn. A new question starts clean."""
     backend = StubBackend(
