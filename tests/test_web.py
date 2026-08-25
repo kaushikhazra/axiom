@@ -435,3 +435,77 @@ def test_the_web_tools_are_absent_when_the_web_is_switched_off(monkeypatch, caps
     offered = {t["function"]["name"] for t in backend.tools_sent[0]}
     assert not offered & tools.WEB_TOOLS, "web tools were offered with --no-web"
     assert "read_file" in offered, "switching off the web took away the file tools"
+
+
+# --- interrupting a search or a fetch ---------------------------------------
+
+
+def test_an_interrupt_during_a_search_is_not_swallowed(monkeypatch):
+    """AC 24. search_web catches Exception broadly to report provider trouble;
+    KeyboardInterrupt is a BaseException and must pass straight through, or the
+    turn never unwinds and the prompt never comes back."""
+    given_search_raises(monkeypatch, KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        search()
+
+
+def test_an_interrupt_during_a_fetch_is_not_swallowed(monkeypatch):
+    given_page(monkeypatch, raises=KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        fetch()
+
+
+def test_a_cancelled_fetch_leaves_the_session_usable(monkeypatch, capsys):
+    """AC 24: stops it and returns to the prompt."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(monkeypatch, raises=KeyboardInterrupt())
+    backend = StubBackend(turns=[[a_fetch_call()], ["second answer"]])
+    feed(monkeypatch, ["read it", "ask something else"])
+
+    axiom.main([], using=backend)
+    out = capsys.readouterr()
+
+    assert "cancelled" in out.err
+    assert "second answer" in out.out, "the session did not survive the interrupt"
+
+
+def test_a_cancelled_fetch_leaves_nothing_of_the_turn_in_history(
+    monkeypatch, capsys
+):
+    """The same all-or-nothing rule #34 established for tools generally."""
+    import axiom
+    from conftest import StubBackend, feed
+
+    given_page(monkeypatch, raises=KeyboardInterrupt())
+    backend = StubBackend(turns=[[a_fetch_call()], ["second answer"]])
+    feed(monkeypatch, ["read it", "ask something else"])
+
+    axiom.main([], using=backend)
+    capsys.readouterr()
+
+    assert [m["content"] for m in backend.streamed[1]] == ["ask something else"]
+
+
+def test_read_file_sends_a_web_address_to_the_right_tool():
+    """Found live: a model handed a URL reached for the tool that says "read".
+
+    On Windows the address was mangled into a path first, so the failure was an
+    unhelpable OS error, and the model gave up and answered from memory - which
+    is what AC 5 exists to prevent. A pointed message lets it correct itself on
+    the next round instead.
+    """
+    result = tools.run("read_file", {"path": "https://example.invalid/page"})
+
+    assert "web address" in result
+    assert "fetch_page" in result
+
+
+def test_a_local_path_is_still_read_normally(tmp_path):
+    target = tmp_path / "notes.txt"
+    target.write_text("local", encoding="utf-8")
+
+    assert tools.run("read_file", {"path": str(target)}) == "local"

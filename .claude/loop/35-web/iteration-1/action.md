@@ -1,65 +1,60 @@
 # Action
 
-AC 24 first - it is small and it is code. Then the live pass, which is everything else.
+Make axiom name its own sources. Then one live run for AC 7, and the loop is done.
 
-## AC 24: Ctrl-C during a search or a fetch
+## The sources line
 
-#34 found that `run_command` leaked a process on interrupt, because it held a subprocess and
-the turn unwound without killing it. `search_web` and `fetch_page` hold a socket rather than
-a child.
+Cycle 4 proved that asking a 7B model to cite addresses produces omission, invention, or
+retreat depending on how hard you push - and that inventing is the harmful one. Axiom knows
+which addresses were really involved; that is data, not judgement.
 
-**Check rather than assume.** An interrupt during `httpx.get` should leave nothing behind -
-but that is a claim. Test the world the way #34's timeout test did: assert on what is left
-running or open, not on the message.
+Track, per turn:
 
-If there is nothing to clean up, say so plainly with the evidence, and the criterion is met
-by the turn loop already catching `KeyboardInterrupt`.
+- every address a search **returned**
+- every address a fetch **actually retrieved**, successfully
 
-## The live pass
+Those are different, and the difference is the whole point of AC 12. A returned search result
+is something axiom saw; a fetched page is something axiom read. **Only fetched pages are
+sources.** If the answer used snippets alone, the honest line says the results came from
+those addresses without claiming any page was read.
 
-Seven criteria, one model, real network. `qwen2.5:7b` is enough - AC 3 across families is
-#34's concern and was settled there; this is about what a model does with search and fetch.
+After a turn that used the web, show them. Formatting is `terminal`'s - it owns every print -
+and it should be obviously axiom's own line rather than something the model wrote.
 
-Drive the real program through a pipe, as before. **A handful of searches, not a loop** -
-throttling is routine and burning the IP costs the next cycles.
+**Do not deduplicate away the distinction.** A page that was fetched and failed - 404, timeout,
+unreachable - is not a source, and must not appear as one. That is AC 12 in its sharpest form:
+the failure this whole cycle was about is presenting an address as read when it was not.
 
-- **AC 2** - ask something needing current information; it searches and answers from results.
-- **AC 5** - give it an address; it reads and answers from the content.
-- **AC 7** - one question that needs both, answered without prompting between.
-- **AC 8** - give an address and confirm **no search happens**. The transcript shows the query
-  before a search, so its absence is observable rather than inferred.
-- **AC 9** - ask something the snippets alone answer, and confirm no fetch.
+## What to record about the limit
 
-Record each run verbatim, including any that misbehave.
+The model can still write an invented address in its prose, and axiom cannot stop it. Say so
+in the log, and decide whether the sources line needs to be visibly axiom's - a `VOICE`
+prefix - so a reader can tell the trustworthy list from the model's sentences.
 
-## AC 11 and AC 12, honestly
+Do not claim AC 12 is met in a way that implies the prose is clean. It is met because axiom
+provides something true that does not depend on the model.
 
-**AC 11** - an answer drawn from the web names the addresses it came from.
+## Tests
 
-**AC 12** - axiom does not present an address as a source unless it actually read that page.
+Stub-driven, no network:
 
-Both are claims about what the *model* does, not what the code does. A model handed five
-snippets can name all five as sources having read none.
+- A turn that fetched two pages lists exactly those two addresses.
+- A fetch that failed does **not** appear as a source.
+- A search that returned five results and fetched none does not claim any page was read.
+- A turn with no web use adds no sources line at all.
+- The list is per turn, not cumulative across a session - a later answer must not inherit
+  the previous question's sources.
 
-Try it. Then say plainly which of these is true:
+## Then AC 7, live
 
-1. The model already behaves. Record the runs; note the sample is small.
-2. It does not, and a system prompt fixes it. Add one, say what it says, and re-run.
-3. It does not, and a prompt does not reliably fix it. **Then say the criterion cannot be met
-   as written** and what would replace it - for instance, axiom listing the addresses it
-   actually fetched rather than relying on the model to be honest about it.
-
-Option 3 is a real outcome, not a failure. A criterion that depends on a 7B model's candour
-may simply be the wrong criterion, and the honest move is to say so rather than accept one
-lucky run as evidence.
-
-## Safety
-
-Read-only. Stable public pages. No live model chooses an address to fetch except through the
-normal flow being tested, and nothing destructive is in reach of these two tools anyway.
+One question that genuinely needs both: search to find a page, then read it to answer. One
+run, recorded verbatim. A handful of searches have already been spent; this is one more.
 
 ## Record
 
-Full suite and the hermeticity check afterwards - a live cycle must not leave the suite red.
-Status for all 30. If all 30 read `met-with-evidence`, **the goal is met**: follow `loop.md`
-exit 1, then hand over to the next loop in `queue.md`.
+Full suite and the hermeticity check. The transcript will change - a sources line is a new
+observable path - so copy aside, regenerate, diff, and check the diff by command as cycle 3
+did rather than by eye. `wc -l` and test count against 1189 and 172.
+
+If all 30 read `met-with-evidence`, **the goal is met**: follow `loop.md` exit 1, then hand
+over to the next loop in `queue.md`. #32 is the last one queued.

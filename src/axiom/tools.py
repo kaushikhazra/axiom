@@ -57,6 +57,12 @@ WEB_TOOLS = frozenset({"search_web", "fetch_page"})
 
 
 def read_file(path: str) -> str:
+    # A model handed a web address will reach for the tool that says "read".
+    # Without this it becomes an unhelpable OS error - on Windows the address
+    # is mangled into a path first - and the model answers from memory instead
+    # of saying it could not read the page.
+    if path.startswith(("http://", "https://")):
+        return f"error: {path} is a web address - use fetch_page to read it"
     return Path(path).read_text(encoding="utf-8")
 
 
@@ -218,7 +224,10 @@ REGISTRY: dict[str, Tool] = {
     for tool in (
         Tool(
             name="read_file",
-            description="Read a text file and return its contents.",
+            description=(
+                "Read a local file from disk. For a web address, use fetch_page "
+                "instead."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -302,7 +311,9 @@ REGISTRY: dict[str, Tool] = {
             name="search_web",
             description=(
                 "Search the web and return the title, address and a snippet for "
-                "each result. Use this to find pages; use fetch_page to read one."
+                "each result. Use this to find pages; use fetch_page to read one. "
+                "When you use anything from a result, quote its address exactly as "
+                "listed above. Never write an address that is not in the results."
             ),
             parameters={
                 "type": "object",
@@ -317,8 +328,10 @@ REGISTRY: dict[str, Tool] = {
         Tool(
             name="fetch_page",
             description=(
-                "Fetch one web page and return its readable text. Works on any "
-                "address, whether or not it came from a search."
+                "Fetch one web page over http or https and return its readable "
+                "text. Use this for any address, whether or not it came from a "
+                "search. This is the only tool that can read a web page. When you "
+                "use what it returns, quote the address in your answer."
             ),
             parameters={
                 "type": "object",
