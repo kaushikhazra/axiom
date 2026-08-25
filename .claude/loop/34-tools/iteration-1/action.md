@@ -1,63 +1,65 @@
 # Action
 
-The live model pass. Four criteria, three model loads, one cycle - attempt nothing else
-alongside it.
+Fix AC 6. Three criteria remain and all three wait on it.
 
-## AC 3: the same request, three families
+## The problem, precisely
 
-Drive the **real program** - `main()` through a pipe, as in cycle 2 - with the same question
-against `qwen2.5:7b` (qwen2), `gemma4:e2b` (gemma4) and `ornith:9b` (qwen35), changing
-nothing but `--model`.
+`qwen2.5-coder:7b` announces a call as bare JSON in `content`, with `tool_calls` set to
+`None`, streamed token by token across ~30 chunks. **No single chunk is recognisable**, so
+the current loop prints each piece as it arrives and the user sees raw JSON instead of an
+answer.
 
-Use a read-only question against a file in `C:/Projects/.tmp/axiom-tool-sandbox`. Record each
-model's output verbatim in the log, including any that misbehave.
+The fix therefore has two halves, and the second is the one that is easy to get wrong:
 
-**What counts as the same tool action** is worth deciding before running, not after: the same
-tool called with the same argument, and an answer drawn from the file. The wording of the
-answer will differ between models and that is not a difference AC 3 cares about. Say so in
-the log, so the judgement is visible rather than implied.
+1. **Recognise it.** After a stream ends with no structured call, if the whole reply parses
+   as JSON naming a registered tool with a dict of arguments, it is a call.
+2. **Do not show it while deciding.** Withholding everything until the stream ends would
+   destroy streaming for the three models that behave. Withhold only while the reply so far
+   could still turn out to be a call - that is, while it is empty or starts with `{` - and
+   flush the moment it cannot be.
 
-Two of the three are thinking models and will take noticeably longer. That is expected, not a
-failure.
+A reply that starts with `{` and turns out to be ordinary prose must still be printed, in
+full, in order. Test that case explicitly; it is the one that silently eats output.
 
-## AC 7: streamed and not
+## Where each half belongs
 
-The program only ever streams. Exercise `OllamaBackend.stream()` and a non-streamed call
-against the same model and the same question, and compare the tool call each produces.
+Recognising a call is a backend concern - it is the same translation `OllamaBackend` already
+does for structured calls, just from a different form. Put the parsing there, next to `Call`.
 
-If Ollama's non-streaming path returns the call differently, that is a finding worth the
-cycle on its own - record it and say what it would cost to support both.
+Deciding what reaches the screen is the loop's, since the loop already accumulates the reply
+and owns the turn. Keep `terminal` free of the decision - it prints what it is given.
 
-## AC 6: be honest about what was not seen
+**Do not add a per-model branch.** AC 4 and AC 5 forbid it, and this needs none: the rule is
+about the shape of a reply, not the name of a model.
 
-Cycle 1's probe never reproduced a model announcing a call as text. If this cycle does not
-either, **do not claim the case cannot happen.** Write a synthetic test that drives the
-handler with a reply containing a `<tool_call>`-style block in `content`, confirm it is
-either carried out or reported, and state plainly in the log that the failure mode has not
-been observed live across four models and eight runs.
+## Tests
 
-That is a weaker claim than "handled" and it is the true one.
+Stub-driven, no model needed:
 
-## AC 5: demonstrate, do not assert
+- A reply that is a JSON call runs the tool and is never printed.
+- A reply that is ordinary prose starting with `{` is printed in full and runs nothing.
+- A reply that is JSON but names no registered tool is printed rather than swallowed.
+- A reply that is JSON, names a tool, but has malformed arguments is reported, not dropped -
+  AC 6 allows "reported as one axiom could not make", but not silence.
+- Streaming is unaffected for a normal reply: pieces still reach the screen as they arrive,
+  not in one lump at the end. Assert on the sequence of writes, not just the final text.
 
-Adding support for a further model should require no edit to any tool. `qwen2.5-coder:7b` is
-already pulled and is a fourth model - use it. If it works with no code change, AC 5 is
-demonstrated rather than argued.
+## Then close AC 5 and AC 7, live
 
-## Safety, binding
+- **AC 5** - `qwen2.5-coder:7b` works with no tool edited. Show the same read as the other
+  three families.
+- **AC 7** - the same question streamed and not, on a model of each behaviour: one that sends
+  structured calls and one that sends text. Four runs, and they must agree on the tool action.
 
-Every live request is **read-only**. Read a file, list, echo. No deletes, no writes outside
-the sandbox, no `git`, no network. `delete_file` and `write_file` stay stub-tested - they
-already are.
+## Safety
 
-## If the models disagree
-
-That is the finding, and it is what AC 6 exists for. Record exactly what each emitted, and do
-not paper over it with a per-model branch - AC 4 and AC 5 forbid that, and the log should say
-what a general fix would look like instead.
+Read-only live requests only, in `C:/Projects/.tmp/axiom-tool-sandbox`.
 
 ## Record
 
-Full suite and the hermeticity check afterwards - a live cycle must not leave the suite red.
-Status for all 35. If all 35 read `met-with-evidence`, **the goal is met**: follow `loop.md`
-exit 1, then hand over to the next loop in `queue.md`.
+Full suite and the hermeticity check. Status for all 35. If the transcript changes, diff it
+and put the diff in the log - a text-announced call is a new observable path and deserves a
+scenario.
+
+If all 35 read `met-with-evidence`, **the goal is met**: follow `loop.md` exit 1, then hand
+over to the next loop in `queue.md`.
