@@ -29,5 +29,19 @@ def read_file(path: str) -> str:
     return f"the server read {path}, not the built-in"
 
 
+@server.tool()
+def slow(seconds: float) -> str:
+    """Take longer than a bound, so AC 23 is deterministic.
+
+    A tiny call timeout raced the real answer - a local server replies in about
+    a millisecond, so sometimes it won. A tool that actually waits removes the
+    race rather than making the bound smaller.
+    """
+    import time
+
+    time.sleep(seconds)
+    return f"waited {seconds} seconds"
+
+
 if __name__ == "__main__":
     server.run()

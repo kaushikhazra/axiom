@@ -101,6 +101,33 @@ def test_a_server_cannot_take_a_built_in_name(running):
     assert set(tools.REGISTRY) & names == set(), "a server reached a built-in name"
 
 
+def test_a_server_whose_name_contains_the_separator_is_still_callable(running):
+    """AC 6, and the bug cycle 4 found by attacking it.
+
+    A server called `a__b` declares `a__b__ping`. Routing used to partition at
+    the *first* separator, which reads that as server `a` with tool `b__ping` -
+    a server that does not exist. The tools were declared and permanently
+    uncallable, and nothing said so.
+
+    Splitting a qualified name cannot be made unambiguous: `a__b__ping` is
+    server `a` with tool `b__ping` just as legitimately as server `a__b` with
+    tool `ping`. Routing is a lookup built when the tools are declared.
+    """
+    attached = running((ServerSpec(**{**vars(ours()), "name": "a__b"}),))
+
+    assert attached.owns("a__b__ping"), "the tool was declared but cannot be routed"
+    assert attached.run("a__b__ping", {}) == "pong"
+
+
+def test_a_server_named_after_a_built_in_still_cannot_collide(running):
+    """AC 6: `read_file` as a *server* name, not a tool name."""
+    attached = running((ServerSpec(**{**vars(ours()), "name": "read_file"}),))
+
+    names = {d["function"]["name"] for d in attached.declarations}
+    assert not names & set(tools.REGISTRY)
+    assert attached.run("read_file__ping", {}) == "pong"
+
+
 def test_two_servers_cannot_take_each_others_names():
     """AC 6: and not each other's either. Pure, so no server is needed."""
     assert servers.qualified("a", "ping") != servers.qualified("b", "ping")
@@ -115,7 +142,7 @@ def test_a_named_server_is_running_before_the_first_prompt(running):
     """AC 3."""
     attached = running((ours(),))
 
-    assert attached.connected == {"tiny": 3}
+    assert attached.connected == {"tiny": 4}
     assert attached.failures == []
 
 
@@ -268,7 +295,7 @@ def test_naming_no_tools_declares_all_of_them(running):
     """AC 11."""
     attached = running((ours(),))
 
-    assert attached.connected == {"tiny": 3}
+    assert attached.connected == {"tiny": 4}
 
 
 def test_a_tool_the_server_does_not_have_is_reported_by_name(running):
@@ -342,9 +369,52 @@ def test_a_server_that_fails_to_start_does_not_stop_the_others(running):
     """AC 21."""
     attached = running((ServerSpec("bad", "no-such-program"), ours()))
 
-    assert attached.connected == {"tiny": 3}, "the good server was lost with the bad"
+    assert attached.connected == {"tiny": 4}, "the good server was lost with the bad"
     assert any(f.startswith("bad:") for f in attached.failures)
     assert attached.run("tiny__ping", {}) == "pong"
+
+
+def test_a_server_that_never_speaks_is_given_up_on(running):
+    """AC 22, which cycle 3 marked met with no test at all.
+
+    `tests/mcp_hangs.py` starts and then says nothing. Without a bound axiom
+    would wait for it before the first prompt, with no way for the user to tell
+    a slow start from a hang.
+    """
+    import time
+
+    hanging = ServerSpec(
+        name="hangs", command=sys.executable, args=(str(HERE / "mcp_hangs.py"),)
+    )
+    started = time.perf_counter()
+    attached = servers.Servers((hanging,), start_timeout=3.0)
+    attached.start()
+    took = time.perf_counter() - started
+
+    assert took < 30, "axiom waited instead of giving up"
+    assert attached.connected == {}
+    assert any("hangs" in f for f in attached.failures), "gave up without saying so"
+    attached.stop()
+
+
+def test_a_call_that_passes_its_bound_leaves_the_session_usable(running):
+    """AC 23: "the model is told so, and the turn carries on".
+
+    #34's lesson applies - a bound that reports a stop while work continues is
+    the failure, so this asserts the session still works afterwards rather than
+    only that the message is right.
+    """
+    attached = servers.Servers((ours(),), start_timeout=20.0, call_timeout=0.5)
+    attached.start()
+    try:
+        timed_out = attached.run("tiny__slow", {"seconds": 5})
+        assert "did not answer" in timed_out
+        assert timed_out.startswith("error:")
+
+        attached.call_timeout = 20.0
+        assert attached.run("tiny__ping", {}) == "pong", "the session never recovered"
+    finally:
+        attached.stop()
 
 
 def test_a_server_that_dies_fails_only_its_own_tools(running):

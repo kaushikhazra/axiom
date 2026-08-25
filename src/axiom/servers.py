@@ -37,7 +37,19 @@ def qualified(server: str, tool: str) -> str:
 
 
 def split(name: str) -> tuple[str, str] | None:
-    """A qualified name back into its server and its tool, or None."""
+    """A qualified name back into its server and its tool, or None.
+
+    **Not used for routing.** Splitting a qualified name is ambiguous and
+    cannot be made otherwise: `a__b__ping` is server `a` with tool `b__ping`
+    just as readily as server `a__b` with tool `ping`, and both are legal.
+    Cycle 4 found a server whose name contained the separator declaring three
+    tools that were then permanently uncallable, because routing partitioned
+    at the first one and looked for a server that did not exist.
+
+    Routing uses `_owner`, a map built when the tools are declared, so no
+    parsing happens and no name can be misrouted. This is kept because reading
+    a name apart is still useful, and it is honest about being a guess.
+    """
     server, found, tool = name.partition(SEPARATOR)
     return (server, tool) if found and tool else None
 
@@ -104,6 +116,9 @@ class Servers:
         self.connected: dict[str, int] = {}  # server -> tools declared
         self.failures: list[str] = []  # server -> why it did not start
         self._clients: dict[str, Client] = {}
+        # qualified name -> (server, tool). Built when the tools are declared,
+        # so routing is a lookup rather than a parse - see `split`.
+        self._owner: dict[str, tuple[str, str]] = {}
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True, name="mcp")
         self._ready = threading.Event()
@@ -196,15 +211,16 @@ class Servers:
             tool for name, tool in offered.items() if not wanted or name in wanted
         ]
         self._clients[spec.name] = client
+        for tool in chosen:
+            self._owner[qualified(spec.name, tool.name)] = (spec.name, tool.name)
         self.declarations.extend(_declaration(spec.name, tool) for tool in chosen)
         self.connected[spec.name] = len(chosen)
 
     # -- calling -----------------------------------------------------------
 
     def owns(self, name: str) -> bool:
-        """Whether this qualified name belongs to a server that is connected."""
-        parts = split(name)
-        return parts is not None and parts[0] in self._clients
+        """Whether this name is one a connected server actually declared."""
+        return name in self._owner
 
     def run(self, name: str, arguments: dict) -> str:
         """Call a server's tool and return what the model should be told.
@@ -212,10 +228,9 @@ class Servers:
         Failures come back as text, never raised, for the same reason
         `tools.run()` does it: the model is the one that has to act on them.
         """
-        parts = split(name)
-        if parts is None or parts[0] not in self._clients:
+        if name not in self._owner:
             return f"error: there is no tool named {name!r}"
-        server, tool = parts
+        server, tool = self._owner[name]
         client = self._clients[server]
         try:
             future = asyncio.run_coroutine_threadsafe(
