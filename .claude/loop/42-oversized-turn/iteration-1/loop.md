@@ -37,7 +37,7 @@ that cycle and are never edited afterwards.**
 to continue" actually begins, and records what compaction prints when usage triggers it -
 because AC 8 says a size-triggered compaction must report the same way.
 
-**#41 made this reachable rather than theoretical.** Its system prompt is a fixed ~163 tokens
+**#41 made this reachable rather than theoretical.** Its system prompt is a fixed 205 tokens (measured in cycle 1)
 that the user cannot shorten and compaction cannot forget, because it is held outside
 `messages` on purpose. Reproduction: `AXIOM_DEBUG_MAX_CONTEXT=200`, then anything at all.
 

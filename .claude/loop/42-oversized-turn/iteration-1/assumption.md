@@ -14,7 +14,7 @@ time.
   model never fully saw.
 - **`estimated_tokens` uses `CHARS_PER_TOKEN_ESTIMATE = 4`.** Two divisors, different jobs.
   #41 cycle 1 measured the system prompt with the wrong one and reported 56 tokens where the
-  governing figure was 163. **Check which function a number came from before trusting it.**
+  governing figure was 205 (cycle 1 here: 616 chars, safe divisor). **Check which function a number came from before trusting it.**
 - **The call site, in `main()`:** compaction runs first on `running_usage`, the user's line
   is appended, then `too_large(to_send(messages), ...)` decides. On refusal it calls
   `terminal.report_too_large(over)`, does `del messages[before:]`, and `continue`s. **There
