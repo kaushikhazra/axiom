@@ -141,6 +141,29 @@ def note_compaction(kept_pairs: int) -> None:
     print(f"{VOICE} compacting older history ({level})")
 
 
+def report_too_large(over: int) -> None:
+    """Said instead of sending a payload that would not fit."""
+    print(
+        f"error: this turn is about {over} tokens too large to send - "
+        f"try a shorter message, or start a new session",
+        file=sys.stderr,
+    )
+
+
+def report_truncated(estimated: int, seen: int) -> None:
+    """Said when the model evidently answered from a prompt it never fully saw.
+
+    There is no error to report from the model's side - it accepts the oversized
+    prompt, cuts it, and answers confidently. Without this the user reads a
+    reply built on a fragment as though it were built on everything.
+    """
+    print(
+        f"error: the model saw about {seen} tokens of roughly {estimated} sent - "
+        f"the reply above is built on a truncated conversation",
+        file=sys.stderr,
+    )
+
+
 def report_failure(failure: BaseException, reply: str, host: str) -> None:
     """The one place a failed turn is reported.
 

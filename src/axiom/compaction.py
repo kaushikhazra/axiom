@@ -16,6 +16,23 @@ COMPACTION_TRIGGER_FRACTION = 0.90
 KEPT_PAIRS_LADDER = (10, 5, 2, 0)
 CHARS_PER_TOKEN_ESTIMATE = 4  # rough proxy for a hypothetical, not-yet-sent payload
 
+# Measured against real prompt_eval_count: the character estimate underestimates
+# in every sample, worst at 3.13 chars per token for code. For a check whose job
+# is to be safe, the direction that matters is the one that says a payload fits
+# when it does not - so the safety check divides by three, not four.
+SAFE_CHARS_PER_TOKEN = 3
+
+# Ollama truncates an oversized prompt without raising, and reports what it
+# actually evaluated. Measured: ~4,100 estimated tokens sent came back as 258,
+# a ratio of 0.06; a normal turn was 630 reported against 906 estimated, 0.70.
+# The threshold sits between with room on both sides.
+TRUNCATION_RATIO = 0.35
+
+# And a floor, because the ratio alone is noise on a small payload: a five-token
+# estimate answered with one reported token is rounding, not a cut conversation.
+# Truncation only happens near the window, so the shortfall is always large.
+MIN_TRUNCATION_SHORTFALL = 100
+
 
 def _as_line(message: dict) -> str:
     """One message, as the summarizer sees it.
@@ -54,6 +71,36 @@ def estimated_tokens(messages: list[dict[str, str]]) -> int:
     """
     chars = sum(len(m["content"]) for m in messages)
     return chars // CHARS_PER_TOKEN_ESTIMATE
+
+
+def too_large(
+    messages: list[dict[str, str]], effective_context: int | None
+) -> int | None:
+    """How many tokens the assembled payload is over the context, or None if it fits.
+
+    Uses the conservative divisor. This is the check that decides whether to
+    send at all, and being wrong optimistically means an answer built on a
+    prompt the model never fully saw.
+    """
+    if effective_context is None:
+        return None
+    chars = sum(len(message.get("content") or "") for message in messages)
+    tokens = chars // SAFE_CHARS_PER_TOKEN
+    return tokens - effective_context if tokens > effective_context else None
+
+
+def looks_truncated(estimated: int, reported: int | None) -> bool:
+    """Whether the model evidently saw far less than was sent.
+
+    There is no error to catch - Ollama accepts an oversized prompt, cuts it,
+    and answers confidently from the fragment. The only signal is the count of
+    what it actually evaluated coming back far short of what went out.
+    """
+    if not reported or estimated <= 0:
+        return False
+    if estimated - reported < MIN_TRUNCATION_SHORTFALL:
+        return False
+    return reported < estimated * TRUNCATION_RATIO
 
 
 def _turn_boundary(messages: list[dict[str, str]], index: int) -> int:
@@ -119,7 +166,7 @@ def maybe_compact(
     messages: list[dict[str, str]],
     running_usage: int | None,
     effective_context: int | None,
-) -> tuple[list[dict[str, str]], int | None]:
+) -> tuple[list[dict[str, str]], int | None, bool]:
     """(possibly-compacted messages, the kept_pairs level used - None if untouched).
 
     Triggers on the REAL running usage from the last completed turn. Escalation
@@ -127,9 +174,9 @@ def maybe_compact(
     count for a payload not yet sent.
     """
     if running_usage is None or effective_context is None:
-        return messages, None
+        return messages, None, False
     if running_usage < effective_context * COMPACTION_TRIGGER_FRACTION:
-        return messages, None
+        return messages, None, False
 
     for kept_pairs in KEPT_PAIRS_LADDER:
         candidate = compacted_history(backend, model, messages, kept_pairs)
@@ -140,5 +187,5 @@ def maybe_compact(
             or estimated_tokens(candidate)
             < effective_context * COMPACTION_TRIGGER_FRACTION
         ):
-            return candidate, kept_pairs
-    return messages, None
+            return candidate, kept_pairs, False
+    return messages, None, False

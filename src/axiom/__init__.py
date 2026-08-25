@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         if not line:
             continue
 
-        messages, kept_pairs = compaction.maybe_compact(
+        messages, kept_pairs, _shrunk = compaction.maybe_compact(
             model_backend, settings.model, messages, running_usage, effective_context
         )
         if kept_pairs is not None:
@@ -91,11 +91,22 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         messages.append({"role": "user", "content": line})
         reply = ""
         last_usage = None
+        last_prompt_usage = None
         # Per turn, never cumulative: last question's sources are not this
         # answer's. `read` is pages actually retrieved; `seen` is addresses a
         # search returned. Only the first are sources.
         read: list[str] = []
         seen: list[str] = []
+
+        # Checked after compaction has had its chance: if it still will not
+        # fit, sending it means Ollama cuts it silently and the model answers
+        # from a fragment.
+        over = compaction.too_large(messages, effective_context)
+        if over is not None:
+            terminal.report_too_large(over)
+            del messages[before:]
+            continue
+        sent_estimate = compaction.estimated_tokens(messages)
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 reply, calls, shown = "", [], 0
@@ -113,6 +124,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                         continue
                     reply += event.text
                     last_usage = event.usage
+                    last_prompt_usage = event.prompt_usage
                     if withholding and not _could_still_be_a_call(reply):
                         withholding = False
                     if not withholding:
@@ -161,6 +173,8 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
             continue
 
         terminal.end_reply()
+        if compaction.looks_truncated(sent_estimate, last_prompt_usage):
+            terminal.report_truncated(sent_estimate, last_prompt_usage)
         terminal.show_sources(read, seen)
         messages.append({"role": "assistant", "content": reply})
         if last_usage is not None:
