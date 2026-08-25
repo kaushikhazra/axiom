@@ -13,7 +13,15 @@ cycles resolving each other's conflicts.
 | 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | **done** - merged in PR #44, 3 cycles, all 12 criteria (AC 7 found broken by the cycle-3 cold read after cycle 2 called it met) |
 | 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **done** - merged in PR #45, 4 cycles, all 12 criteria (AC 9 found decorative by the cycle-4 cold read after two cycles called it met) |
 | 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | **done** - merged in PR #46, 4 cycles, all 8 criteria (the cycle-3 cold read found the fix compacting away the user's own message, and AC 4 still violated) |
-| 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | **running** - started 2026-08-26 03:58 IST, fail-safe 15:58 IST |
+| 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | **done** - merged in PR #47, 4 cycles, all 30 criteria (the cycle-4 cold read found AC 6's routing broken for a server whose name contains the separator, and AC 22 marked met with no test at all) |
+
+**The queue is empty.** Every row is done. A new loop needs a new row here first.
+
+Four issues ran back to back on 2026-08-26 - #40, #41, #42, #43 - and **the cold read found a
+real defect in every one of them**, each time after the implementing cycle had written
+`met-with-evidence` beside the criterion. That is not a run of bad luck; it is the rule
+earning its place four times out of four, and the reason it sits in **Standing** rather than
+in any one loop's files.
 
 Rows 5 to 8 are ordered smallest blast radius first. #40 touches `fetch_page` alone. #41
 and #42 both change what the model and the user are told, and #42 reaches into the same
@@ -78,6 +86,28 @@ These apply to every loop in this queue and do not need rediscovering.
     The bug needed a hostile input, not a re-reading.
   - A genuinely fresh reader is stronger and should be used where one is available. Where
     one is not, say so in the log rather than claiming a cold read that was not cold.
+  - **Four for four.** #40 AC 7 - a typeless PNG returning its bytes as content. #41 AC 9 -
+    the retry block comparing whole result strings, so a pid in the output defeated it.
+    #42 AC 3 - the fix compacting away the user's own message, so the model answered a
+    question it had never seen. #43 AC 6 - a server whose name contained the separator
+    declaring tools that could never be called. Every one found by a hostile input; not one
+    by rereading code.
+- **Be suspicious of a hard criterion that passes first time.** #43's lifetime tests asserted
+  `surviving(spawned) == []` where `spawned` was measured *after* the servers had already been
+  stopped - so the set was empty and the assertion held for any implementation at all. Ask
+  whether the test could pass if the feature did nothing, then **break the feature and watch
+  it go red**. A test that cannot fail proves nothing.
+- **Remove a race rather than shrinking the window.** #43's call-bound test used a 1 ms
+  timeout against a server that answers in about a millisecond, and the answer won. The fix
+  was a tool that actually waits; a smaller timeout would have passed more often and stayed a
+  coin toss.
+- **A number is only as good as the function it came from.** `estimated_tokens` divides by
+  four and `too_large` by three. The system prompt was reported at 56 tokens, then 163, before
+  being measured at 205 - and the middle figure was carried into two loops' files before
+  anyone checked.
+- **The formatter is not the only thing that edits a file.** #43 added four imports in one
+  edit and used them in the next; the `PostToolUse` hook ran between, saw them unused, and
+  stripped them. Verify what landed, not just what was sent.
 - **Cycle 1 does not write code** when the artifact already exists. It records the baseline
   that the behaviour-preservation criteria are later measured against.
 - **`tests/baseline/transcript.txt` is the golden master.** Any loop that changes observable
