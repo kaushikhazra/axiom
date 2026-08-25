@@ -10,8 +10,8 @@ cycles resolving each other's conflicts.
 | 2 | [#34](https://github.com/kaushikhazra/axiom/issues/34) tools | `34-tools` | **done** - merged in PR #37, 8 cycles, all 35 criteria |
 | 3 | [#35](https://github.com/kaushikhazra/axiom/issues/35) web search and fetch | `35-web` | **done** - merged in PR #38, 5 cycles, all 30 criteria |
 | 4 | [#32](https://github.com/kaushikhazra/axiom/issues/32) compaction overflow | `32-compaction-overflow` | **done** - merged in PR #39, 3 cycles, all 6 criteria (1, 2 and 5 amended on evidence) |
-| 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | **running** - started 2026-08-26 01:13 IST, fail-safe 13:13 IST |
-| 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | queued |
+| 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | **done** - merged in PR #44, 3 cycles, all 12 criteria (AC 7 found broken by the cycle-3 cold read after cycle 2 called it met) |
+| 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **running** - started 2026-08-26 01:58 IST, fail-safe 13:58 IST |
 | 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | queued |
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | queued |
 
@@ -67,6 +67,17 @@ These apply to every loop in this queue and do not need rediscovering.
     what the log is for.
   - This is the Antenna Principle applied to something with no antenna. Find the constraint,
     break that one thing, proceed carefully, and leave a record of where you threaded.
+- **The cycle that writes the code never declares it done.** A separate cycle checks, and it
+  earns its keep: #40's cycle 3 found AC 7 outright broken - a typeless PNG returning its
+  bytes as content and counted as a source - after cycle 2 had marked that criterion
+  `met-with-evidence`. The method that caught it, in order:
+  - **Read the criteria from GitHub before the diff and before the previous log.** The log
+    is persuasive precisely because its author wrote both the code and the verdict.
+  - **Attack each criterion instead of confirming it.** Cycle 2's AC 7 test served a *text*
+    body with no type - a test that passes for an implementation doing no judging at all.
+    The bug needed a hostile input, not a re-reading.
+  - A genuinely fresh reader is stronger and should be used where one is available. Where
+    one is not, say so in the log rather than claiming a cold read that was not cold.
 - **Cycle 1 does not write code** when the artifact already exists. It records the baseline
   that the behaviour-preservation criteria are later measured against.
 - **`tests/baseline/transcript.txt` is the golden master.** Any loop that changes observable
