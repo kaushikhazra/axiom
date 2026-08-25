@@ -116,6 +116,26 @@ def show_tool_result(result: str) -> None:
         print(f"  | ... {withheld} more characters not shown")
 
 
+def show_sources(read: list[str], seen: list[str]) -> None:
+    """Which addresses axiom actually retrieved, in axiom's own voice.
+
+    Deliberately not the model's citations. Asked to cite, a small model will
+    invent a plausible address it never read; told not to, it names none at
+    all. These two lists are what was really fetched and really returned, so
+    they are worth trusting - and the VOICE prefix is what tells the reader
+    which lines are axiom's rather than the model's.
+
+    Read and merely seen are kept apart because they are different claims. A
+    page that was fetched is a source; an address that appeared in results is
+    not, and presenting one as the other is the thing this exists to prevent.
+    """
+    if read:
+        print(f"{VOICE} read: " + ", ".join(read))
+    only_seen = [address for address in seen if address not in read]
+    if only_seen:
+        print(f"{VOICE} found, not read: " + ", ".join(only_seen))
+
+
 def note_compaction(kept_pairs: int) -> None:
     level = "everything" if kept_pairs == 0 else f"keeping the last {kept_pairs}"
     print(f"{VOICE} compacting older history ({level})")

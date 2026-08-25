@@ -142,7 +142,7 @@ def fetch_page(url: str, limits: "Limits" = None) -> str:
 
     text = trafilatura.extract(page.text)
     if not text:
-        return f"{url} has no readable text"
+        return f"error: {url} has no readable text"
 
     if len(text) > limits.page_characters:
         withheld = len(text) - limits.page_characters
@@ -151,6 +151,20 @@ def fetch_page(url: str, limits: "Limits" = None) -> str:
             + f"\n\n[cut here - {withheld} more characters not included]"
         )
     return text
+
+
+def addresses_in(result: str) -> list[str]:
+    """The addresses a search result names.
+
+    The format is ours - one bare address on a line of its own - so an address
+    mentioned inside a snippet is not mistaken for a result. Parser and format
+    live together deliberately; splitting them is how one drifts from the other.
+    """
+    return [
+        line
+        for line in result.splitlines()
+        if line.startswith(("http://", "https://")) and " " not in line
+    ]
 
 
 def _report(stdout: str, stderr: str, status: int) -> str:

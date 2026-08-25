@@ -509,3 +509,146 @@ def test_a_local_path_is_still_read_normally(tmp_path):
     target.write_text("local", encoding="utf-8")
 
     assert tools.run("read_file", {"path": str(target)}) == "local"
+
+
+# --- sources: what axiom actually retrieved ---------------------------------
+
+
+def run_turn(monkeypatch, capsys, turns, lines=None):
+    import axiom
+    from conftest import StubBackend, feed
+
+    feed(monkeypatch, lines or ["go", "/exit"])
+    axiom.main([], using=StubBackend(turns=turns))
+    return capsys.readouterr().out
+
+
+def test_pages_that_were_read_are_named(monkeypatch, capsys):
+    """AC 11, from data rather than from the model's word for it."""
+    from axiom.backend import Call
+
+    given_page(
+        monkeypatch,
+        "<html><body><article><p>" + "Content here. " * 20 + "</p></article></body></html>",
+    )
+    out = run_turn(
+        monkeypatch,
+        capsys,
+        [
+            [
+                Call("fetch_page", {"url": "https://a.invalid/one"}),
+                Call("fetch_page", {"url": "https://b.invalid/two"}),
+            ],
+            ["answered"],
+        ],
+    )
+
+    assert "read: https://a.invalid/one, https://b.invalid/two" in out
+
+
+def test_a_page_that_failed_is_never_named_as_a_source(monkeypatch, capsys):
+    """AC 12 at its sharpest: presenting an address as read when it was not."""
+    from axiom.backend import Call
+
+    given_page(monkeypatch, raises=httpx.ConnectError("refused"))
+    out = run_turn(
+        monkeypatch,
+        capsys,
+        [[Call("fetch_page", {"url": "https://gone.invalid/x"})], ["could not"]],
+    )
+
+    assert "read:" not in out
+    assert "found, not read:" not in out
+
+
+def test_search_results_are_not_claimed_as_pages_read(monkeypatch, capsys):
+    """AC 12: a snippet is not a page. Listing results as sources would be the
+    same lie the model was making, told by axiom instead."""
+    from axiom.backend import Call
+
+    given_results(
+        monkeypatch,
+        [
+            {"title": "One", "href": "https://a.invalid/one", "body": "snippet one"},
+            {"title": "Two", "href": "https://b.invalid/two", "body": "snippet two"},
+        ],
+    )
+    out = run_turn(
+        monkeypatch,
+        capsys,
+        [[Call("search_web", {"query": "anything"})], ["answered from snippets"]],
+    )
+
+    assert "found, not read: https://a.invalid/one, https://b.invalid/two" in out
+    assert "axiom: read:" not in out, "a snippet was claimed as a page read"
+
+
+def test_a_page_found_then_read_is_listed_only_as_read(monkeypatch, capsys):
+    from axiom.backend import Call
+
+    given_results(
+        monkeypatch, [{"title": "One", "href": "https://a.invalid/one", "body": "s"}]
+    )
+    given_page(
+        monkeypatch,
+        "<html><body><article><p>" + "Real content. " * 20 + "</p></article></body></html>",
+    )
+    out = run_turn(
+        monkeypatch,
+        capsys,
+        [
+            [Call("search_web", {"query": "anything"})],
+            [Call("fetch_page", {"url": "https://a.invalid/one"})],
+            ["answered"],
+        ],
+    )
+
+    assert "read: https://a.invalid/one" in out
+    assert "found, not read:" not in out
+
+
+def test_a_turn_with_no_web_use_says_nothing_about_sources(monkeypatch, capsys):
+    out = run_turn(monkeypatch, capsys, [["just an answer"]])
+
+    assert "axiom: read:" not in out
+    assert "found, not read:" not in out
+
+
+def test_sources_do_not_carry_over_to_the_next_answer(monkeypatch, capsys):
+    """A later answer inheriting an earlier question's sources would be the
+    same false claim, one turn removed."""
+    import axiom
+    from axiom.backend import Call
+    from conftest import StubBackend, feed
+
+    given_page(
+        monkeypatch,
+        "<html><body><article><p>" + "Content. " * 20 + "</p></article></body></html>",
+    )
+    feed(monkeypatch, ["read it", "now something else", "/exit"])
+    axiom.main(
+        [],
+        using=StubBackend(
+            turns=[
+                [Call("fetch_page", {"url": "https://a.invalid/one"})],
+                ["answered"],
+                ["a second answer with no web at all"],
+            ]
+        ),
+    )
+
+    second_answer = capsys.readouterr().out.split("a second answer")[-1]
+    assert "axiom: read:" not in second_answer
+
+
+def test_an_address_inside_a_snippet_is_not_taken_for_a_result():
+    """The parser reads our own format - one bare address on its own line."""
+    from axiom import tools as t
+
+    block = (
+        "A title\n"
+        "https://real.invalid/page\n"
+        "A snippet that mentions https://mentioned.invalid/x in passing.\n"
+    )
+
+    assert t.addresses_in(block) == ["https://real.invalid/page"]

@@ -183,6 +183,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
   | https://example.invalid/teal
   | A blue-green colour.
 Teal is a blue-green colour.
+axiom: found, not read: https://example.invalid/teal
 > 
 --- stderr ---
 
@@ -205,6 +206,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 > axiom: fetch_page(url=https://example.invalid/page)
   | Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger.
 The page says Biscuit is ginger.
+axiom: read: https://example.invalid/page
 > 
 --- stderr ---
 
