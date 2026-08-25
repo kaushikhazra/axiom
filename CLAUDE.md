@@ -113,5 +113,31 @@ The split that makes this safe is **who is driving**, not which command it is:
 - **The sandbox is the only thing a test may destroy.** If a test needs to assert that
   something was removed, it removes something it created inside the sandbox.
 
+**Issue #43 adds a second exposure, different in kind.** An MCP server is not axiom's
+code and does not wait to be called: it is a third-party executable, launched at startup
+from a path in a config file, before the model has said anything. The sandbox rule above
+does not reach it - that rule bounds the working directory of a command axiom runs, and a
+server subprocess brings its own working directory, its own network access and its own
+lifetime.
+
+- **A test never fetches a server.** No `npx -y`, no `uvx`, no package downloaded at test
+  time. That dependency is someone else's release, pulled over the network, running as
+  whoever ran pytest.
+- **Prefer the in-memory transport.** The SDK connects a `Client` straight to a server
+  object in the same process - no subprocess, no port, no network. Nearly every criterion
+  in #43 should be settled that way, and it keeps the suite green with nothing installed
+  and nothing running.
+- **Where a criterion genuinely needs a real process** - AC 26 and AC 27 are about
+  processes outliving axiom, and cannot be proved in-memory - the server is a script this
+  repo owns, under `tests/`, run by the same interpreter, with its working directory set
+  to the sandbox. It is our own code, reviewed like any other file here.
+- **No test contacts a hosted server or needs a real secret.** #43 is stdio-only, so
+  nothing legitimate requires one. AC 14 to AC 16 are about substitution and redaction,
+  and a made-up variable holding a made-up value proves both.
+
+AC 26 and AC 27 are where the shortcut will be tempting, because pointing at a real
+server is the fastest way to get a process to kill. That is the moment to write the
+script instead.
+
 This holds until the security stories land. When they do, revisit it - do not delete
 it silently.

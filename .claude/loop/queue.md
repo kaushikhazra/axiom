@@ -10,8 +10,16 @@ cycles resolving each other's conflicts.
 | 2 | [#34](https://github.com/kaushikhazra/axiom/issues/34) tools | `34-tools` | **done** - merged in PR #37, 8 cycles, all 35 criteria |
 | 3 | [#35](https://github.com/kaushikhazra/axiom/issues/35) web search and fetch | `35-web` | **done** - merged in PR #38, 5 cycles, all 30 criteria |
 | 4 | [#32](https://github.com/kaushikhazra/axiom/issues/32) compaction overflow | `32-compaction-overflow` | **done** - merged in PR #39, 3 cycles, all 6 criteria (1, 2 and 5 amended on evidence) |
+| 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | queued |
+| 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | queued |
+| 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | queued |
+| 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | queued |
 
-**The queue is empty.** Every row is done. A new loop needs a new row here first.
+Rows 5 to 8 are ordered smallest blast radius first. #40 touches `fetch_page` alone. #41
+and #42 both change what the model and the user are told, and #42 reaches into the same
+compaction code #32 just settled, so it goes second of the two. #43 is last because it is
+the only one that adds a dependency and a new configuration surface, and it is worth
+having the tool and context work of #41 finished before a server can contribute tools.
 
 ## Handing over
 
