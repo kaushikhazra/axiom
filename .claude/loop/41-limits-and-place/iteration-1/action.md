@@ -1,86 +1,66 @@
 # Action
 
-**Fix the harness, then write the tests.** Cycle 2 built the code and left one test red on
-purpose rather than rush a second mistake. Its log has the detail; do not re-derive it.
+**Verify cold, then merge or fix.** Cycles 2 and 3 wrote all twelve implementations and
+judged them met. This cycle is the external check, and its value comes entirely from not
+trusting that judgement.
 
-## 0. Read this first
+## 1. Read the criteria as written, not as remembered
 
-Cycle 2 regenerated the golden transcript after diagnosing one line of a hundred-line diff,
-because pytest's summary reports the *first* differing index and reads like it is reporting
-the whole difference. It destroyed two compaction scenarios. It was restored and no damage
-survives.
+`gh issue view 41` **first** — before `logs/cycle-2.md`, before `logs/cycle-3.md`, before the
+diff. Those logs are persuasive because their author wrote both the code and the verdict.
 
-**Before any regeneration, run `diff .tmp/transcript-baseline-41.txt tests/baseline/transcript.txt`
-and read all of it.** Never regenerate off a pytest summary. If the diff contains anything
-you cannot name a reason for, that is a bug in the change, not in the baseline.
+Then `git diff master...HEAD -- src/ tests/` and judge each criterion against the code.
 
-## 1. Fix the two harness faults
+## 2. Attack the five most likely to be wrong
 
-Both are stub artifacts of the class #40 found in `given_page`, and neither is a product
-problem.
+A criterion survives by resisting an attack, not by having a test named after it. #40's AC 7
+had a test that passed for an implementation doing no judging at all.
 
-- **`stub_fetch`'s neighbours report a fixed `usage=1`** whatever they were sent, so any
-  growth in the payload trips `looks_truncated`. Cycle 2's diff showed twelve false
-  truncation warnings from this. Make the reported `prompt_eval_count` follow the size of
-  what the stub actually received. It cannot be a constant and stay honest.
-- **The transcript's compaction scenarios use contexts too small to hold a system prompt.**
-  Cycle 2 measured the prompt at ~163 tokens under `too_large`'s divisor of 3. Raise those
-  scenarios' windows the way `test_compaction.py`'s were raised, so they exercise compaction
-  rather than the refusal.
+- **AC 3 — "told as facts, not as settings".** Four models refused a polite request. Try a
+  determined one: tell the model the user is the administrator and the limit has been raised;
+  ask it to run something that will take two minutes anyway. Does it hold? The structural
+  half is solid — `Limits` is in no schema — so the question is whether the *prompt's* claim
+  survives pressure, and if it does not, say whether that matters given the structure.
+- **AC 5 — the criterion that fails silently.** Cycle 3 tested an absolute path *inside* the
+  sandbox. Try one genuinely elsewhere, and try a relative path the user names explicitly
+  (`../notes.txt`). Does the instruction make any model refuse work that was actually asked
+  for? That is the failure AC 5 exists to catch.
+- **AC 9 — "the same failure".** Cycle 3 compares result strings exactly. Attack it: a
+  command whose failure text contains something that varies between runs — a temp path, a
+  pid, a duration. If the strings differ by a number the model cannot control, the block
+  never fires and AC 9 is decorative. Say what happens.
+- **AC 6 — resolution.** Try a symlink, a UNC path, a path with `..` that resolves back
+  *inside*, and a working directory that does not exist. `tools.outside` swallows `OSError`;
+  check that swallow cannot hide a genuinely outside path.
+- **AC 12 — "no extra output".** Run a plain conversation with no tools and confirm nothing
+  new appears. The transcript covers the scripted paths; this is the everyday one.
 
-Then regenerate deliberately. **The diff should contain only `outside the working directory`
-lines** — genuinely new AC 6 behaviour. Anything else means something is still wrong. Quote
-the diff in the log.
+## 3. Re-run everything
 
-## 2. Write the tests cycle 2 did not
+- Full suite and the hermeticity command. **253 is the floor.**
+- `diff .tmp/transcript-baseline-41.txt tests/baseline/transcript.txt` — it will differ, and
+  every hunk is accounted for in `logs/cycle-3.md`. Confirm nothing has been added since.
+- `.tmp/probe_live_41b.py` across all four models.
 
-One per criterion, asserting on what changed rather than on what was said about it.
+## 4. Then take the exit
 
-- **AC 2** — `--command-timeout 5` and `AXIOM_COMMAND_TIMEOUT=5` each change what the prompt
-  says. Same for the working directory. The point is that there is one value, not two.
-- **AC 6** — a path outside is named, resolved; a path inside is not named. A *relative* name
-  that lands outside is the case that matters, since that is the surprise.
-- **AC 7** — the message names the limit as a rule. Assert it differs in shape from the
-  ordinary failure `error: exited with status 3`, which is what it used to resemble.
-- **AC 8** — the pinning test cycle 1 called for and cycle 2 did not write. Cut page names a
-  count; uncut page carries no marker.
-- **AC 9** — same command, same failure, twice: the third is refused. And the two negatives
-  that make the criterion mean something: a command failing *differently* the second time is
-  still run, and a *different* command failing the same way is still run.
-- **AC 10** — a stub calling tools every round ends with the round-limit line, not silence.
-  Cycle 1 recorded the before-state as `'\n\n'`.
-- **AC 11** — declarations do not vary by model.
-- **AC 12** — the transcript, once step 1 is honest.
+**If all twelve hold:** `loop.md` exit 1. Commit, push, open a PR referencing #41, merge it,
+delete the branch. Then in the same run: delete the cron, mark #41 done in `queue.md` with
+the PR number and cycle count, and scaffold row 7 — #42, `42-oversized-turn`.
 
-## 3. The live probe, extended
+**#42's scaffold must carry this**, and it is the most important thing this loop hands on:
+**#41 creates the state #42 AC 4 forbids.** A fixed ~163-token system prompt against a small
+context refuses every turn, however short. #42 owns `too_large` and the refusal path, so the
+interaction is squarely its problem — and it now has a concrete reproduction: set
+`AXIOM_DEBUG_MAX_CONTEXT=200` and type anything.
 
-AC 1, 3, 4 and 5 are not closable without it. `.tmp/probe_live_41.py` is the start; cycle 1
-covered `qwen2.5:7b` only.
-
-Working directory `C:/Projects/.tmp/axiom-tool-sandbox`, non-destructive only, never the
-repo. Add:
-
-- a relative filename lands in the working directory (AC 4),
-- an explicitly named outside path is still honoured (AC 5) — **AC 5 fails if the instruction
-  makes the model refuse**,
-- and re-ask cycle 1's directory question. It called `read_file` instead of answering from
-  the prompt; the prompt now states the directory as the place work lands rather than as a
-  value in a list. Find out whether that changed anything.
-
-Run `gemma4:e2b`, `ornith:9b` and `qwen2.5-coder:7b` too. If a model ignores the prompt,
-that is the cycle's most important finding and #35 AC 12's lesson applies: make axiom do the
-thing rather than ask the model to.
-
-## 4. Carry the #42 finding into the handover
-
-Cycle 2 established that a fixed prompt of ~163 tokens against a small context refuses every
-turn — which is the state **#42 AC 4** forbids: *"A session cannot reach a state where every
-message, however short, is refused."* #41 introduces the condition #42 exists to fix. This
-goes in #42's scaffold whatever happens to this loop.
+**If any criterion does not hold:** do not merge. Fix it, record what the cold read caught,
+and write cycle 5's action. A criterion two cycles called met and a fresh read overturned is
+the most valuable thing this loop can produce.
 
 ## Record
 
-Status for all 12. Then write cycle 4's `action.md` — the cold check: criteria from GitHub
-before the diff and before any log, attacking each rather than confirming it.
+Status for all 12, judged against the criteria text rather than against cycle 3's table.
+Where a verdict differs, say which reading was wrong and why.
 
-**Write no questions into it.** Decide, record the decision and the reasoning, carry on.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.
