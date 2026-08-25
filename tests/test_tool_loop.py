@@ -5,7 +5,7 @@ is patched. Tools that touch the filesystem stay inside tmp_path.
 """
 
 import axiom
-from axiom.backend import Call, ConnectionLost
+from axiom.backend import BackendError, Call, ConnectionLost
 from conftest import StubBackend, feed
 
 
@@ -189,3 +189,43 @@ def test_tools_are_sent_to_a_model_that_can(monkeypatch, capsys):
 
     assert backend.tools_sent[0], "a capable model was told about no tools"
     assert backend.tools_sent[0][0]["function"]["name"] in axiom.tools.REGISTRY
+
+
+def test_a_tool_failure_reads_differently_from_a_model_failure(
+    monkeypatch, capsys, tmp_path
+):
+    """AC 31: three ways a turn can go wrong, and the user must be able to tell
+    which happened - a failed tool is worth retrying differently from a model
+    that refused or a connection that dropped.
+    """
+    feed(monkeypatch, ["read it", "/exit"])
+    axiom.main(
+        [],
+        using=StubBackend(
+            turns=[[read_call(tmp_path / "missing.txt")], ["could not read it"]]
+        ),
+    )
+    tool_failure = capsys.readouterr()
+
+    feed(monkeypatch, ["say hi", "/exit"])
+    axiom.main([], using=StubBackend(turns=[[BackendError("model refused")]]))
+    model_failure = capsys.readouterr()
+
+    feed(monkeypatch, ["say hi", "/exit"])
+    axiom.main([], using=StubBackend(turns=[[ConnectionLost("connection reset")]]))
+    lost_connection = capsys.readouterr()
+
+    # A failed tool is reported inside the tool's own marked output, on stdout,
+    # and the turn carries on afterwards.
+    assert "  | error:" in tool_failure.out
+    assert tool_failure.err == "", "a tool failure is not a session-level failure"
+    assert "could not read it" in tool_failure.out
+
+    # The other two end the turn and are reported on stderr, unmarked.
+    assert "error: model refused" in model_failure.err
+    assert "  |" not in model_failure.err
+
+    assert "cannot reach Ollama" in lost_connection.err
+    assert lost_connection.err != model_failure.err, (
+        "a refusal and a dropped connection carry different advice"
+    )

@@ -1,63 +1,63 @@
 # Action
 
-Close AC 20, AC 30 and AC 31. Take AC 20 first - it is the one carrying an unknown, and the
-other two are small.
+The live model pass. Four criteria, three model loads, one cycle - attempt nothing else
+alongside it.
 
-## AC 20: what compaction makes of tool history
+## AC 3: the same request, three families
 
-`compacted_history` was written for a conversation of `{role, content}` pairs. Tool use
-breaks both halves of that assumption:
+Drive the **real program** - `main()` through a pipe, as in cycle 2 - with the same question
+against `qwen2.5:7b` (qwen2), `gemma4:e2b` (gemma4) and `ornith:9b` (qwen35), changing
+nothing but `--model`.
 
-- an assistant message carrying only `tool_calls` has `content=""`
-- a `tool`-role message is not part of a user/assistant pair at all
+Use a read-only question against a file in `C:/Projects/.tmp/axiom-tool-sandbox`. Record each
+model's output verbatim in the log, including any that misbehave.
 
-Nothing has checked what happens. **Find out before deciding anything.** Build a history
-containing a tool exchange, run `maybe_compact` over it, and record exactly what comes back -
-whether the tool calls survive, whether the pair arithmetic still lines up, and whether the
-summary the model is given still describes what was done.
+**What counts as the same tool action** is worth deciding before running, not after: the same
+tool called with the same argument, and an answer drawn from the file. The wording of the
+answer will differ between models and that is not a difference AC 3 cares about. Say so in
+the log, so the judgement is visible rather than implied.
 
-Then decide, and say which it is:
+Two of the three are thinking models and will take noticeably longer. That is expected, not a
+failure.
 
-- the existing behaviour is already correct, and a test now pins it; or
-- it is wrong, and here is the fix.
+## AC 7: streamed and not
 
-**Do not assume it is broken.** A conversation whose older turns are replaced by a system
-summary may lose nothing that matters - the summary says a file was read and what it said.
-The criterion asks that compaction *treats them as history*, not that the calls survive
-verbatim.
+The program only ever streams. Exercise `OllamaBackend.stream()` and a non-streamed call
+against the same model and the same question, and compare the tool call each produces.
 
-The sharp end is AC 20's second half: a compacted session must still be able to refer to work
-done before the compaction. Test that directly - a tool result from turn one, a compaction,
-then a question in turn ten whose answer depends on it.
+If Ollama's non-streaming path returns the call differently, that is a finding worth the
+cycle on its own - record it and say what it would cost to support both.
 
-## AC 30: Ctrl-C during a running tool
+## AC 6: be honest about what was not seen
 
-The turn loop already catches `KeyboardInterrupt` around the whole turn, so the session
-survives. The question is what happens to the **process**.
+Cycle 1's probe never reproduced a model announcing a call as text. If this cycle does not
+either, **do not claim the case cannot happen.** Write a synthetic test that drives the
+handler with a reply containing a `<tool_call>`-style block in `content`, confirm it is
+either carried out or reported, and state plainly in the log that the failure mode has not
+been observed live across four models and eight runs.
 
-`run_command` blocks in `communicate()`. An interrupt there propagates out with the child
-still running - the same class of bug as cycle 4's timeout, and this one leaves a process
-behind after the user thinks they cancelled. Handle it where the timeout is handled, kill the
-tree, and re-raise so the turn still unwinds.
+That is a weaker claim than "handled" and it is the true one.
 
-Test it the way cycle 4's timeout was tested: have the command write a marker after the
-interrupt should have killed it, and assert the marker never appears. Asserting only that the
-session survived would pass against a program that leaks processes.
+## AC 5: demonstrate, do not assert
 
-## AC 31: telling failures apart
+Adding support for a further model should require no edit to any tool. `qwen2.5-coder:7b` is
+already pulled and is a fourth model - use it. If it works with no code change, AC 5 is
+demonstrated rather than argued.
 
-A tool that failed, a model that refused, and a connection that dropped must not read the
-same. Two of the three already differ. Check the third and close the gap if there is one -
-`report_failure` handles model and connection failures; a tool failure currently arrives as
-`  | error: ...` in the tool output, which may already be distinct enough. Decide with the
-transcript in front of you rather than from the code.
+## Safety, binding
 
-## Then, if the cycle has room
+Every live request is **read-only**. Read a file, list, echo. No deletes, no writes outside
+the sandbox, no `git`, no network. `delete_file` and `write_file` stay stub-tested - they
+already are.
 
-Nothing. Leave the live model pass to its own cycle - it needs three model loads and should
-not be squeezed into the end of another.
+## If the models disagree
+
+That is the finding, and it is what AC 6 exists for. Record exactly what each emitted, and do
+not paper over it with a per-model branch - AC 4 and AC 5 forbid that, and the log should say
+what a general fix would look like instead.
 
 ## Record
 
-Full suite and the hermeticity check. Status for all 35. If the transcript changes, diff it
-and put the diff in the log.
+Full suite and the hermeticity check afterwards - a live cycle must not leave the suite red.
+Status for all 35. If all 35 read `met-with-evidence`, **the goal is met**: follow `loop.md`
+exit 1, then hand over to the next loop in `queue.md`.

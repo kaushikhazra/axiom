@@ -310,3 +310,89 @@ def test_compacted_history_carries_summary_forward_with_no_new_turns():
         "1 pair is under the 10-pair kept window - nothing older to touch"
     )
     assert client.calls == []
+
+
+def tool_turn(n: int) -> list[dict]:
+    return [
+        {"role": "user", "content": f"question {n}"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "read_file", "arguments": {"path": f"/f{n}"}}}
+            ],
+        },
+        {"role": "tool", "content": f"contents of file {n}", "tool_name": "read_file"},
+        {"role": "assistant", "content": f"answer {n}"},
+    ]
+
+
+def plain_turn(n: int) -> list[dict]:
+    return [
+        {"role": "user", "content": f"question {n}"},
+        {"role": "assistant", "content": f"answer {n}"},
+    ]
+
+
+def test_compaction_never_keeps_a_tool_result_without_its_call():
+    """AC 20: a turn is not always two messages.
+
+    Cutting inside a tool exchange leaves a tool-role message whose call was
+    summarized away - a result for a request the model never made.
+    """
+    history = []
+    for n in range(6):
+        history += tool_turn(n) if n % 2 == 0 else plain_turn(n)
+
+    result = axiom.compaction.compacted_history(
+        RecordingBackend(summary="S"), "m", list(history), kept_pairs=5
+    )
+
+    kept = result[1:]  # everything after the summary
+    assert kept[0]["role"] == "user", "the kept window starts mid-turn"
+    for position, message in enumerate(kept):
+        if message["role"] == "tool":
+            assert any(
+                "tool_calls" in earlier for earlier in kept[:position]
+            ), "a tool result survived without the call that produced it"
+
+
+def test_what_was_asked_of_a_tool_reaches_the_summary():
+    """AC 20: without this, a summary records that a file said something but
+    not which file - the fact survives and its subject does not."""
+    backend = RecordingBackend(summary="S")
+
+    axiom.compaction.compacted_history(backend, "m", tool_turn(7) * 3, kept_pairs=0)
+
+    summarized = backend.calls[0]["messages"][0]["content"]
+    assert "read_file" in summarized
+    assert "/f7" in summarized
+
+
+def test_a_compacted_session_can_still_refer_to_earlier_tool_work():
+    """AC 20's second half, end to end: the summary is what carries a tool
+    result forward once the raw messages are gone."""
+    backend = RecordingBackend(summary="the file /f0 contained: contents of file 0")
+    history = tool_turn(0) + [m for n in range(1, 8) for m in plain_turn(n)]
+
+    result = axiom.compaction.compacted_history(backend, "m", history, kept_pairs=2)
+
+    assert result[0]["role"] == "system"
+    assert "/f0" in result[0]["content"], (
+        "the compacted session cannot answer about work done before compaction"
+    )
+    assert not any(m["role"] == "tool" for m in result[1:]), (
+        "the raw tool message should have been summarized, not kept"
+    )
+
+
+def test_plain_conversations_are_sliced_exactly_as_before():
+    """The turn-boundary rule must not change a history with no tool use -
+    every boundary in one is already a turn boundary."""
+    history = [m for n in range(13) for m in plain_turn(n)]
+
+    result = axiom.compaction.compacted_history(
+        RecordingBackend(summary="S"), "m", list(history), kept_pairs=5
+    )
+
+    assert result[1:] == history[-10:]

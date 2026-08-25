@@ -136,6 +136,13 @@ def run_command(command: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
             f"error: still running after {limits.command_timeout:g} seconds "
             f"- stopped it"
         )
+    except KeyboardInterrupt:
+        # The user cancelled while this was running. Kill it before unwinding:
+        # letting the turn end with the process still going would leave work
+        # happening that nobody is waiting for and nobody can see.
+        _kill_tree(process.pid)
+        process.communicate()
+        raise
     return _report(stdout, stderr, process.returncode)
 
 
