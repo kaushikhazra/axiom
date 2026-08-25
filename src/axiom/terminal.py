@@ -38,6 +38,7 @@ def announce(
     context: int | None,
     overridden: bool,
     tools: int | None,
+    web: bool = False,
 ) -> None:
     """The startup line: what we are talking to, with how much room, and what
     it can do.
@@ -46,6 +47,10 @@ def announce(
     None when the model cannot call them at all. The three read differently
     because the user can act on them differently - one is their own choice,
     one is a fact about the model.
+
+    `web` only means anything when tools are available, which is what keeps
+    two three-state settings from becoming nine sentences: with no tools there
+    is nothing to say about the web, and the line stays one line.
     """
     if context is None:
         room = "Ollama default"
@@ -56,8 +61,10 @@ def announce(
         can_do = "no tools - this model cannot call them"
     elif tools == 0:
         can_do = "tools off"
+    elif web:
+        can_do = f"{tools} tools including web"
     else:
-        can_do = f"{tools} tools"
+        can_do = f"{tools} tools, web off"
 
     print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
 
@@ -107,6 +114,26 @@ def show_tool_result(result: str) -> None:
     withheld = len(result) - len(shown)
     if withheld:
         print(f"  | ... {withheld} more characters not shown")
+
+
+def show_sources(read: list[str], seen: list[str]) -> None:
+    """Which addresses axiom actually retrieved, in axiom's own voice.
+
+    Deliberately not the model's citations. Asked to cite, a small model will
+    invent a plausible address it never read; told not to, it names none at
+    all. These two lists are what was really fetched and really returned, so
+    they are worth trusting - and the VOICE prefix is what tells the reader
+    which lines are axiom's rather than the model's.
+
+    Read and merely seen are kept apart because they are different claims. A
+    page that was fetched is a source; an address that appeared in results is
+    not, and presenting one as the other is the thing this exists to prevent.
+    """
+    if read:
+        print(f"{VOICE} read: " + ", ".join(read))
+    only_seen = [address for address in seen if address not in read]
+    if only_seen:
+        print(f"{VOICE} found, not read: " + ", ".join(only_seen))
 
 
 def note_compaction(kept_pairs: int) -> None:

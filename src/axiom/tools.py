@@ -11,7 +11,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import ddgs
+import ddgs.exceptions
+import httpx
 import psutil
+import trafilatura
 
 
 @dataclass(frozen=True)
@@ -40,12 +44,25 @@ class Limits:
 
     working_directory: str | None = None  # None means where axiom was started
     command_timeout: float = 30.0
+    search_results: int = 5
+    fetch_timeout: float = 20.0
+    page_characters: int = 20_000
 
 
 DEFAULT_LIMITS = Limits()
 
+# The tools that reach the network. Named here so a caller can leave them out
+# without knowing how they are implemented.
+WEB_TOOLS = frozenset({"search_web", "fetch_page"})
+
 
 def read_file(path: str) -> str:
+    # A model handed a web address will reach for the tool that says "read".
+    # Without this it becomes an unhelpable OS error - on Windows the address
+    # is mangled into a path first - and the model answers from memory instead
+    # of saying it could not read the page.
+    if path.startswith(("http://", "https://")):
+        return f"error: {path} is a web address - use fetch_page to read it"
     return Path(path).read_text(encoding="utf-8")
 
 
@@ -78,6 +95,76 @@ def delete_file(path: str) -> str:
     target = Path(path)
     target.unlink()
     return f"deleted {target}"
+
+
+def search_web(query: str, limits: "Limits" = None) -> str:
+    """Search the web and return what was found, one result per block."""
+    limits = limits or DEFAULT_LIMITS
+    try:
+        found = ddgs.DDGS().text(query, max_results=limits.search_results)
+    except ddgs.exceptions.RatelimitException as throttled:
+        # Its own message, distinct from every other failure: the advice is to
+        # wait, and telling the user to check their network would be wrong.
+        return f"error: the search provider is throttling us - wait and retry ({throttled})"
+    except ddgs.exceptions.TimeoutException as slow:
+        return f"error: the search provider did not answer in time ({slow})"
+    except ddgs.exceptions.DDGSException as refused:
+        return f"error: the search provider refused the request ({refused})"
+    except Exception as unreachable:  # noqa: BLE001
+        return f"error: could not reach the search provider ({unreachable})"
+
+    if not found:
+        return f"no results for {query!r}"
+
+    return "\n\n".join(
+        "{}\n{}\n{}".format(
+            item.get("title", ""), item.get("href", ""), item.get("body", "")
+        )
+        for item in found
+    )
+
+
+def fetch_page(url: str, limits: "Limits" = None) -> str:
+    """Fetch one page and return its readable text."""
+    limits = limits or DEFAULT_LIMITS
+    try:
+        page = httpx.get(url, timeout=limits.fetch_timeout, follow_redirects=True)
+    except httpx.TimeoutException:
+        return f"error: {url} did not answer within {limits.fetch_timeout:g} seconds"
+    except httpx.HTTPError as unreachable:
+        return f"error: could not reach {url} ({unreachable})"
+
+    # httpx does not raise on 4xx or 5xx, and an error page has a body that
+    # extracts into convincing prose. Returning it would hand the model an
+    # error page as though it were the page asked for.
+    if page.status_code >= 400:
+        return f"error: {url} answered {page.status_code}"
+
+    text = trafilatura.extract(page.text)
+    if not text:
+        return f"error: {url} has no readable text"
+
+    if len(text) > limits.page_characters:
+        withheld = len(text) - limits.page_characters
+        return (
+            text[: limits.page_characters]
+            + f"\n\n[cut here - {withheld} more characters not included]"
+        )
+    return text
+
+
+def addresses_in(result: str) -> list[str]:
+    """The addresses a search result names.
+
+    The format is ours - one bare address on a line of its own - so an address
+    mentioned inside a snippet is not mistaken for a result. Parser and format
+    live together deliberately; splitting them is how one drifts from the other.
+    """
+    return [
+        line
+        for line in result.splitlines()
+        if line.startswith(("http://", "https://")) and " " not in line
+    ]
 
 
 def _report(stdout: str, stderr: str, status: int) -> str:
@@ -151,7 +238,10 @@ REGISTRY: dict[str, Tool] = {
     for tool in (
         Tool(
             name="read_file",
-            description="Read a text file and return its contents.",
+            description=(
+                "Read a local file from disk. For a web address, use fetch_page "
+                "instead."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
@@ -229,6 +319,42 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["command"],
             },
             run=run_command,
+            needs_limits=True,
+        ),
+        Tool(
+            name="search_web",
+            description=(
+                "Search the web and return the title, address and a snippet for "
+                "each result. Use this to find pages; use fetch_page to read one. "
+                "When you use anything from a result, quote its address exactly as "
+                "listed above. Never write an address that is not in the results."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for."}
+                },
+                "required": ["query"],
+            },
+            run=search_web,
+            needs_limits=True,
+        ),
+        Tool(
+            name="fetch_page",
+            description=(
+                "Fetch one web page over http or https and return its readable "
+                "text. Use this for any address, whether or not it came from a "
+                "search. This is the only tool that can read a web page. When you "
+                "use what it returns, quote the address in your answer."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The address to read."}
+                },
+                "required": ["url"],
+            },
+            run=fetch_page,
             needs_limits=True,
         ),
     )

@@ -7,8 +7,8 @@ cycles resolving each other's conflicts.
 | order | issue | slug | state |
 |---|---|---|---|
 | 1 | [#33](https://github.com/kaushikhazra/axiom/issues/33) modular OOP | `33-modular-oop` | **done** - merged in PR #36, 5 cycles |
-| 2 | [#34](https://github.com/kaushikhazra/axiom/issues/34) tools | `34-tools` | **running** |
-| 3 | [#35](https://github.com/kaushikhazra/axiom/issues/35) web search and fetch | `35-web` | queued |
+| 2 | [#34](https://github.com/kaushikhazra/axiom/issues/34) tools | `34-tools` | **done** - merged in PR #37, 8 cycles, all 35 criteria |
+| 3 | [#35](https://github.com/kaushikhazra/axiom/issues/35) web search and fetch | `35-web` | **running** |
 | 4 | [#32](https://github.com/kaushikhazra/axiom/issues/32) compaction overflow | `32-compaction-overflow` | queued |
 
 ## Handing over

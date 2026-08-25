@@ -16,9 +16,9 @@ HOST = "http://localhost:11434"
 
 
 def test_announce_shows_the_computed_context(capsys):
-    terminal.announce("qwen2.5:7b", HOST, 32768, overridden=False, tools=5)
+    terminal.announce("qwen2.5:7b", HOST, 32768, overridden=False, tools=5, web=True)
     assert capsys.readouterr().out == (
-        f"axiom: qwen2.5:7b at {HOST} (context: 32768 tokens, 5 tools)\n"
+        f"axiom: qwen2.5:7b at {HOST} (context: 32768 tokens, 5 tools including web)\n"
     )
 
 
@@ -111,3 +111,27 @@ def test_a_reply_cut_off_says_so_and_says_how_much(capsys):
         f"\nerror: reply cut off after 8 characters "
         f"- lost connection to {HOST} (connection reset)\n"
     )
+
+
+def test_announce_says_the_web_is_available(capsys):
+    """AC 1: a tool count alone says nothing about whether the web is reachable."""
+    terminal.announce("m", HOST, 32768, overridden=False, tools=7, web=True)
+    assert "7 tools including web" in capsys.readouterr().out
+
+
+def test_announce_says_when_the_web_is_off_but_tools_are_not(capsys):
+    """AC 29, and it must not read as though all tools were lost."""
+    terminal.announce("m", HOST, 32768, overridden=False, tools=5, web=False)
+    out = capsys.readouterr().out
+    assert "5 tools, web off" in out
+    assert "tools off" not in out
+
+
+def test_announce_says_nothing_about_the_web_when_there_are_no_tools(capsys):
+    """Two three-state settings would be nine sentences. With no tools there is
+    nothing true to say about the web, so the line does not say anything."""
+    terminal.announce("m", HOST, 32768, overridden=False, tools=0, web=False)
+    assert capsys.readouterr().out.count("web") == 0
+
+    terminal.announce("m", HOST, 32768, overridden=False, tools=None, web=True)
+    assert capsys.readouterr().out.count("web") == 0

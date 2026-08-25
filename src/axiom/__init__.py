@@ -38,8 +38,20 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
     # states the startup line reports differently.
     capable = model_backend.supports_tools(settings.model)
     declarations = tools.declarations() if capable and settings.tools_enabled else None
+    if declarations is not None and not settings.web_enabled:
+        declarations = [
+            tool
+            for tool in declarations
+            if tool["function"]["name"] not in tools.WEB_TOOLS
+        ]
     available = len(declarations) if declarations else (0 if capable else None)
-    limits = tools.Limits(settings.working_directory, settings.command_timeout)
+    limits = tools.Limits(
+        working_directory=settings.working_directory,
+        command_timeout=settings.command_timeout,
+        search_results=settings.search_results,
+        fetch_timeout=settings.fetch_timeout,
+        page_characters=settings.page_characters,
+    )
 
     effective_context = context.effective_context(
         model_backend.model_info(settings.model)
@@ -56,6 +68,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         effective_context,
         overridden=settings.debug_max_context is not None,
         tools=available,
+        web=settings.web_enabled,
     )
 
     messages: list[dict[str, str]] = []
@@ -78,6 +91,11 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         messages.append({"role": "user", "content": line})
         reply = ""
         last_usage = None
+        # Per turn, never cumulative: last question's sources are not this
+        # answer's. `read` is pages actually retrieved; `seen` is addresses a
+        # search returned. Only the first are sources.
+        read: list[str] = []
+        seen: list[str] = []
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 reply, calls, shown = "", [], 0
@@ -127,6 +145,10 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                 for call in calls:
                     terminal.note_tool(call.name, call.arguments)
                     result = tools.run(call.name, call.arguments, limits)
+                    if call.name == "fetch_page" and not result.startswith("error:"):
+                        read.append(str(call.arguments.get("url")))
+                    elif call.name == "search_web":
+                        seen.extend(tools.addresses_in(result))
                     terminal.show_tool_result(result)
                     messages.append(
                         {"role": "tool", "content": result, "tool_name": call.name}
@@ -139,6 +161,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
             continue
 
         terminal.end_reply()
+        terminal.show_sources(read, seen)
         messages.append({"role": "assistant", "content": reply})
         if last_usage is not None:
             running_usage = last_usage

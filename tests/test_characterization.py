@@ -21,6 +21,8 @@ import os
 import tempfile
 from pathlib import Path
 
+import ddgs
+import ddgs.exceptions
 import httpx
 import ollama
 import psutil
@@ -40,6 +42,36 @@ SANDBOX = Path(tempfile.mkdtemp(prefix="axiom-transcript-"))
 SAMPLE = SANDBOX / "notes.txt"
 SAMPLE.write_text("Biscuit the cat is ginger.\n", encoding="utf-8")
 MISSING = SANDBOX / "absent.txt"
+
+# The web, made deterministic. The harness drives the real tools, so without
+# this a scenario would reach DuckDuckGo and whatever page it named - neither
+# repeatable nor allowed in a suite that must run offline. Behaviour is keyed
+# on the input so each scenario gets the case it is named for.
+FIXED_RESULTS = [
+    {
+        "title": "Teal",
+        "href": "https://example.invalid/teal",
+        "body": "A blue-green colour.",
+    }
+]
+FIXED_PAGE = (
+    "<html><body><nav>Home</nav><article><p>"
+    + "Biscuit the cat is ginger. " * 10
+    + "</p></article></body></html>"
+)
+
+
+class StubSearch:
+    def text(self, query, max_results=None):  # noqa: ANN001
+        if "throttle" in query:
+            raise ddgs.exceptions.RatelimitException("202 Ratelimit")
+        return FIXED_RESULTS[:max_results]
+
+
+def stub_fetch(url, timeout=None, follow_redirects=None):  # noqa: ANN001, ARG001
+    if "unreachable" in url:
+        raise httpx.ConnectError("connection refused")
+    return httpx.Response(200, text=FIXED_PAGE, request=httpx.Request("GET", url))
 
 # Fixed so the memory-derived context budget cannot vary with the machine.
 FIXED_AVAILABLE_BYTES = 8 * 1024**3
@@ -133,6 +165,8 @@ def _run(
             "virtual_memory",
             lambda: type("VM", (), {"available": FIXED_AVAILABLE_BYTES})(),
         )
+        mp.setattr(axiom.tools.ddgs, "DDGS", StubSearch)
+        mp.setattr(axiom.tools.httpx, "get", stub_fetch)
         feed(mp, lines)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -289,6 +323,57 @@ def _scenarios() -> list[tuple]:
             StubClient(turns=[["hello to you"]]),
             None,
             ["--no-tools"],
+        ),
+        (
+            "the web switched off, other tools kept",
+            ["hello", "/exit"],
+            StubClient(turns=[["hello to you"]]),
+            None,
+            ["--no-web"],
+        ),
+        (
+            "a search runs and the answer follows",
+            ["what is teal?", "/exit"],
+            StubClient(
+                turns=[
+                    [Call("search_web", {"query": "what is teal"})],
+                    ["Teal is a blue-green colour."],
+                ]
+            ),
+            None,
+        ),
+        (
+            "the search provider is throttling us",
+            ["what is teal?", "/exit"],
+            StubClient(
+                turns=[
+                    [Call("search_web", {"query": "throttle me"})],
+                    ["I could not search just now."],
+                ]
+            ),
+            None,
+        ),
+        (
+            "a page is read",
+            ["read that page", "/exit"],
+            StubClient(
+                turns=[
+                    [Call("fetch_page", {"url": "https://example.invalid/page"})],
+                    ["The page says Biscuit is ginger."],
+                ]
+            ),
+            None,
+        ),
+        (
+            "an address that cannot be reached",
+            ["read that page", "/exit"],
+            StubClient(
+                turns=[
+                    [Call("fetch_page", {"url": "https://unreachable.invalid/x"})],
+                    ["I could not read that."],
+                ]
+            ),
+            None,
         ),
     ]
 

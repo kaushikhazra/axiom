@@ -1,6 +1,6 @@
 === startup reports the model, host and context ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > 
 --- stderr ---
 
@@ -16,7 +16,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: Ollama default, no tools -
 
 === a normal exchange ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > hi there
 > 
 --- stderr ---
@@ -25,7 +25,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
 
 === a blank line is ignored ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > > > 
 --- stderr ---
 
@@ -33,7 +33,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
 
 === compaction fires and says so ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 200 tokens, debug override, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 200 tokens, debug override, 7 tools including web)
 > a reply
 > axiom: compacting older history (everything)
 a reply
@@ -44,7 +44,7 @@ a reply
 
 === a model error mid-turn ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > > 
 --- stderr ---
 error: model not found (status code: -1)
@@ -53,7 +53,7 @@ error: model not found (status code: -1)
 
 === the connection drops before any reply arrives ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > > 
 --- stderr ---
 error: cannot reach Ollama at http://localhost:11434 (connection refused)
@@ -62,7 +62,7 @@ error: cannot reach Ollama at http://localhost:11434 (connection refused)
 
 === the connection drops mid-reply ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > partial > 
 --- stderr ---
 
@@ -72,7 +72,7 @@ error: reply cut off after 8 characters - lost connection to http://localhost:11
 
 === Ctrl-C during generation cancels only that reply ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > partial > second reply
 > 
 --- stderr ---
@@ -83,7 +83,7 @@ cancelled after 8 characters
 
 === Ctrl-C at an idle prompt exits ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > 
 
 --- stderr ---
@@ -92,7 +92,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
 
 === /exit leaves ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > 
 --- stderr ---
 
@@ -100,7 +100,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
 
 === /quit leaves ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > 
 --- stderr ---
 
@@ -108,7 +108,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
 
 === end of input leaves ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > 
 
 --- stderr ---
@@ -117,7 +117,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
 
 === a tool runs and the answer follows ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > axiom: read_file(path=<sandbox>\notes.txt)
   | Biscuit the cat is ginger.
 The cat is ginger.
@@ -128,7 +128,7 @@ The cat is ginger.
 
 === a tool fails and the turn carries on ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > axiom: read_file(path=<sandbox>\absent.txt)
   | error: No such file or directory: <sandbox>\absent.txt
 I could not read that file.
@@ -148,7 +148,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, no tools - t
 
 === a call the model announced as text, not as a call ===
 --- stdout ---
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools)
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
 > axiom: read_file(path=<sandbox>/notes.txt)
   | Biscuit the cat is ginger.
 The cat is ginger.
@@ -161,6 +161,63 @@ The cat is ginger.
 --- stdout ---
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, tools off)
 > hello to you
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== the web switched off, other tools kept ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools, web off)
+> hello to you
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a search runs and the answer follows ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+> axiom: search_web(query=what is teal)
+  | Teal
+  | https://example.invalid/teal
+  | A blue-green colour.
+Teal is a blue-green colour.
+axiom: found, not read: https://example.invalid/teal
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== the search provider is throttling us ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+> axiom: search_web(query=throttle me)
+  | error: the search provider is throttling us - wait and retry (202 Ratelimit)
+I could not search just now.
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a page is read ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+> axiom: fetch_page(url=https://example.invalid/page)
+  | Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger.
+The page says Biscuit is ginger.
+axiom: read: https://example.invalid/page
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== an address that cannot be reached ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+> axiom: fetch_page(url=https://unreachable.invalid/x)
+  | error: could not reach https://unreachable.invalid/x (connection refused)
+I could not read that.
 > 
 --- stderr ---
 
