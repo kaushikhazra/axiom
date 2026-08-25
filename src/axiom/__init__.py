@@ -1,6 +1,8 @@
 """A terminal chat with a local Ollama model."""
 
-from . import backend, compaction, config, context, terminal, tools
+import json
+
+from . import backend, compaction, config, context, servers, terminal, tools
 from .backend import Call, ModelBackend
 
 EXIT_COMMANDS = {"/exit", "/quit"}
@@ -30,6 +32,26 @@ def _could_still_be_a_call(reply: str) -> bool:
 
 def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> None:
     settings = config.resolve(argv)
+    attached = servers.Servers(
+        settings.mcp_servers,
+        start_timeout=settings.mcp_start_timeout,
+        call_timeout=settings.mcp_call_timeout,
+    )
+    try:
+        _chat(settings, attached, using)
+    finally:
+        # Every route out goes through here - /exit, end of input, Ctrl-C, a
+        # session that cannot continue, or an exception on the way. A server
+        # that outlived axiom would be work happening that nobody is waiting
+        # for and nobody can see.
+        attached.stop()
+
+
+def _chat(
+    settings: config.Settings,
+    attached: "servers.Servers",
+    using: ModelBackend | None,
+) -> None:
     model_backend = using or backend.OllamaBackend(settings.host)
 
     # Asked once, before anything is sent: a model with no tool support is told
@@ -44,7 +66,19 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
             for tool in declarations
             if tool["function"]["name"] not in tools.WEB_TOOLS
         ]
+    # Connected before the startup line is printed, so that line can report
+    # what actually connected rather than what was asked for.
+    if declarations is not None:
+        # Said before the wait, not after: starting a server can take seconds,
+        # and a silent pause before the first prompt reads as a hang.
+        terminal.note_starting(len(settings.mcp_servers))
+        attached.start()
+        declarations = [*declarations, *attached.declarations]
+
     available = len(declarations) if declarations else (0 if capable else None)
+    callable_names = {
+        declaration["function"]["name"] for declaration in declarations or []
+    }
     limits = tools.Limits(
         working_directory=settings.working_directory,
         command_timeout=settings.command_timeout,
@@ -69,6 +103,18 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         overridden=settings.debug_max_context is not None,
         tools=available,
         web=settings.web_enabled,
+    )
+    terminal.note_servers(
+        attached.connected,
+        [*settings.mcp_problems, *attached.failures],
+        bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
+        cost=compaction.estimated_tokens(
+            [
+                {"role": "system", "content": json.dumps(declaration)}
+                for declaration in declarations or []
+            ]
+        ),
+        window=effective_context,
     )
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a
@@ -221,7 +267,10 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                         shown = len(reply)
 
                 if withholding:
-                    announced = backend.call_from_text(reply, set(tools.REGISTRY))
+                    # Server tools are recognised here too, or a model that
+                    # announces its calls as text could reach the built-ins
+                    # and nothing else.
+                    announced = backend.call_from_text(reply, callable_names)
                     if announced is not None:
                         calls.append(announced)
                         reply = ""  # the text was the call, not an answer
@@ -258,6 +307,11 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                             "turn with the same result - not running it a third "
                             "time. Try something different or say what is wrong."
                         )
+                    elif attached.owns(call.name):
+                        # A server's tool is called and shown exactly like a
+                        # built-in. The prefix routes it; nothing else in the
+                        # loop knows the difference.
+                        result = attached.run(call.name, arguments)
                     else:
                         result = tools.run(call.name, call.arguments, limits)
                         kind = tools.failure_kind(result)

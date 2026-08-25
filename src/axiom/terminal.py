@@ -69,6 +69,56 @@ def announce(
     print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
 
 
+def note_starting(servers: int) -> None:
+    """Said before the wait, because starting a server can take seconds.
+
+    A silent pause before the first prompt reads as a hang, and the user has no
+    way to tell one from the other.
+    """
+    if servers:
+        word = "server" if servers == 1 else "servers"
+        print(f"{VOICE} starting {servers} MCP {word}...")
+
+
+def note_servers(
+    connected: dict[str, int],
+    problems: list[str],
+    bounds: tuple[float, float] | None = None,
+    cost: int | None = None,
+    window: int | None = None,
+) -> None:
+    """Which MCP servers answered, what went wrong, and what it all costs.
+
+    Said after the startup line and only when there is something to say, so a
+    run with nothing configured looks exactly as it did before MCP existed.
+
+    Problems are named one by one rather than counted: each is fixed by a
+    different action - setting a variable, correcting a command, removing a
+    tool that does not exist - and a count says none of that.
+
+    `cost` is what the declared tools take out of the window before a
+    conversation has started. Tool declarations ride in every request, the way
+    #42 measured the system prompt at 205 tokens, so a server contributing
+    twenty is a fixed tax the user would otherwise never see.
+    """
+    if not connected and not problems:
+        return
+
+    for name, count in connected.items():
+        tools_word = "tool" if count == 1 else "tools"
+        print(f"{VOICE} {name}: {count} {tools_word}")
+
+    if connected and cost is not None:
+        share = f", {100 * cost / window:.0f}% of the window" if window else ""
+        print(f"{VOICE} tools cost about {cost} tokens per request{share}")
+    if connected and bounds is not None:
+        start, call = bounds
+        print(f"{VOICE} server start limit {start:g}s, tool call limit {call:g}s")
+
+    for problem in problems:
+        print(f"{VOICE} {problem}", file=sys.stderr)
+
+
 def read_line() -> str | None:
     """The next line the user types, or None if they are leaving."""
     try:
