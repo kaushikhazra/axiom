@@ -71,9 +71,13 @@ class StubClient:
     def show(self, model):  # noqa: ANN001, ARG002
         if self.show_raises is not None:
             raise self.show_raises
-        return type("Info", (), {"modelinfo": self.info})()
+        return type(
+            "Info",
+            (),
+            {"modelinfo": self.info, "capabilities": ["completion", "tools"]},
+        )()
 
-    def chat(self, model, messages, stream=False, options=None):  # noqa: ANN001, ARG002
+    def chat(self, model, messages, stream=False, options=None, tools=None):  # noqa: ANN001, ARG002
         if not stream:
             return _reply(self.summary)
         actions = (

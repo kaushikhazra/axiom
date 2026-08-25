@@ -1,60 +1,53 @@
 # Action
 
-Settle the seam, then build the smallest thing that proves it. Cycle 1 showed the three
-families agree on the structured path, so the design question is no longer "how do we
-reconcile them" - it is "what does `stream()` yield now that a turn can produce text, a tool
-call, and thinking."
+**Test what cycle 2 built, before building more.** The mechanism is proven live and has zero
+tests. Adding a second tool now would grow the surface faster than the evidence for it, and
+every criterion still standing needs a test rather than another live demo.
 
-## First: what the backend yields
+## Write `tests/test_tools.py`
 
-Today `stream()` yields `Piece(text, usage)`. A tool call is not text and thinking is neither.
-Decide and write it down before touching the chat loop:
+Against `tools.run()` and `tools.declarations()` directly - no model, no backend.
 
-- A second event type alongside `Piece` - a `Call(name, arguments)` - so the loop tells them
-  apart by type rather than by inspecting strings.
-- Thinking: **discard it** unless Kaushik has said otherwise. Cycle 1's open question offers
-  three options and takes option 1 by default, because it preserves current behaviour and no
-  criterion requires more. If a `thinking` field arrives, drop it and note in the log that it
-  was dropped deliberately, not overlooked.
-- `stream()` takes the tool declarations. When none are passed it must behave exactly as it
-  does today - that is what keeps the existing transcript honest for the non-tool paths.
+- `declarations()` returns one entry per registered tool, shaped as Ollama expects, and takes
+  no model argument (AC 4).
+- `read_file` returns a file's contents (AC 10), reads an empty file as empty rather than as a
+  failure (AC 25), and returns a plain explanation for a file that does not exist (AC 24).
+- An unknown tool name returns a message naming it rather than raising (AC 29).
+- Wrong or missing arguments return a message rather than raising (AC 29).
 
-## Then: tool support detection, cheaply
+Use pytest's `tmp_path`. **Nothing destructive, and nothing outside it.**
 
-AC 2 needs to know at startup whether the model can call tools. Cycle 1 found the only
-observed signal is a `ResponseError` at generation time, which is too late and costs a call.
+## Then the loop's own behaviour, with a stub
 
-**Check whether the Python client exposes capabilities on `show()`** - the CLI reports a
-`Capabilities` list containing `tools`, so the data exists somewhere. Confirm it directly
-against `gemma2:2b` and one tool-capable model before building on it. If it is not exposed,
-say so and fall back to catching the 400 on the first tool-bearing request, and note what that
-costs the user.
+`StubBackend` can already stream; teach it to yield a `Call` so the chat loop can be driven
+without a model. Then, through `main(..., using=stub)`:
 
-`gemma2:2b` is the model for this, and its exact refusal string is in the cycle-1 log.
+- A call is executed and its result reaches the model as a `tool`-role message carrying
+  `tool_name` (AC 18, AC 19).
+- Two calls in one turn both run before the model is asked again (AC 17).
+- `MAX_TOOL_ROUNDS` bounds a model that never stops calling - assert it stops rather than
+  looping forever.
+- A failed tool leaves the session alive and the turn continuing (AC 28).
+- A tool result larger than `TOOL_OUTPUT_LIMIT` is truncated on screen and says how much was
+  withheld (AC 23).
+- **The rollback:** a turn that fails after a tool has run leaves history with nothing from
+  that turn - not the user line, not the assistant turn, not the tool result. Cycle 2 changed
+  `messages.pop()` into `del messages[before:]` for exactly this, and it is untested.
 
-## Then: one tool, end to end
+## Then extend the transcript
 
-**`read_file` only.** Not the file suite, not commands. One tool through the whole path:
-declared, called by a live model, executed, result returned, model answers from it.
+The harness has thirteen scenarios and none of them involves a tool. Add: a tool running and
+answering, a tool failing, and a model with no tool support. These are new scenarios, so the
+baseline grows - that is an addition, not a regeneration, and the existing thirteen lines must
+stay byte-identical. Say so in the log.
 
-That closes the mechanism for AC 4, AC 17, AC 18 and AC 19, and everything after it is
-additional tools rather than new machinery. Adding four tools before the first one runs would
-mean debugging the machinery through four surfaces at once.
+## Do not, this cycle
 
-Keep #33's structure: `ollama` and `httpx` stay inside `backend.py`, no module both talks to a
-backend and writes to the terminal, tests inject rather than patch. Check by grep before
-committing.
-
-## Watch for
-
-**Streaming accumulates.** Cycle 1 saw the call arrive inside the stream - qwen in 2 chunks,
-gemma4 in 175. The loop cannot assume a call is complete on the chunk it first appears in.
-
-**The existing transcript must still pass** until the startup line legitimately changes. If it
-breaks for any other reason this cycle, that is a regression, not a legitimate change.
+Add a second tool. Change the startup line. Both are cycle 4 - the startup line is where the
+transcript changes deliberately, and it deserves a cycle where that is the headline rather
+than a side effect.
 
 ## Record
 
-Full suite plus characterization. Live evidence for the one tool against **at least one**
-model - all three is AC 3's job and can wait until the mechanism works on one. `wc -l` across
-`src/` against the 442 baseline. Status token for all 35.
+Full suite. `wc -l` across `src/` and the test count against 66. Status token for all 35. Note
+in particular whether any test proves something the live run only suggested.

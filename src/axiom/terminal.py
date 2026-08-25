@@ -9,6 +9,25 @@ import sys
 
 from .backend import ConnectionLost
 
+
+def _accept_any_character(stream) -> None:
+    """Windows consoles default to cp1252, and models emit emoji.
+
+    Without this a single emoji in a reply kills the program mid-sentence with
+    a UnicodeEncodeError - the model said something the console could not spell.
+    Replacing the character is the right trade: an unreadable glyph beats a
+    traceback over a finished answer.
+    """
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        # Already replaced - under pytest, or a stream that cannot be retuned.
+        pass
+
+
+_accept_any_character(sys.stdout)
+_accept_any_character(sys.stderr)
+
 PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
@@ -38,6 +57,25 @@ def show_piece(text: str) -> None:
 
 def end_reply() -> None:
     print()
+
+
+TOOL_OUTPUT_LIMIT = 2000
+
+
+def note_tool(name: str, arguments: dict) -> None:
+    """What is about to run, before it runs."""
+    detail = ", ".join(f"{key}={value!r}" for key, value in arguments.items())
+    print(f"{VOICE} {name}({detail})")
+
+
+def show_tool_result(result: str) -> None:
+    """A tool's output, marked so it cannot be read as the model's answer."""
+    shown = result[:TOOL_OUTPUT_LIMIT]
+    for line in shown.splitlines() or [""]:
+        print(f"  | {line}")
+    withheld = len(result) - len(shown)
+    if withheld:
+        print(f"  | ... {withheld} more characters not shown")
 
 
 def note_compaction(kept_pairs: int) -> None:

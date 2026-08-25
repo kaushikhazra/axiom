@@ -31,14 +31,37 @@ class Piece:
     usage: int = 0
 
 
+@dataclass(frozen=True)
+class Call:
+    """A tool the model wants run, and the arguments it wants passed.
+
+    Deliberately built from primitives rather than wrapping the vendor's own
+    object: the assistant turn has to go back into history to continue a tool
+    conversation, and rebuilding it from these fields is accepted.
+    """
+
+    name: str
+    arguments: dict
+
+    def as_message_part(self) -> dict:
+        """This call as it goes back into history, for the model to match against."""
+        return {"function": {"name": self.name, "arguments": self.arguments}}
+
+
 class ModelBackend(Protocol):
     """What axiom needs a model to do. Implemented here, and by the test stubs."""
 
     def model_info(self, model: str) -> dict | None: ...
 
+    def supports_tools(self, model: str) -> bool: ...
+
     def stream(
-        self, model: str, messages: list[dict[str, str]], options: dict | None
-    ) -> Iterator[Piece]: ...
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        options: dict | None,
+        tools: list[dict] | None,
+    ) -> Iterator[Piece | Call]: ...
 
     def complete(self, model: str, messages: list[dict[str, str]]) -> str: ...
 
@@ -56,16 +79,37 @@ class OllamaBackend:
         except (ollama.ResponseError, ConnectionError, httpx.HTTPError):
             return None
 
+    def supports_tools(self, model: str) -> bool:
+        """Whether this model can be sent tools at all.
+
+        Asked before the first turn. Ollama otherwise reports it only as a 400
+        at generation time, which would spend a request to find out, and would
+        tell the user after they had already asked for something.
+        """
+        try:
+            return "tools" in (self._client.show(model).capabilities or [])
+        except (ollama.ResponseError, ConnectionError, httpx.HTTPError):
+            return False
+
     def stream(
         self,
         model: str,
         messages: list[dict[str, str]],
         options: dict | None = None,
-    ) -> Iterator[Piece]:
+        tools: list[dict] | None = None,
+    ) -> Iterator[Piece | Call]:
         try:
             for chunk in self._client.chat(
-                model=model, messages=messages, stream=True, options=options
+                model=model,
+                messages=messages,
+                stream=True,
+                options=options,
+                tools=tools,
             ):
+                for call in chunk.message.tool_calls or []:
+                    yield Call(call.function.name, dict(call.function.arguments))
+                # A Piece for every chunk, empty text included: the final chunk
+                # carries the usage counts and often no text at all.
                 yield Piece(
                     chunk.message.content or "",
                     (chunk.prompt_eval_count or 0) + (chunk.eval_count or 0),

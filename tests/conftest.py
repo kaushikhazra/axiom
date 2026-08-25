@@ -47,22 +47,29 @@ class StubBackend:
         turns: list | None = None,
         summary: str = "a short summary",
         usage: int = 1,
+        tools_supported: bool = True,
     ) -> None:
         self.info = info
         self.turns = list(turns or [])
         self.summary = summary
         self.usage = usage
+        self.tools_supported = tools_supported
         self.streamed: list[list[dict[str, str]]] = []
         self.completed: list[list[dict[str, str]]] = []
         self.options: list = []
+        self.tools_sent: list = []
         self.index = 0
 
     def model_info(self, model):  # noqa: ANN001, ARG002
         return self.info
 
-    def stream(self, model, messages, options=None):  # noqa: ANN001, ARG002
+    def supports_tools(self, model):  # noqa: ANN001, ARG002
+        return self.tools_supported
+
+    def stream(self, model, messages, options=None, tools=None):  # noqa: ANN001, ARG002
         self.streamed.append([dict(m) for m in messages])
         self.options.append(options)
+        self.tools_sent.append(tools)
         actions = (
             self.turns[self.index] if self.index < len(self.turns) else ["a reply"]
         )
@@ -77,13 +84,13 @@ class StubBackend:
         return self.summary
 
 
-def chunk(text: str, prompt_eval_count: int = 0, eval_count: int = 0):
+def chunk(text: str, prompt_eval_count: int = 0, eval_count: int = 0, tool_calls=None):
     """A streamed chunk shaped like the vendor client's, for tests below the seam."""
     return type(
         "Chunk",
         (),
         {
-            "message": type("Msg", (), {"content": text})(),
+            "message": type("Msg", (), {"content": text, "tool_calls": tool_calls})(),
             "prompt_eval_count": prompt_eval_count,
             "eval_count": eval_count,
         },
