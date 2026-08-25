@@ -1,71 +1,74 @@
 # Action
 
-**Cycle 1 writes no production code.** Record the baseline, install the dependency, and probe
-the two things that decide the shape of everything else. This is the largest issue in the
-queue; a wrong structural guess here costs more cycles than measuring does.
+Build the config and the client. Cycle 1 measured the library, the bridge and the process
+lifetime; its findings are in `logs/cycle-1.md` and are not to be re-derived.
 
-## 1. Record the baseline
+**30 criteria is too many for one cycle.** This cycle takes the ones that make a server's
+tools reach the model at all — AC 1 to AC 9 and AC 14 to AC 16. Selection, cost, failure and
+lifetime follow in cycle 3. Say in the log which are done and which are deliberately not
+started; a cycle that half-finishes twenty things is worse than one that finishes ten.
 
-- Full suite and the hermeticity check. Confirm 272 green.
-- Copy `tests/baseline/transcript.txt` to `.tmp/transcript-baseline-43.txt`. **AC 29 is
-  measured by this file.**
-- Record today's startup line exactly, for a default run and for `--no-tools`. AC 1 and AC 29
-  are about it not moving.
+## 1. Config
 
-## 2. Add `mcp` and find out what it actually gives you
+`.axiom/mcp.json`, read at startup, the `mcpServers` shape:
 
-`uv add mcp`. Then a script in `.tmp/`, not a test - measure rather than trust the notes in
-`assumption.md`:
+```json
+{"mcpServers": {"tiny": {"command": "python", "args": ["server.py"],
+                         "env": {"TOKEN": "${MY_TOKEN}"}}}}
+```
 
-- Build a tiny in-memory server with two tools and connect a `Client` to it.
-- **What does `list_tools()` actually return?** Print one tool object whole: the exact
-  attribute names, and the exact shape of `input_schema`.
-- **Does that schema drop straight into an Ollama declaration?** `declarations()` emits
-  `{"type": "function", "function": {"name", "description", "parameters"}}`. Try it. If the
-  schema needs adjusting, find out now, not in cycle 4.
-- **What does `call_tool` return for a success and for a failure?** Print `.content`,
-  `.is_error` and `.structured_content` for both. `tools.run()` returns a plain string, so
-  something has to turn content blocks into one - decide what happens to a non-text block.
-- **What version of `mcp` actually installed**, and does it match the v2 API in
-  `assumption.md`? If the API differs, that is the most important finding in the cycle.
+- `${NAME}` substituted from the environment (**AC 14**). A referenced variable that is not
+  set is reported at startup **by name**, and the literal `${NAME}` is never passed through
+  (**AC 15**).
+- `--no-mcp`, and `$AXIOM_MCP` off, with the flag winning (**AC 17**). `--no-tools` takes MCP
+  with it, the way it already takes the web (**AC 18**).
+- No file, or a file naming no servers, behaves exactly as today (**AC 1, AC 2**).
+- `config.py` owns resolution and this is the first file it has read. Keep it there.
 
-## 3. Probe the sync/async bridge
+## 2. The client
 
-The SDK is async-only and axiom is entirely synchronous. `assumption.md` says a background
-event-loop thread; **measure that it works before building on it**:
+A module of its own. `tools.py` is about what axiom can do; this is about talking to someone
+else's process.
 
-- Start a loop in a daemon thread, open a `Client` inside it, and call a tool from the main
-  thread with `asyncio.run_coroutine_threadsafe(...).result()`.
-- Does the session stay usable across several calls?
-- What happens on shutdown - does the loop thread stop cleanly, and does the client's context
-  manager exit properly from another thread?
-- Time one call. If the bridge adds meaningful latency per call, say so.
+- The bridge from cycle 1's probe: a loop on a daemon thread, `Client` entered inside it,
+  calls via `run_coroutine_threadsafe(...).result()`. Measured at 1.21 ms per call.
+- **Send the server's stderr somewhere other than the user's terminal.** Cycle 1 found a
+  server printing a full Python traceback into the middle of a conversation, which
+  `terminal.py` never sees and AC 16 forbids being a leak path. The SDK takes `errlog` on the
+  stdio transport.
+- **Prefix every tool `server__tool`** (**AC 6**), and use the same prefix to route the call
+  back. One mechanism, not two. AC 6 asks that a collision *cannot happen* — prove the
+  impossibility, not the prefix.
+- Flatten `CallToolResult.content` to a string: join the text blocks, and **name a non-text
+  block by its type rather than dropping it**. A model told nothing came back answers from
+  memory, which is the failure #40 exists to prevent.
+- `is_error=True` becomes an `error:` string, matching `tools.run()`'s existing contract.
 
-## 4. Probe the thing AC 26 and AC 27 rest on
+## 3. Wiring
 
-Write a trivial stdio server as a script under `.tmp/` for now, start it through the SDK, and
-find out:
+- Connect **before** `terminal.announce`, so the startup line reports what actually connected
+  (**AC 3, AC 5**).
+- The startup line names each server and how many tools it contributed (**AC 5**).
+- `declarations()` and `run()` take the MCP tools as an argument rather than reaching for a
+  global. `main()` already passes `limits` and `instructions` that way.
+- A server's tool is called and displayed exactly like a built-in (**AC 7**), and sessions
+  stay open for the whole run (**AC 8**), with nothing carried between runs (**AC 9**).
 
-- What is the child process's pid, from axiom's side?
-- After the client's context manager exits, is the process actually gone? Check with
-  `psutil`, not by assuming.
-- **What happens if the parent is killed without exiting cleanly?** That is AC 27, and it is
-  the one most likely to be false by default.
+## 4. Prove it
 
-Non-destructive throughout, and the script is ours - `CLAUDE.md`'s clause forbids fetching a
-server for a test, and that applies to probes too.
-
-## 5. Say what the fix will be
-
-One paragraph per group of criteria, no code. Where the config is read, how `REGISTRY` stops
-being import-time static, where the event loop lives, how a prefixed tool routes back to its
-server, and what `to_send`/`declarations` look like when tools come from two places. If a
-probe shows the obvious approach is wrong, say that instead.
+- **In-memory transport for nearly everything**, per `CLAUDE.md`. No test fetches a server.
+- A real subprocess only where a criterion needs one — not in this cycle.
+- **AC 16 is three places**: the startup line, any error, and anything the model is told. The
+  third is the one that gets missed, and a server that fails to start often reports its own
+  command line.
+- Full suite and the hermeticity command. **272 is the floor**, and it must still pass with
+  no MCP server anywhere.
+- `diff .tmp/transcript-baseline-43.txt tests/baseline/transcript.txt` — with no server
+  configured it must be **byte-identical**. Check for removed lines explicitly.
 
 ## Record
 
-Status for all 30 - most will read `not-started`, which is correct for this cycle. Then write
-cycle 2's `action.md`.
+Status for all 30, and be explicit about which were not attempted this cycle. Then write
+cycle 3's `action.md`.
 
-**Write no questions into it.** Decide, record the decision and the reasoning in the log,
-carry on. Nobody is reading between firings.
+**Write no questions into it.** Decide, record the decision and the reasoning, carry on.
