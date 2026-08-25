@@ -90,12 +90,17 @@ def end_reply() -> None:
 TOOL_OUTPUT_LIMIT = 2000
 
 
-def note_tool(name: str, arguments: dict) -> None:
+def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> None:
     """What is about to run, before it runs.
 
     Values are shown as they are, not repr'd: a Windows path through repr()
     comes out with every backslash doubled, which is not what the user typed
     and not what they would type to check it.
+
+    `outside` names paths that land outside the working directory, resolved
+    (#41 AC 6). Shown on its own line rather than folded into the arguments,
+    because `path=notes.txt` is what the model asked for and where that
+    actually lands is a different fact. Visibility only - nothing is blocked.
     """
     if isinstance(arguments, dict):
         detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
@@ -104,6 +109,20 @@ def note_tool(name: str, arguments: dict) -> None:
         # came - running it is what reports that it cannot be used.
         detail = str(arguments)
     print(f"{VOICE} {name}({detail})")
+    for path in outside or []:
+        print(f"{VOICE} outside the working directory: {path}")
+
+
+def note_round_limit(rounds: int) -> None:
+    """The turn ended because it ran out of rounds, not because it answered.
+
+    Without this the user gets whatever `reply` happened to hold, which after
+    a turn that called tools every round is nothing at all (#41 AC 10).
+    """
+    print(
+        f"{VOICE} stopped after {rounds} rounds of tool calls without an answer. "
+        f"Nothing further was tried."
+    )
 
 
 def show_tool_result(result: str) -> None:

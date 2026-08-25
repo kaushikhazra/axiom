@@ -12,7 +12,7 @@ import builtins
 import pytest
 
 import axiom
-from conftest import StubBackend, feed
+from conftest import StubBackend, feed, history
 
 
 @pytest.fixture
@@ -44,7 +44,7 @@ def test_cancelled_reply_is_absent_from_history(monkeypatch, capsys, backend):
     axiom.main([], using=backend)
     capsys.readouterr()
 
-    second_call = backend.streamed[1]
+    second_call = history(backend.streamed[1])
     assert [m["content"] for m in second_call] == ["second question"], (
         "the interrupted turn leaked into history"
     )

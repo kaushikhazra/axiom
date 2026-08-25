@@ -6,7 +6,7 @@ is patched. Tools that touch the filesystem stay inside tmp_path.
 
 import axiom
 from axiom.backend import BackendError, Call, ConnectionLost
-from conftest import StubBackend, feed
+from conftest import StubBackend, feed, history
 
 
 def read_call(path) -> Call:
@@ -29,7 +29,7 @@ def test_a_tool_result_goes_back_as_a_tool_message(monkeypatch, capsys, tmp_path
     axiom.main([], using=backend)
     capsys.readouterr()
 
-    second_request = backend.streamed[1]
+    second_request = history(backend.streamed[1])
     assistant, tool_message = second_request[-2], second_request[-1]
     assert assistant["role"] == "assistant"
     assert assistant["tool_calls"][0]["function"]["name"] == "read_file"
@@ -162,7 +162,7 @@ def test_a_turn_that_fails_after_a_tool_ran_leaves_no_trace(
     axiom.main([], using=backend)
     capsys.readouterr()
 
-    third_request = backend.streamed[2]
+    third_request = history(backend.streamed[2])
     assert [m["content"] for m in third_request] == ["try again"], (
         "the failed turn left history behind"
     )

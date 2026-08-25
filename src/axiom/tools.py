@@ -56,31 +56,120 @@ DEFAULT_LIMITS = Limits()
 WEB_TOOLS = frozenset({"search_web", "fetch_page"})
 
 
-def read_file(path: str) -> str:
+def working_directory(limits: "Limits") -> Path:
+    """Where this run's work lands. `None` means where axiom was started."""
+    return Path(limits.working_directory or Path.cwd())
+
+
+def _resolve(path: str, limits: "Limits") -> Path:
+    """A path argument, resolved the way the working directory promises.
+
+    A relative name lands in the working directory rather than wherever the
+    process happens to be. Before this, `--working-directory` reached
+    `run_command` as its `cwd` and reached the file tools not at all, so the
+    same relative name meant two different places depending on which tool
+    used it - and the setting could not mean what it says.
+
+    An absolute path is untouched. That is #41 AC 5: a path the user named is
+    used exactly as they wrote it, wherever it points.
+    """
+    asked = Path(path)
+    return asked if asked.is_absolute() else working_directory(limits) / asked
+
+
+# Arguments that name a place on disk. Listed rather than guessed, so a tool
+# gaining a string argument does not silently start being path-resolved.
+PATH_ARGUMENTS = frozenset({"path"})
+
+
+def outside(arguments: dict, limits: "Limits") -> list[str]:
+    """Resolved paths in this call that land outside the working directory.
+
+    Shown to the user before the tool runs (#41 AC 6). **Visibility only** -
+    nothing is blocked and nothing is asked. Enforcement belongs to the
+    security stories, and AC 5 exists to stop a guard being built here.
+
+    Resolved rather than echoed, because `notes.txt` on screen says nothing
+    about where it actually lands, and that is the whole surprise this exists
+    to prevent.
+    """
+    base = working_directory(limits).resolve()
+    found = []
+    for name in PATH_ARGUMENTS:
+        value = arguments.get(name)
+        if not isinstance(value, str) or value.startswith(("http://", "https://")):
+            continue
+        try:
+            resolved = _resolve(value, limits).resolve()
+        except OSError:  # a name the filesystem will not even resolve
+            continue
+        if resolved != base and base not in resolved.parents:
+            found.append(str(resolved))
+    return found
+
+
+def system_prompt(limits: "Limits") -> str:
+    """What the model is told before it does anything.
+
+    Built from the same `Limits` the tools are handed, so what the model is
+    told and what actually applies cannot drift - there is one value, not a
+    description of one.
+
+    Describes the limits, not the inventory. No tool count and no tool names:
+    the list already varies with `--no-web` and #43 will make it vary per run,
+    and a prompt naming a number would go wrong without anything failing.
+
+    The working directory is stated as the place work lands rather than as a
+    value in a list. Measured reason: asked how long a command may run,
+    qwen2.5:7b answered from the prompt; asked what directory it was working
+    in, from the same list, it called `read_file` instead. A duration reads as
+    a fact and a path reads as something to go and look up.
+    """
+    return (
+        "You are axiom, a terminal assistant.\n"
+        "\n"
+        f"You are working in {working_directory(limits)}. Files you create or "
+        "change go there. Use a path somewhere else only when the user names "
+        "one, and when they do, use it exactly as they wrote it.\n"
+        "\n"
+        "The limits you are working within:\n"
+        f"- a command is stopped if it runs longer than "
+        f"{limits.command_timeout:g} seconds\n"
+        f"- a page you fetch is stopped after {limits.fetch_timeout:g} seconds "
+        f"and kept to {limits.page_characters} characters\n"
+        f"- a search returns {limits.search_results} results\n"
+        "\n"
+        "These are facts about how you are running, not settings. Neither you "
+        "nor the user can change them during this run. If a request needs more "
+        "than one of them allows, say so rather than trying anyway."
+    )
+
+
+def read_file(path: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
     # A model handed a web address will reach for the tool that says "read".
     # Without this it becomes an unhelpable OS error - on Windows the address
     # is mangled into a path first - and the model answers from memory instead
     # of saying it could not read the page.
     if path.startswith(("http://", "https://")):
         return f"error: {path} is a web address - use fetch_page to read it"
-    return Path(path).read_text(encoding="utf-8")
+    return _resolve(path, limits).read_text(encoding="utf-8")
 
 
-def write_file(path: str, content: str) -> str:
-    target = Path(path)
+def write_file(path: str, content: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
+    target = _resolve(path, limits)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return f"wrote {len(content)} characters to {target}"
 
 
-def edit_file(path: str, old: str, new: str) -> str:
+def edit_file(path: str, old: str, new: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
     """Replace one stretch of a file and leave every other byte alone.
 
     Refuses when the text appears more than once: the model asked to change
     one thing, and silently changing three would be a different edit than the
     one it described to the user.
     """
-    target = Path(path)
+    target = _resolve(path, limits)
     original = target.read_text(encoding="utf-8")
     found = original.count(old)
     if found == 0:
@@ -91,8 +180,8 @@ def edit_file(path: str, old: str, new: str) -> str:
     return f"replaced one occurrence in {target}"
 
 
-def delete_file(path: str) -> str:
-    target = Path(path)
+def delete_file(path: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
+    target = _resolve(path, limits)
     target.unlink()
     return f"deleted {target}"
 
@@ -335,9 +424,14 @@ def run_command(command: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
     except subprocess.TimeoutExpired:
         _kill_tree(process.pid)
         process.communicate()  # returns now that nothing holds the pipes open
+        # Named as a rule rather than an incident (#41 AC 7). The old wording -
+        # "still running after N seconds - stopped it" - was the same shape as
+        # "exited with status 3", so a retry looked worth trying. It never is:
+        # the bound applies to every command and cannot be raised from here.
         return (
-            f"error: still running after {limits.command_timeout:g} seconds "
-            f"- stopped it"
+            f"error: stopped at the {limits.command_timeout:g} second limit that "
+            f"applies to every command. Running it again will stop at the same "
+            f"point - the limit is not something this session can raise."
         )
     except KeyboardInterrupt:
         # The user cancelled while this was running. Kill it before unwinding:
@@ -369,6 +463,7 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["path"],
             },
             run=read_file,
+            needs_limits=True,
         ),
         Tool(
             name="write_file",
@@ -382,6 +477,7 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["path", "content"],
             },
             run=write_file,
+            needs_limits=True,
         ),
         Tool(
             name="edit_file",
@@ -405,6 +501,7 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["path", "old", "new"],
             },
             run=edit_file,
+            needs_limits=True,
         ),
         Tool(
             name="delete_file",
@@ -417,6 +514,7 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["path"],
             },
             run=delete_file,
+            needs_limits=True,
         ),
         Tool(
             name="run_command",

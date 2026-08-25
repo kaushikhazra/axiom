@@ -71,6 +71,19 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         web=settings.web_enabled,
     )
 
+    # Held here rather than in `messages`, deliberately. `compaction` treats a
+    # leading system message as a carried-forward summary: a prompt at index 0
+    # is absorbed into it, which suppresses the "Summary of earlier
+    # conversation:" header, and its survival then depends on #32 happening to
+    # forget the middle of the string rather than the front. Kept outside, none
+    # of that is true and the model has its limits on every turn rather than
+    # until the first compaction.
+    instructions = {"role": "system", "content": tools.system_prompt(limits)}
+
+    def to_send(history: list[dict[str, str]]) -> list[dict[str, str]]:
+        """What actually goes to the model - and what the size checks must weigh."""
+        return [instructions, *history]
+
     messages: list[dict[str, str]] = []
     running_usage: int | None = None  # real prompt_eval_count + eval_count, last turn
 
@@ -103,12 +116,22 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         # Checked after compaction has had its chance: if it still will not
         # fit, sending it means Ollama cuts it silently and the model answers
         # from a fragment.
-        over = compaction.too_large(messages, effective_context)
+        # Weighed with the instructions included: they ride in every request,
+        # so a check that only counts `messages` under-counts the real payload
+        # by exactly the prompt, every turn.
+        over = compaction.too_large(to_send(messages), effective_context)
         if over is not None:
             terminal.report_too_large(over)
             del messages[before:]
             continue
-        sent_estimate = compaction.estimated_tokens(messages)
+        sent_estimate = compaction.estimated_tokens(to_send(messages))
+        # #41 AC 9, scoped to this turn and rebuilt with it. Keyed on the exact
+        # command, holding the exact failures it gave: a command that fails
+        # *differently* the second time is a new situation, and a different
+        # command failing the same way is one too. Both halves are the
+        # criterion.
+        failures: dict[str, list[str]] = {}
+        out_of_rounds = False
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 reply, calls, shown = "", [], 0
@@ -119,7 +142,7 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                 # for every model that behaves.
                 withholding = declarations is not None
                 for event in model_backend.stream(
-                    settings.model, messages, chat_options, declarations
+                    settings.model, to_send(messages), chat_options, declarations
                 ):
                     if isinstance(event, Call):
                         calls.append(event)
@@ -157,8 +180,24 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                     }
                 )
                 for call in calls:
-                    terminal.note_tool(call.name, call.arguments)
-                    result = tools.run(call.name, call.arguments, limits)
+                    arguments = (
+                        call.arguments if isinstance(call.arguments, dict) else {}
+                    )
+                    terminal.note_tool(
+                        call.name, call.arguments, tools.outside(arguments, limits)
+                    )
+                    command = arguments.get("command")
+                    already = failures.get(command, [])
+                    if len(already) >= 2 and already[-1] == already[-2]:
+                        result = (
+                            "error: this command has already failed twice in this "
+                            "turn with the same result - not running it a third "
+                            "time. Try something different or say what is wrong."
+                        )
+                    else:
+                        result = tools.run(call.name, call.arguments, limits)
+                        if command is not None and result.startswith("error:"):
+                            failures.setdefault(command, []).append(result)
                     if call.name == "fetch_page" and tools.was_read(result):
                         read.append(str(call.arguments.get("url")))
                     elif call.name == "search_web":
@@ -167,6 +206,10 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
                     messages.append(
                         {"role": "tool", "content": result, "tool_name": call.name}
                     )
+            else:
+                # Ran every round and was still calling tools. Without this the
+                # user gets whatever `reply` holds, which is nothing.
+                out_of_rounds = True
         except (KeyboardInterrupt, backend.BackendError) as failure:
             # Nothing from a failed turn becomes history - including any tool
             # results already gathered during it.
@@ -175,6 +218,8 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
             continue
 
         terminal.end_reply()
+        if out_of_rounds:
+            terminal.note_round_limit(MAX_TOOL_ROUNDS)
         if compaction.looks_truncated(sent_estimate, last_prompt_usage):
             terminal.report_truncated(sent_estimate, last_prompt_usage)
         terminal.show_sources(read, seen)
