@@ -48,24 +48,35 @@ because "text/*" may not cover all of them and `application/json` and
 - Record today's behaviour for a plain-text page and for a PDF, so the before/after is on
   the record rather than described.
 
-## 4. Settle the two contradictions
+## 4. Find the seam for the third state
 
-Both are named in `observe.md`. Write the decision and the reason into the cycle log:
+The three outcomes are decided and recorded in `assumption.md`. What is **not** decided is
+how the middle one travels, and that is a code question, not a judgement call.
 
-- **Is an empty page a source?** The starting reading is yes - it was really reached and
-  "nothing" is a true answer. Confirm or overturn with a reason.
-- **What is AC 7's judgement of a typeless page, in one sentence?** Decide it now, in
-  words, before any code exists to argue with. AC 6 outranks it.
+`__init__.py` decides a source with `not result.startswith("error:")`. An empty page must
+reach the user as a warning, must not be an error, and must not be a source - which that
+single test cannot express. Read the call site and say what the smallest honest change is.
+Options worth weighing, in one line each: a second recognised prefix; `fetch_page` returning
+something richer than a bare string; or the source decision moving out of `__init__.py` and
+into `tools.py` where the outcome is actually known.
+
+Weigh them against #43, which will add tools from MCP servers whose results axiom does not
+author. A source rule that only works for strings axiom wrote itself is a rule that breaks
+in two loops' time. Recommend one and say what it costs.
 
 ## 5. Say what the fix will be
 
 One paragraph, no code. Which branch goes where in `fetch_page`, what decides text from
-not-text, and what happens to the `error:` prefix in each case. If the probes show the
-obvious fix is wrong, say that instead - that is a better cycle 1 than a plan that survives
-because nothing tested it.
+not-text given that a missing type now means text, and how each of the three outcomes leaves
+the function. If the probes show the obvious fix is wrong, say that instead - that is a
+better cycle 1 than a plan that survives because nothing tested it.
 
 ## Record
 
 Status for all 12 criteria - most will read `not-started`, and that is the correct result
 for this cycle. AC 12's four behaviours get their baseline strings recorded, which makes
 them `attempted` at best, not met. Then write cycle 2's `action.md`.
+
+**Write no questions into it.** If cycle 1 turns up something ambiguous, decide it, record
+the decision and the reasoning in the log, and carry on - see `observe.md`. Nobody is
+reading between firings.

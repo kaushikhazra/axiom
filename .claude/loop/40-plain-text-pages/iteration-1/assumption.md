@@ -38,6 +38,29 @@ tests, green and hermetic** at scaffold time.
   protects: unreachable address, error status, fetch past the time limit, cancelled fetch.
   Those tests are the AC 12 evidence if they still pass unchanged.
 
+## Decided by Kaushik - do not reopen
+
+Three questions this scaffold originally left to cycle 1. All three are settled. Implement
+them; do not spend a cycle re-deciding them.
+
+- **AC 7 - a page announcing no type at all is treated as text.** Not as HTML, and not as
+  unreadable. The reason is not code execution - `trafilatura` parses HTML, it does not run
+  it - but that treating an unknown body as text is lossless and predictable, where routing
+  it through an HTML extractor reshapes it or returns None. Text is the conservative
+  default: it can only ever hand back what was served.
+- **AC 8 - an empty page is a warning.** Not an error, and **not a source**. The user is
+  told plainly that the page is empty. This is a third state, and the codebase has only two
+  today: the `error:` prefix is the sole signal, and `__init__.py` appends to `read`
+  whenever a result lacks it. **That mechanism has to grow a third case** - empty is
+  neither an error nor a source. Whatever carries it, `terminal.py` still owns the printing
+  and the sources list still excludes it.
+- **AC 6 - a page that is not readable hands the model none of its content.** Not a
+  truncated copy, not a decoded approximation, not a byte. The model is still told the page
+  could not be read, because that is what stops it answering from memory and is what AC 6
+  says - but the page's own content does not enter the conversation at any size. If this
+  turns out to break something downstream, that is handled case by case when it happens;
+  do not pre-emptively soften it.
+
 ## Given
 
 - **`requires-python = ">=3.12"`; the venv is 3.14.3.** `uv` and pytest.

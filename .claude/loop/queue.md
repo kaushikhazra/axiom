@@ -10,7 +10,7 @@ cycles resolving each other's conflicts.
 | 2 | [#34](https://github.com/kaushikhazra/axiom/issues/34) tools | `34-tools` | **done** - merged in PR #37, 8 cycles, all 35 criteria |
 | 3 | [#35](https://github.com/kaushikhazra/axiom/issues/35) web search and fetch | `35-web` | **done** - merged in PR #38, 5 cycles, all 30 criteria |
 | 4 | [#32](https://github.com/kaushikhazra/axiom/issues/32) compaction overflow | `32-compaction-overflow` | **done** - merged in PR #39, 3 cycles, all 6 criteria (1, 2 and 5 amended on evidence) |
-| 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | queued |
+| 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | **running** - started 2026-08-26 01:13 IST, fail-safe 13:13 IST |
 | 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | queued |
 | 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | queued |
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | queued |
@@ -53,6 +53,20 @@ On reaching any exit in `loop.md`:
 These apply to every loop in this queue and do not need rediscovering.
 
 - **15-minute cycles, 12-hour fail-safe.** One cycle per firing. A hung run costs one cycle.
+- **A loop never waits for an answer.** The queue runs unattended, one loop after another,
+  and nobody is watching between firings. A cycle that stops to ask a question does not
+  pause - it burns every remaining cycle until the fail-safe, and takes the loops queued
+  behind it down with it. So a decision that would otherwise need Kaushik is **made by the
+  loop**: pick the option that is reversible and least surprising, record it in the cycle
+  log as a decision with its reasoning under a heading that says so, and carry it into the
+  handover. Do not write a question into an `action.md` or an `observe.md`. Write the
+  decision and the reason to revisit it.
+  - **The one exception is safety, not uncertainty.** If proceeding would destroy something,
+    leak something, or merge behaviour nobody has verified, that is exit 3: do not merge,
+    push the branch, say plainly what is blocked. Being unsure is not that. Being unsure is
+    what the log is for.
+  - This is the Antenna Principle applied to something with no antenna. Find the constraint,
+    break that one thing, proceed carefully, and leave a record of where you threaded.
 - **Cycle 1 does not write code** when the artifact already exists. It records the baseline
   that the behaviour-preservation criteria are later measured against.
 - **`tests/baseline/transcript.txt` is the golden master.** Any loop that changes observable

@@ -30,23 +30,39 @@ library.**
 - **AC 4, 5, 8, 9, 10, 11 and 12 may be settled with stubs.** They are about what the code
   does with a response it is handed.
 
-## Two contradictions to settle in cycle 1, before any code
+## Three states, not two - the decided shape
 
-**AC 8 against AC 10 and AC 11.** An empty page is to be "reported as empty rather than as
-a failure" (AC 8). A page "reported as not readable is never named as one that was read"
-(AC 11), and one "read successfully is named" (AC 10). The only signal carrying this today
-is the `error:` prefix - `__init__.py` appends to `read` when the result does **not** start
-with `error:`. So an empty page that is not a failure becomes a source, and an empty page
-that is a failure contradicts AC 8. **Decide which, say why, and write it down.** The
-reading this loop starts from: an empty page was fetched successfully and is a source - the
-user asked what that address says, and "nothing" is a true answer about a page that really
-was reached. Overturn it with a reason, not by accident.
+`fetch_page` has two outcomes today: content, or an `error:` string. #40 needs three, and
+`assumption.md` records all three as settled by Kaushik. They are not open questions.
 
-**AC 7's "judged by its content".** A page announcing no type at all is to be judged by
-what it contains rather than assumed readable. That is a rule with no implementation named,
-and vague design is not a licence to improvise - it is a reason to stop and decide. Say
-what the judgement actually is, in one sentence, before writing it. Whatever it is, AC 6
-outranks it: bytes must never reach the model dressed as text.
+| the page | the model gets | the sources line |
+|---|---|---|
+| readable text or HTML | its content, cut to the bound if long | named |
+| empty | a warning that it is empty - not an error | **not** named |
+| not text at all | told it could not be read, and **none of the content** | **not** named |
+
+The middle row is the one with no mechanism today. `__init__.py` decides a source by
+`not result.startswith("error:")`, so a warning that is not an error currently becomes a
+source. **That is the seam this issue has to open**, and it is the first thing to design in
+cycle 2. Whatever carries the third state, `terminal.py` still owns every print.
+
+A typeless page joins the first row: no `Content-Type` means text, because text is the only
+treatment that can hand back exactly what was served.
+
+## A cycle never stops to ask
+
+This loop runs unattended and the queue runs loops back to back. A cycle that ends with a
+question does not pause for an answer - it burns every remaining cycle until the fail-safe
+and strands the loops behind it.
+
+So: **decide, record, continue.** Where something is genuinely ambiguous, take the
+reversible and least surprising option, write it into the cycle log under a heading that
+says a decision was made and why, and carry it into the handover. Never write a question
+into the next `action.md`.
+
+The exception is safety, not uncertainty - if proceeding would destroy something, leak
+something, or merge behaviour nobody has verified, that is `loop.md` exit 3. Being unsure
+is not that.
 
 ## The failure this must not introduce
 

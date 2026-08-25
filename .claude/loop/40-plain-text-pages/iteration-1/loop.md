@@ -41,7 +41,12 @@ assuming a second time is how the same cycle repeats.
 **AC 6 is the criterion that must not be got wrong.** `page.text` decodes binary into
 plausible-looking mojibake without raising, so a tool can report "not readable" and still
 hand the model the bytes. It is settled by asserting on what the model received, never on
-what axiom printed.
+what axiom printed. A page that is not readable hands the model **none** of its content.
+
+**No cycle ever ends with a question.** This runs unattended and the queue runs loops back
+to back; a cycle that stops to ask burns every remaining cycle until the fail-safe and
+strands #41, #42 and #43 behind it. Decide, record the decision and the reasoning in the
+cycle log, continue. The exception is safety, not uncertainty - see exit 3.
 
 ## Exit
 
@@ -63,6 +68,11 @@ Never merge a red suite. Never merge a behaviour change the transcript has not c
 **Then, in the same run:** delete this cron, mark #40's row done in `queue.md`, and scaffold
 row 6 - #41, `41-limits-and-place` - per the handover procedure.
 
-**First run and fail-safe deadline: not yet set.** The cron has deliberately not been
-created. Stamp both here when it is, and mark #40's row `running` in `queue.md` at the same
-time.
+**The scaffold you write for #41 carries the no-questions rule forward.** Its `goal.md`,
+`observe.md`, `assumption.md` and `action.md` state decisions, never open questions - if
+#41's criteria contain something ambiguous, settle it in that scaffold with the reasoning
+recorded, exactly as this one settles AC 6, AC 7 and AC 8. A scaffold that hands the next
+loop a question halts the queue just as surely as a cycle that asks one.
+
+**First run: 2026-08-26 01:13 IST (cron fires at :13, :28, :43, :58). Fail-safe deadline:
+2026-08-26 13:13 IST.**
