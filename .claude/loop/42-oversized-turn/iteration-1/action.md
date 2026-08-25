@@ -1,77 +1,83 @@
 # Action
 
-Build the size-driven compaction and the three refusal messages. Cycle 1 measured everything
-this needs; the plan is in `logs/cycle-1.md` and is not to be re-derived.
+**Verify cold, then merge or fix.** Cycle 2 wrote all eight implementations and judged them
+met. This cycle's value comes entirely from not trusting that.
 
-## 1. Compact because of the size, not only because of the usage
+## 1. Read the criteria as written
 
-Today `too_large` refuses and the turn is dropped with nothing after it. Cycle 1's
-measurement: a turn was refused at 287 tokens over while a compaction that would have taken
-the payload from 1939 tokens to 226 — against a 2000 context — was never attempted, because
-the *previous* turn's usage happened to sit 50 tokens under a threshold.
+`gh issue view 42` **first** — before `logs/cycle-1.md`, before `logs/cycle-2.md`, before the
+diff. Those logs argue for their own conclusions.
 
-- When the payload will not fit, walk the same `KEPT_PAIRS_LADDER` driven by the measurement
-  rather than by `running_usage`, and re-check after each rung. That is **AC 1**, and it must
-  work when `running_usage` is `None`, when it is low, and when it is high.
-- The refusal can then only happen after compaction has had its turn, which is **AC 2**.
-  Ordering, not wording — a refusal that happens first fails this however well it reads.
-- **Report it through the existing `note_compaction` and `note_facts_forgotten`.** That is
-  **AC 8**. A second compaction path that forgot silently would undo what #32 spent three
-  cycles building, and it would pass any size assertion.
-- Reuse `compacted_history` and the ladder. Do not write a second compaction.
+Then `git diff master...HEAD -- src/ tests/`.
 
-## 2. Three refusals, because three things can be too large
+## 2. Attack the decision cycle 2 made on its own authority
 
-**AC 5** asks the message to name what is actually too large and suggest only something that
-would help. Cycle 1 established the three cases are distinguishable and the floor is
-computable — 205 tokens for the current prompt, and derivable rather than hard-coded.
+**The sub-floor case now ends the session, and no criterion says to.** Cycle 2's reasoning is
+in its log; judge it, do not inherit it.
 
-- **The message itself is the bulk**, with little or no history — a shorter message genuinely
-  helps. This is today's wording and it is correct here.
-- **The conversation is the bulk**, and compaction has already run — say the conversation is
-  what will not fit, and that a new session is the way out. Do not advise a shorter message:
-  cycle 1 watched the overage stop falling at 5 tokens while the message shrank to one
-  character.
-- **Prompt plus a minimal summary plus the message still exceeds the context** — nothing the
-  user types will help. **AC 6**: say so plainly, once, rather than let them discover it by
-  retrying.
+- Does AC 6 support ending, or only saying? *"Told that plainly, rather than discovering it by
+  retrying."*
+- Does AC 4 require it? *"A session cannot reach a state where every message, however short,
+  is refused."*
+- Is there a user who loses something by the session ending — work in the history, a chance to
+  `/exit` cleanly, an exit status that now differs?
+- **What is the exit status?** Cycle 2 returns from `main` normally. Check what that produces
+  and whether it is defensible for a session that could not do anything.
 
-## 3. AC 3 and AC 4 are about the session, not the message
+If ending is wrong, say so plainly — a decision the implementing cycle made past the criteria
+is exactly what a cold read is for.
 
-- **AC 3** — after a refusal, a following turn is not refused for the same reason. The refused
-  turn is already rolled back with `del messages[before:]`; what must also be true is that
-  whatever compaction achieved is *kept*, or the next turn starts from the same oversized
-  history and hits the same wall.
-- **AC 4** — no state where every message, however short, is refused. In the sub-floor case
-  that is met by AC 6's message, not by making the impossible fit. Everywhere else it is met
-  by compaction actually running.
+## 3. Attack the other four
 
-## 4. Prove it
+- **AC 1 — "whatever the previous turn's reported usage was."** Cycle 2 tested usage under the
+  trigger and usage `None`. Try usage *above* the trigger, so `maybe_compact` already ran and
+  still left it too large. Does `compact_to_fit` do anything, or does it find the history
+  already compacted and give up? That is a real path and it is untested.
+- **AC 3 — "a following turn is not refused for the same reason."** Cycle 2 asserts
+  `count("too large") <= 1` over two turns. Attack it with a session that is refused and then
+  sent five more ordinary messages. Does it stay usable, or does it refuse again three turns
+  later once history rebuilds?
+- **AC 5 — the boundary between the three causes.** `what_will_not_fit` compares against
+  `effective_context` with integer division. Try a message exactly at the boundary, an empty
+  message, and a context exactly equal to the prompt's cost. Does any input land in the wrong
+  bucket and get advice that cannot work?
+- **AC 8 — "preserves facts and reports what it let go."** Cycle 2 checks a planted fact
+  survives and that `compacting older history` is printed. It does **not** check
+  `the summary is full - forgetting N` appears when the bound is hit on the size-driven path.
+  Force it and confirm the forgotten facts are named one by one, as #32 requires.
 
-- **AC 3 and AC 4 need a real session driven in and back out.** Drive the AC 1 scenario from
-  cycle 1 — usage pinned just under the trigger, history grown past the context — and show
-  the session continuing afterwards. `.tmp/ac1_case_42.py` is the starting point.
-- **AC 5 and AC 6 need the messages to differ between the three cases.** A test asserting one
-  message contains "conversation" proves a string was built. Set up all three and assert they
-  are different from each other and each names its own cause.
-- **AC 7 is the transcript.** `diff .tmp/transcript-baseline-42.txt tests/baseline/transcript.txt`.
-  A turn that fits must be byte-identical: no extra compaction, no extra output.
-  **Read the whole diff as a diff before regenerating anything.**
-- **AC 8** — a planted fact, a size-triggered compaction, and the fact still recalled
-  afterwards; plus `the summary is full - forgetting N` appearing when it applies.
-- Full suite and the hermeticity command. **255 is the floor.**
+## 4. Close the transcript gap
 
-## 5. Do not over-build for the sub-floor case
+The golden transcript has **no `too large` scenario at all** — the refusal path has never been
+scripted there. Three new user-visible messages exist that the behaviour record does not know
+about, which is why AC 7 passed byte-identical.
 
-Cycle 1 measured every real model at 32,768 tokens or more against a 205-token floor — at
-least 160× headroom. The sub-floor case is reachable only through `AXIOM_DEBUG_MAX_CONTEXT`.
-It still needs AC 6's message, because the criterion asks for it and the debug override is a
-real path. It does not need a recovery mechanism built around it.
+Add scenarios to `test_characterization.py` for each of the three causes, then regenerate
+deliberately. **Run `diff .tmp/transcript-baseline-42.txt tests/baseline/transcript.txt` and
+read all of it before accepting.** #41 cycle 2 regenerated off pytest's summary — which names
+the first differing index only — and destroyed two compaction scenarios.
+
+## 5. Re-run everything
+
+- Full suite and the hermeticity command. **266 is the floor.**
+- `.tmp/repro_42.py` and `.tmp/ac1_case_42.py`, both from cycle 1, unchanged.
+
+## 6. Then take the exit
+
+**If all eight hold:** `loop.md` exit 1. Commit, push, PR referencing #42, merge, delete the
+branch. Then in the same run: delete the cron, mark #42 done in `queue.md`, and scaffold row
+8 — #43, `43-mcp-servers`.
+
+**#43's scaffold carries the MCP clause in `CLAUDE.md`'s testing section**, which binds that
+loop specifically: no test fetches a server, the in-memory transport settles nearly
+everything, a real process is a script the repo owns, and no test contacts a hosted server or
+needs a real secret. It also carries the no-questions rule, stated as decisions.
+
+**If any criterion does not hold:** do not merge. Fix it, record what the cold read caught,
+and write cycle 4's action.
 
 ## Record
 
-Status for all 8. Then write cycle 3's `action.md` — the cold check: criteria from GitHub
-before the diff and before this log, attacking each rather than confirming it. That pass has
-found a real defect in each of the last two issues.
+Status for all 8, judged against the criteria text rather than cycle 2's table.
 
-**Write no questions into it.** Decide, record the decision and the reasoning, carry on.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.

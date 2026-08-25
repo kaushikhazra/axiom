@@ -254,3 +254,83 @@ def maybe_compact(
                 ]
             return candidate, kept_pairs, dropped
     return messages, None, []
+
+
+def _payload_tokens(messages: list[dict[str, str]], overhead: int) -> int:
+    """What the assembled payload costs, conservatively, including `overhead`.
+
+    `overhead` is what rides with every request but is not in `messages` - the
+    system prompt, held outside history deliberately so compaction can never
+    forget it, and therefore never able to be compacted away either.
+    """
+    chars = sum(len(message.get("content") or "") for message in messages)
+    return (chars + overhead) // SAFE_CHARS_PER_TOKEN
+
+
+def compact_to_fit(
+    backend: ModelBackend,
+    model: str,
+    messages: list[dict[str, str]],
+    effective_context: int | None,
+    overhead: int = 0,
+) -> tuple[list[dict[str, str]], int | None, list[str]]:
+    """Compact because the payload will not fit - whatever usage reported.
+
+    `maybe_compact` triggers on the last *completed* turn's reported usage,
+    which is `None` on a first turn and can sit just under the threshold while
+    the payload is genuinely over. #42 cycle 1 measured a turn refused at 287
+    tokens over while a compaction from 1939 tokens to 226 - against a 2000
+    context - went unattempted, because the previous turn's usage happened to
+    be 50 tokens under the trigger. An eightfold reduction was available and
+    unused.
+
+    Same ladder, same `compacted_history`, same bounding: only the reason for
+    running is different. Returns unchanged when nothing helps, so the caller
+    can tell "compaction fixed it" from "nothing will".
+    """
+    if effective_context is None:
+        return messages, None, []
+
+    limit = summary_limit(effective_context)
+    for kept_pairs in KEPT_PAIRS_LADDER:
+        candidate = compacted_history(backend, model, messages, kept_pairs)
+        if candidate is messages:
+            continue  # nothing older at this level - try a smaller kept window
+        dropped: list[str] = []
+        if limit is not None:
+            trimmed, dropped = bounded(candidate[0]["content"], limit)
+            if dropped:
+                candidate = [{"role": "system", "content": trimmed}, *candidate[1:]]
+        if _payload_tokens(candidate, overhead) <= effective_context:
+            return candidate, kept_pairs, dropped
+    return messages, None, []
+
+
+# What is actually too large, once compaction has already had its turn.
+CANNOT_CONTINUE = "cannot-continue"
+MESSAGE_TOO_LARGE = "message"
+CONVERSATION_TOO_LARGE = "conversation"
+
+
+def what_will_not_fit(line: str, effective_context: int, overhead: int) -> str:
+    """Which of three things is over, so the user can be told only what helps.
+
+    #42 AC 5 asks the message to name what is actually too large and suggest
+    only something that would help. Cycle 1 watched the overage stop falling at
+    5 tokens while the message shrank to a single character - advice to type
+    less, in a case where typing less could never work.
+
+    - `CANNOT_CONTINUE`: the fixed part alone exceeds the context. Nothing the
+      user types will ever fit, and AC 6 says to say so rather than let them
+      find out by retrying.
+    - `MESSAGE_TOO_LARGE`: the fixed part plus this message is over. A shorter
+      message genuinely helps.
+    - `CONVERSATION_TOO_LARGE`: neither of those, so what tips it is the
+      history that compaction has already squeezed as far as it goes. A new
+      session is the way out; a shorter message is not.
+    """
+    if overhead // SAFE_CHARS_PER_TOKEN >= effective_context:
+        return CANNOT_CONTINUE
+    if (overhead + len(line)) // SAFE_CHARS_PER_TOKEN > effective_context:
+        return MESSAGE_TOO_LARGE
+    return CONVERSATION_TOO_LARGE

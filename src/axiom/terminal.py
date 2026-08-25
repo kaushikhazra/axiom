@@ -174,13 +174,42 @@ def note_facts_forgotten(dropped: list[str]) -> None:
         print(f"  | {fact}")
 
 
-def report_too_large(over: int) -> None:
-    """Said instead of sending a payload that would not fit."""
-    print(
-        f"error: this turn is about {over} tokens too large to send - "
-        f"try a shorter message, or start a new session",
-        file=sys.stderr,
-    )
+def report_too_large(over: int, cause: str = "message") -> None:
+    """Said instead of sending a payload that would not fit.
+
+    Three causes, three messages, because #42 AC 5 asks that the user be told
+    what is *actually* too large and suggested only something that would help.
+    One message for all three was advice to type less in a case where typing
+    less could never work: #42 cycle 1 watched the overage stop falling at 5
+    tokens while the message shrank to a single character.
+
+    `cause` comes from `compaction.what_will_not_fit`. Said after compaction
+    has already had its turn, so none of these suggest waiting for one.
+    """
+    if cause == "cannot-continue":
+        # AC 6. Not "try something", because nothing will work - this session
+        # cannot hold a single message and the user should hear it once.
+        print(
+            "error: this session cannot continue - the context is too small to "
+            "hold even an empty message, so nothing you type will fit. Start "
+            "axiom with a larger context.",
+            file=sys.stderr,
+        )
+    elif cause == "conversation":
+        # The history is what tips it, and compaction has already squeezed it
+        # as far as the ladder goes. A shorter message would not help.
+        print(
+            f"error: the conversation so far is about {over} tokens too large "
+            f"to send, and it has already been compacted as far as it goes - "
+            f"start a new session to carry on",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"error: this message is about {over} tokens too large to send - "
+            f"try a shorter one",
+            file=sys.stderr,
+        )
 
 
 def report_truncated(estimated: int, seen: int) -> None:
