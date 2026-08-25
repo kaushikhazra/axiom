@@ -1,54 +1,60 @@
 # Action
 
-**Find out what the three models actually do before designing anything.** Write no
-production code this cycle.
+Settle the seam, then build the smallest thing that proves it. Cycle 1 showed the three
+families agree on the structured path, so the design question is no longer "how do we
+reconcile them" - it is "what does `stream()` yield now that a turn can produce text, a tool
+call, and thinking."
 
-#34's whole difficulty is AC 3 through AC 8 - one mechanism across models that announce tool
-calls differently. Every design decision in this loop depends on facts nobody here has yet:
-whether Ollama's `tool_calls` field is populated the same way by a qwen2 model, a gemma4
-thinking model and a qwen35 thinking model, and what the ones that deviate actually emit.
-Designing first and discovering second would mean rewriting the seam in cycle 3.
+## First: what the backend yields
 
-## Probe all four models
+Today `stream()` yields `Piece(text, usage)`. A tool call is not text and thinking is neither.
+Decide and write it down before touching the chat loop:
 
-Write a throwaway probe script under `.tmp/` - not `src/`, not `tests/` - that declares one
-trivial, read-only tool and asks each model to use it. Something like a `get_time` tool
-taking no arguments, or `read_file` on a path in the sandbox. **Nothing destructive, and
-nothing outside `C:/Projects/.tmp/axiom-tool-sandbox`.**
+- A second event type alongside `Piece` - a `Call(name, arguments)` - so the loop tells them
+  apart by type rather than by inspecting strings.
+- Thinking: **discard it** unless Kaushik has said otherwise. Cycle 1's open question offers
+  three options and takes option 1 by default, because it preserves current behaviour and no
+  criterion requires more. If a `thinking` field arrives, drop it and note in the log that it
+  was dropped deliberately, not overlooked.
+- `stream()` takes the tool declarations. When none are passed it must behave exactly as it
+  does today - that is what keeps the existing transcript honest for the non-tool paths.
 
-For each of `qwen2.5:7b`, `gemma4:e2b`, `ornith:9b`, record verbatim:
+## Then: tool support detection, cheaply
 
-- whether `message.tool_calls` is populated at all, and its exact shape
-- whether arguments arrive as a dict or as a JSON string
-- whether the model emits anything in `message.content` alongside the call - the thinking
-  models may, and AC 6 turns on this
-- whether more than one call comes back at once
-- what happens with `stream=True` versus without, since AC 7 requires both to behave
+AC 2 needs to know at startup whether the model can call tools. Cycle 1 found the only
+observed signal is a `ResponseError` at generation time, which is too late and costs a call.
 
-Then ask `gemma2:2b` the same thing and record exactly how Ollama refuses. That refusal is
-what AC 2 and AC 8 are written against, and guessing at its shape would produce a handler
-that never fires.
+**Check whether the Python client exposes capabilities on `show()`** - the CLI reports a
+`Capabilities` list containing `tools`, so the data exists somewhere. Confirm it directly
+against `gemma2:2b` and one tool-capable model before building on it. If it is not exposed,
+say so and fall back to catching the 400 on the first tool-bearing request, and note what that
+costs the user.
 
-Create the sandbox directory first if it does not exist.
+`gemma2:2b` is the model for this, and its exact refusal string is in the cycle-1 log.
 
-## Record the baseline
+## Then: one tool, end to end
 
-- Current `wc -l` across `src/`, and the test count, so growth is measured rather than felt.
-- Confirm the suite is green and hermetic with the one-command check in `observe.md`.
-- Note which of the thirteen transcript scenarios will need to change once tools exist, and
-  which new observable paths #34 adds that the harness does not yet reach.
+**`read_file` only.** Not the file suite, not commands. One tool through the whole path:
+declared, called by a live model, executed, result returned, model answers from it.
 
-## Then name the shape
+That closes the mechanism for AC 4, AC 17, AC 18 and AC 19, and everything after it is
+additional tools rather than new machinery. Adding four tools before the first one runs would
+mean debugging the machinery through four surfaces at once.
 
-With the probe results in hand, say where tools will live and how a call travels: which
-module declares them, which executes them, where a result re-enters the conversation, and
-how AC 6's non-structured case is caught. Name it, so cycle 2 derives its move from a
-decision already made.
+Keep #33's structure: `ollama` and `httpx` stay inside `backend.py`, no module both talks to a
+backend and writes to the terminal, tests inject rather than patch. Check by grep before
+committing.
 
-Do not write it yet. If the probe shows the three families disagree more than expected, the
-shape is a bigger question than one cycle and cycle 2 should still be design.
+## Watch for
+
+**Streaming accumulates.** Cycle 1 saw the call arrive inside the stream - qwen in 2 chunks,
+gemma4 in 175. The loop cannot assume a call is complete on the chunk it first appears in.
+
+**The existing transcript must still pass** until the startup line legitimately changes. If it
+breaks for any other reason this cycle, that is a regression, not a legitimate change.
 
 ## Record
 
-All 35 criteria get a status token. Nearly all will be `not-started` - that is the correct
-reading at cycle 1, and the point is the probe results, not the score.
+Full suite plus characterization. Live evidence for the one tool against **at least one**
+model - all three is AC 3's job and can wait until the mechanism works on one. `wc -l` across
+`src/` against the 442 baseline. Status token for all 35.
