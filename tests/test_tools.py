@@ -96,3 +96,87 @@ def test_running_a_tool_never_raises(tmp_path):
         ("nope", {}),
     ]:
         assert tools.run(name, arguments).startswith("error:")
+
+
+def test_writing_a_file_creates_it_and_names_the_path(tmp_path):
+    """AC 9."""
+    target = tmp_path / "new.txt"
+
+    result = tools.run("write_file", {"path": str(target), "content": "hello"})
+
+    assert target.read_text(encoding="utf-8") == "hello"
+    assert str(target) in result
+
+
+def test_writing_creates_missing_parent_directories(tmp_path):
+    target = tmp_path / "deep" / "deeper" / "new.txt"
+
+    tools.run("write_file", {"path": str(target), "content": "hello"})
+
+    assert target.read_text(encoding="utf-8") == "hello"
+
+
+def test_an_edit_leaves_every_other_byte_alone(tmp_path):
+    """AC 11: changing part of a file leaves the rest byte-identical.
+
+    Checked as exact bytes, line endings included - an edit that rewrote the
+    whole file would satisfy a looser comparison.
+    """
+    target = tmp_path / "three.txt"
+    target.write_bytes(b"first line\r\nsecond line\r\nthird line\r\n")
+
+    result = tools.run(
+        "edit_file",
+        {"path": str(target), "old": "second line", "new": "CHANGED"},
+    )
+
+    assert target.read_bytes() == b"first line\r\nCHANGED\r\nthird line\r\n"
+    assert "replaced one occurrence" in result
+
+
+def test_an_edit_refuses_text_that_appears_more_than_once(tmp_path):
+    """Changing three things when one was described is a different edit."""
+    target = tmp_path / "repeated.txt"
+    target.write_text("a\na\na\n", encoding="utf-8")
+
+    result = tools.run("edit_file", {"path": str(target), "old": "a", "new": "b"})
+
+    assert result.startswith("error:")
+    assert "3 times" in result
+    assert target.read_text(encoding="utf-8") == "a\na\na\n", "the file was touched"
+
+
+def test_an_edit_refuses_text_that_is_not_there(tmp_path):
+    target = tmp_path / "plain.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = tools.run("edit_file", {"path": str(target), "old": "absent", "new": "x"})
+
+    assert result.startswith("error:")
+    assert target.read_text(encoding="utf-8") == "hello\n"
+
+
+def test_deleting_a_file_removes_it_and_says_so(tmp_path):
+    """AC 12. Called directly - a live model is never asked to improvise its
+    way to a delete while no security layer exists."""
+    target = tmp_path / "doomed.txt"
+    target.write_text("goodbye", encoding="utf-8")
+
+    result = tools.run("delete_file", {"path": str(target)})
+
+    assert not target.exists()
+    assert str(target) in result
+
+
+def test_deleting_something_that_is_not_there_explains_itself(tmp_path):
+    result = tools.run("delete_file", {"path": str(tmp_path / "ghost.txt")})
+
+    assert result.startswith("error:")
+
+
+def test_an_argument_the_tool_never_declared_is_refused():
+    """A model cannot reach a keyword the schema does not offer it."""
+    result = tools.run("run_command", {"command": "echo hi", "timeout": 99999})
+
+    assert result.startswith("error:")
+    assert "timeout" in result
