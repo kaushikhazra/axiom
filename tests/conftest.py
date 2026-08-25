@@ -14,7 +14,7 @@ import builtins
 
 import pytest
 
-from axiom.backend import Piece
+from axiom.backend import Call, Piece
 
 
 AXIOM_ENV_VARS = ("AXIOM_HOST", "AXIOM_MODEL", "AXIOM_DEBUG_MAX_CONTEXT")
@@ -77,6 +77,9 @@ class StubBackend:
         for action in actions:
             if isinstance(action, BaseException):
                 raise action
+            if isinstance(action, Call):
+                yield action
+                continue
             yield Piece(action, self.usage)
 
     def complete(self, model, messages):  # noqa: ANN001, ARG002
@@ -93,6 +96,23 @@ def chunk(text: str, prompt_eval_count: int = 0, eval_count: int = 0, tool_calls
             "message": type("Msg", (), {"content": text, "tool_calls": tool_calls})(),
             "prompt_eval_count": prompt_eval_count,
             "eval_count": eval_count,
+        },
+    )()
+
+
+def vendor_call(call: Call):
+    """A Call shaped the way the vendor client hands one back.
+
+    For tests that drive the real OllamaBackend and therefore need what Ollama
+    would actually have returned, rather than what we would have made of it.
+    """
+    return type(
+        "ToolCall",
+        (),
+        {
+            "function": type(
+                "Function", (), {"name": call.name, "arguments": call.arguments}
+            )()
         },
     )()
 

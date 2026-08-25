@@ -18,6 +18,7 @@ point of having it.
 import contextlib
 import io
 import os
+import tempfile
 from pathlib import Path
 
 import httpx
@@ -26,9 +27,19 @@ import psutil
 import pytest
 
 import axiom
-from conftest import chunk, feed
+from axiom.backend import Call
+from conftest import chunk, feed, vendor_call
 
 BASELINE = Path(__file__).parent / "baseline" / "transcript.txt"
+
+# A real file for the tool scenarios to read. Its absolute path is machine
+# specific, so it is replaced with a placeholder before the transcript is
+# compared - the path is environment, not behaviour. Everything else is
+# recorded exactly as printed.
+SANDBOX = Path(tempfile.mkdtemp(prefix="axiom-transcript-"))
+SAMPLE = SANDBOX / "notes.txt"
+SAMPLE.write_text("Biscuit the cat is ginger.\n", encoding="utf-8")
+MISSING = SANDBOX / "absent.txt"
 
 # Fixed so the memory-derived context budget cannot vary with the machine.
 FIXED_AVAILABLE_BYTES = 8 * 1024**3
@@ -60,7 +71,9 @@ class StubClient:
         summary: str = "a short summary",
         prompt_eval_count: int = 1,
         show_raises: BaseException | None = None,
+        capabilities: list[str] | None = None,
     ) -> None:
+        self.capabilities = capabilities or ["completion", "tools"]
         self.info = FULL_INFO if info is None else info
         self.turns = list(turns or [])
         self.summary = summary
@@ -74,7 +87,7 @@ class StubClient:
         return type(
             "Info",
             (),
-            {"modelinfo": self.info, "capabilities": ["completion", "tools"]},
+            {"modelinfo": self.info, "capabilities": self.capabilities},
         )()
 
     def chat(self, model, messages, stream=False, options=None, tools=None):  # noqa: ANN001, ARG002
@@ -90,6 +103,11 @@ class StubClient:
         for action in actions:
             if isinstance(action, BaseException):
                 raise action
+            if isinstance(action, Call):
+                yield chunk(
+                    "", self.prompt_eval_count, 0, tool_calls=[vendor_call(action)]
+                )
+                continue
             yield chunk(action, self.prompt_eval_count, 0)
 
 
@@ -120,10 +138,18 @@ def _run(name: str, lines: list, client: StubClient, debug_context: str | None) 
 
     return (
         f"=== {name} ===\n"
-        f"--- stdout ---\n{out.getvalue()}\n"
-        f"--- stderr ---\n{err.getvalue()}\n"
+        f"--- stdout ---\n{_stable(out.getvalue())}\n"
+        f"--- stderr ---\n{_stable(err.getvalue())}\n"
         f"--- ending --- {ending}\n\n"
     )
+
+
+def _stable(text: str) -> str:
+    """The sandbox path is a fresh temp directory on every run, so recording it
+    verbatim would make the transcript fail on its own next run. The path is
+    environment; everything else is recorded exactly as printed.
+    """
+    return text.replace(str(SANDBOX), "<sandbox>")
 
 
 def _scenarios() -> list[tuple[str, list, StubClient, str | None]]:
@@ -205,6 +231,34 @@ def _scenarios() -> list[tuple[str, list, StubClient, str | None]]:
             "end of input leaves",
             [],
             StubClient(),
+            None,
+        ),
+        (
+            "a tool runs and the answer follows",
+            ["what colour is the cat?", "/exit"],
+            StubClient(
+                turns=[
+                    [Call("read_file", {"path": str(SAMPLE)})],
+                    ["The cat is ginger."],
+                ]
+            ),
+            None,
+        ),
+        (
+            "a tool fails and the turn carries on",
+            ["read the missing file", "/exit"],
+            StubClient(
+                turns=[
+                    [Call("read_file", {"path": str(MISSING)})],
+                    ["I could not read that file."],
+                ]
+            ),
+            None,
+        ),
+        (
+            "a model that cannot use tools still chats",
+            ["hello", "/exit"],
+            StubClient(capabilities=["completion"], turns=[["hello to you"]]),
             None,
         ),
     ]

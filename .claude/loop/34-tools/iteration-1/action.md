@@ -1,53 +1,54 @@
 # Action
 
-**Test what cycle 2 built, before building more.** The mechanism is proven live and has zero
-tests. Adding a second tool now would grow the surface faster than the evidence for it, and
-every criterion still standing needs a test rather than another live demo.
+Add the rest of the file tools, then the command tool. The mechanism is tested; what remains
+is tools riding on it.
 
-## Write `tests/test_tools.py`
+## First: finish the file tools
 
-Against `tools.run()` and `tools.declarations()` directly - no model, no backend.
+`write_file`, `edit_file`, `delete_file` into `tools.py`, joining `read_file`.
 
-- `declarations()` returns one entry per registered tool, shaped as Ollama expects, and takes
-  no model argument (AC 4).
-- `read_file` returns a file's contents (AC 10), reads an empty file as empty rather than as a
-  failure (AC 25), and returns a plain explanation for a file that does not exist (AC 24).
-- An unknown tool name returns a message naming it rather than raising (AC 29).
-- Wrong or missing arguments return a message rather than raising (AC 29).
+- **AC 9** - creating a file names the path it wrote.
+- **AC 11** - changing part of a file leaves the rest **byte-identical**. Test it by writing
+  three lines, changing the middle one, and asserting the other two are unchanged including
+  their line endings. An edit that rewrites the whole file would pass a looser test.
+- **AC 12** - deleting. **Settled with a stub, inside `tmp_path`, never by asking a live
+  model.** The tool is called directly by the test; the model's judgement is not what is
+  under test.
 
-Use pytest's `tmp_path`. **Nothing destructive, and nothing outside it.**
+Every one of these tests writes only inside `tmp_path`.
 
-## Then the loop's own behaviour, with a stub
+## Then: the command tool
 
-`StubBackend` can already stream; teach it to yield a `Call` so the chat loop can be driven
-without a model. Then, through `main(..., using=stub)`:
+This is the one with teeth. `run_command`, using `subprocess` from the standard library -
+prefer it over a dependency for something this well covered.
 
-- A call is executed and its result reaches the model as a `tool`-role message carrying
-  `tool_name` (AC 18, AC 19).
-- Two calls in one turn both run before the model is asked again (AC 17).
-- `MAX_TOOL_ROUNDS` bounds a model that never stops calling - assert it stops rather than
-  looping forever.
-- A failed tool leaves the session alive and the turn continuing (AC 28).
-- A tool result larger than `TOOL_OUTPUT_LIMIT` is truncated on screen and says how much was
-  withheld (AC 23).
-- **The rollback:** a turn that fails after a tool has run leaves history with nothing from
-  that turn - not the user line, not the assistant turn, not the tool result. Cycle 2 changed
-  `messages.pop()` into `del messages[before:]` for exactly this, and it is untested.
+- **AC 14** - no fixed list of permitted programs. Assert the absence of an allowlist, so a
+  future one has to delete a test rather than quietly appear.
+- **AC 15** - stdout *and* stderr both come back, neither silently dropped.
+- **AC 16** - a non-zero exit is reported as a failure, with its status, and never described
+  as success. Test with a command that exits 1 and prints to both streams.
+- **AC 26** - no output is reported as no output, not as failure.
+- **AC 27** - a command that does not finish is stopped at the time limit and the user is told
+  it was stopped. Test with a short limit and a sleep; `subprocess.TimeoutExpired` is the
+  mechanism, and the process must actually be killed rather than left running.
 
-## Then extend the transcript
+**Safety, binding:** every test here uses harmless commands - `echo`, `python -c "print(...)"`,
+a sleep for the timeout case. No deletes, no `git`, no network. Nothing outside `tmp_path`.
+Live models are not part of this cycle at all.
 
-The harness has thirteen scenarios and none of them involves a tool. Add: a tool running and
-answering, a tool failing, and a model with no tool support. These are new scenarios, so the
-baseline grows - that is an addition, not a regeneration, and the existing thirteen lines must
-stay byte-identical. Say so in the log.
+## Watch for
 
-## Do not, this cycle
+**Windows.** `subprocess` behaves differently here than the examples in most documentation:
+`shell=True` changes quoting, and a timeout may leave a child alive unless the process is
+killed explicitly. Whatever is chosen, test the timeout case and assert the process is gone.
 
-Add a second tool. Change the startup line. Both are cycle 4 - the startup line is where the
-transcript changes deliberately, and it deserves a cycle where that is the headline rather
-than a side effect.
+**The transcript.** Adding tools does not change existing behaviour, so the thirteen original
+scenarios plus cycle 3's three must stay byte-identical. If they move, that is a regression,
+not a legitimate change. Do not regenerate this cycle.
 
 ## Record
 
-Full suite. `wc -l` across `src/` and the test count against 66. Status token for all 35. Note
-in particular whether any test proves something the live run only suggested.
+Full suite and the hermeticity check. `wc -l` and the test count against 656 and 87. Status
+token for all 35. Say which AC each new test closes, and name anything the criteria demand
+that `subprocess` makes awkward - that is worth knowing before the startup-line cycle rather
+than after.

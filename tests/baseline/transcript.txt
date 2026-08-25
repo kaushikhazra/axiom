@@ -115,3 +115,34 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
 
 --- ending --- returned normally (exit status 0)
 
+=== a tool runs and the answer follows ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> axiom: read_file(path=<sandbox>\notes.txt)
+  | Biscuit the cat is ginger.
+The cat is ginger.
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a tool fails and the turn carries on ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> axiom: read_file(path=<sandbox>\absent.txt)
+  | error: No such file or directory: <sandbox>\absent.txt
+I could not read that file.
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a model that cannot use tools still chats ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens)
+> hello to you
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+

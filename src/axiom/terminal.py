@@ -63,8 +63,13 @@ TOOL_OUTPUT_LIMIT = 2000
 
 
 def note_tool(name: str, arguments: dict) -> None:
-    """What is about to run, before it runs."""
-    detail = ", ".join(f"{key}={value!r}" for key, value in arguments.items())
+    """What is about to run, before it runs.
+
+    Values are shown as they are, not repr'd: a Windows path through repr()
+    comes out with every backslash doubled, which is not what the user typed
+    and not what they would type to check it.
+    """
+    detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
     print(f"{VOICE} {name}({detail})")
 
 
