@@ -16,22 +16,37 @@ HOST = "http://localhost:11434"
 
 
 def test_announce_shows_the_computed_context(capsys):
-    terminal.announce("qwen2.5:7b", HOST, 32768, overridden=False)
+    terminal.announce("qwen2.5:7b", HOST, 32768, overridden=False, tools=5)
     assert capsys.readouterr().out == (
-        f"axiom: qwen2.5:7b at {HOST} (context: 32768 tokens)\n"
+        f"axiom: qwen2.5:7b at {HOST} (context: 32768 tokens, 5 tools)\n"
     )
 
 
 def test_announce_marks_a_debug_override(capsys):
-    terminal.announce("m", HOST, 500, overridden=True)
+    terminal.announce("m", HOST, 500, overridden=True, tools=5)
     assert "context: 500 tokens, debug override" in capsys.readouterr().out
 
 
 def test_announce_says_ollama_default_when_the_context_is_unknown(capsys):
-    terminal.announce("m", HOST, None, overridden=False)
+    terminal.announce("m", HOST, None, overridden=False, tools=5)
     out = capsys.readouterr().out
     assert "context: Ollama default" in out
     assert "None" not in out, "must not print a fabricated context number"
+
+
+def test_announce_says_when_tools_are_switched_off(capsys):
+    """AC 34: the user has to be able to see their own choice took effect."""
+    terminal.announce("m", HOST, 32768, overridden=False, tools=0)
+    assert "tools off" in capsys.readouterr().out
+
+
+def test_announce_says_when_the_model_cannot_call_tools(capsys):
+    """AC 2: a fact about the model, said in plain terms - and distinct from
+    the user having switched them off, which they can undo."""
+    terminal.announce("m", HOST, 32768, overridden=False, tools=None)
+    out = capsys.readouterr().out
+    assert "cannot call them" in out
+    assert "tools off" not in out
 
 
 def test_read_line_strips_what_the_user_typed(monkeypatch):

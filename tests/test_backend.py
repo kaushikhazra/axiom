@@ -20,11 +20,13 @@ class Client:
         self,
         info: dict | None = None,
         show_raises: BaseException | None = None,
+        capabilities: tuple = ("completion", "tools"),
         chunks: tuple = (),
         stream_raises: BaseException | None = None,
         summary: str | None = "a summary",
     ) -> None:
         self.info = {} if info is None else info
+        self.capabilities = list(capabilities)
         self.show_raises = show_raises
         self.chunks = list(chunks)
         self.stream_raises = stream_raises
@@ -33,9 +35,11 @@ class Client:
     def show(self, model):  # noqa: ANN001, ARG002
         if self.show_raises is not None:
             raise self.show_raises
-        return type("Info", (), {"modelinfo": self.info})()
+        return type(
+            "Info", (), {"modelinfo": self.info, "capabilities": self.capabilities}
+        )()
 
-    def chat(self, model, messages, stream=False, options=None):  # noqa: ANN001, ARG002
+    def chat(self, model, messages, stream=False, options=None, tools=None):  # noqa: ANN001, ARG002
         if not stream:
             return type(
                 "Reply", (), {"message": type("Msg", (), {"content": self.summary})()}

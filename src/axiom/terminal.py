@@ -9,17 +9,57 @@ import sys
 
 from .backend import ConnectionLost
 
+
+def _accept_any_character(stream) -> None:
+    """Windows consoles default to cp1252, and models emit emoji.
+
+    Without this a single emoji in a reply kills the program mid-sentence with
+    a UnicodeEncodeError - the model said something the console could not spell.
+    Replacing the character is the right trade: an unreadable glyph beats a
+    traceback over a finished answer.
+    """
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        # Already replaced - under pytest, or a stream that cannot be retuned.
+        pass
+
+
+_accept_any_character(sys.stdout)
+_accept_any_character(sys.stderr)
+
 PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
-def announce(model: str, host: str, context: int | None, overridden: bool) -> None:
-    """The startup line: what we are talking to, and with how much room."""
+def announce(
+    model: str,
+    host: str,
+    context: int | None,
+    overridden: bool,
+    tools: int | None,
+) -> None:
+    """The startup line: what we are talking to, with how much room, and what
+    it can do.
+
+    `tools` is how many are available, 0 when the user switched them off, and
+    None when the model cannot call them at all. The three read differently
+    because the user can act on them differently - one is their own choice,
+    one is a fact about the model.
+    """
     if context is None:
-        note = "Ollama default"
+        room = "Ollama default"
     else:
-        note = f"{context} tokens{', debug override' if overridden else ''}"
-    print(f"{VOICE} {model} at {host} (context: {note})")
+        room = f"{context} tokens{', debug override' if overridden else ''}"
+
+    if tools is None:
+        can_do = "no tools - this model cannot call them"
+    elif tools == 0:
+        can_do = "tools off"
+    else:
+        can_do = f"{tools} tools"
+
+    print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
 
 
 def read_line() -> str | None:
@@ -38,6 +78,35 @@ def show_piece(text: str) -> None:
 
 def end_reply() -> None:
     print()
+
+
+TOOL_OUTPUT_LIMIT = 2000
+
+
+def note_tool(name: str, arguments: dict) -> None:
+    """What is about to run, before it runs.
+
+    Values are shown as they are, not repr'd: a Windows path through repr()
+    comes out with every backslash doubled, which is not what the user typed
+    and not what they would type to check it.
+    """
+    if isinstance(arguments, dict):
+        detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
+    else:
+        # A call announced as text can carry anything at all. Show it as it
+        # came - running it is what reports that it cannot be used.
+        detail = str(arguments)
+    print(f"{VOICE} {name}({detail})")
+
+
+def show_tool_result(result: str) -> None:
+    """A tool's output, marked so it cannot be read as the model's answer."""
+    shown = result[:TOOL_OUTPUT_LIMIT]
+    for line in shown.splitlines() or [""]:
+        print(f"  | {line}")
+    withheld = len(result) - len(shown)
+    if withheld:
+        print(f"  | ... {withheld} more characters not shown")
 
 
 def note_compaction(kept_pairs: int) -> None:

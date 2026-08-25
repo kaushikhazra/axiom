@@ -17,9 +17,27 @@ KEPT_PAIRS_LADDER = (10, 5, 2, 0)
 CHARS_PER_TOKEN_ESTIMATE = 4  # rough proxy for a hypothetical, not-yet-sent payload
 
 
+def _as_line(message: dict) -> str:
+    """One message, as the summarizer sees it.
+
+    A message carrying tool calls has no content of its own, so rendering only
+    content would show a blank line and lose what was asked for. The result
+    that follows would then be a fact with no question - "the file said X"
+    with no record of which file.
+    """
+    calls = message.get("tool_calls")
+    if calls:
+        asked = ", ".join(
+            f"{call['function']['name']}({call['function']['arguments']})"
+            for call in calls
+        )
+        return f"{message['role']}: called {asked}"
+    return f"{message['role']}: {message['content']}"
+
+
 def compact(backend: ModelBackend, model: str, pairs: list[dict[str, str]]) -> str:
-    """Summarize a run of {role, content} messages into shorter text."""
-    transcript = "\n".join(f"{m['role']}: {m['content']}" for m in pairs)
+    """Summarize a run of messages into shorter text."""
+    transcript = "\n".join(_as_line(m) for m in pairs)
     summary = backend.complete(
         model, [{"role": "user", "content": COMPACTION_INSTRUCTION + transcript}]
     )
@@ -36,6 +54,21 @@ def estimated_tokens(messages: list[dict[str, str]]) -> int:
     """
     chars = sum(len(m["content"]) for m in messages)
     return chars // CHARS_PER_TOKEN_ESTIMATE
+
+
+def _turn_boundary(messages: list[dict[str, str]], index: int) -> int:
+    """The first place at or after `index` where a turn starts.
+
+    A turn is not always two messages. One that used tools runs user ->
+    assistant-with-calls -> tool -> assistant, and cutting inside it would keep
+    a tool result whose call had been summarized away - a result for a request
+    the model never made. Snapping forward rather than back keeps at most what
+    was asked for, so a compaction candidate never grows.
+    """
+    for position in range(index, len(messages)):
+        if messages[position]["role"] == "user":
+            return position
+    return len(messages)
 
 
 def compacted_history(
@@ -55,8 +88,17 @@ def compacted_history(
     found, live, to silently drop facts the first pass had preserved.
     """
     kept_count = kept_pairs * 2
-    older = messages if kept_count == 0 else messages[:-kept_count]
-    kept = [] if kept_count == 0 else messages[-kept_count:]
+    wanted = len(messages) - kept_count
+    if kept_count == 0:
+        split = len(messages)
+    elif wanted <= 0:
+        # The kept window already covers everything. Snapping forward here
+        # would find a boundary past a leading summary and compact a history
+        # that has nothing older in it.
+        split = 0
+    else:
+        split = _turn_boundary(messages, wanted)
+    older, kept = messages[:split], messages[split:]
     if not older:
         return messages
 
