@@ -120,8 +120,72 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         # so a check that only counts `messages` under-counts the real payload
         # by exactly the prompt, every turn.
         over = compaction.too_large(to_send(messages), effective_context)
+        if over is not None and effective_context is not None:
+            cause = compaction.what_will_not_fit(
+                line, effective_context, len(instructions["content"])
+            )
+            # Checked before compacting, not after: when the fixed part alone
+            # exceeds the context, no amount of compaction changes anything and
+            # summarizing anyway costs a model call per doomed message.
+            #
+            # And said once, then out. AC 6 asks that the user be told plainly
+            # "rather than discovering it by retrying" - repeating the same
+            # unhelpable line at every prompt is that discovery, not an
+            # alternative to it. Ending here is also what makes AC 4 true:
+            # there is no state where every message is refused, because there
+            # are no more messages.
+            if cause == compaction.CANNOT_CONTINUE:
+                terminal.report_too_large(over, cause)
+                return
+
         if over is not None:
-            terminal.report_too_large(over)
+            # Refusing here without trying throws away a compaction that
+            # usually rescues the turn. Measured: 1939 tokens down to 226
+            # against a 2000 context, unattempted because the *previous*
+            # turn's reported usage sat 50 tokens under the trigger. Driven by
+            # the measurement rather than by usage, so it runs whatever the
+            # last turn reported - including on a first turn, where usage is
+            # None and compaction has never run at all.
+            # The line the user just typed is held out of it. `maybe_compact`
+            # runs *before* this line is appended, which is what keeps it to
+            # history; `compact_to_fit` runs after, so without this the new
+            # message is itself a compaction candidate. At kept_pairs=0 it was
+            # replaced by a summary of itself and the model was sent a prompt
+            # and "the user asked a long question" - answering a question it
+            # had never seen, with nothing said about it. Worse than the
+            # refusal it replaced.
+            #
+            # Passed as overhead instead: compact the history until the
+            # history, the prompt and this message fit together.
+            pending = messages.pop()
+            messages, squeezed, let_go = compaction.compact_to_fit(
+                model_backend,
+                settings.model,
+                messages,
+                effective_context,
+                len(instructions["content"]) + len(pending["content"]),
+            )
+            messages.append(pending)
+            # Reported through the same two lines a usage-triggered compaction
+            # uses. A second path that forgot silently would undo #32.
+            if squeezed is not None:
+                terminal.note_compaction(squeezed)
+            if let_go:
+                terminal.note_facts_forgotten(let_go)
+            # `before` indexed into the history as it was; compaction replaced
+            # it with a shorter list. The user's line is still last, and that
+            # is the only thing a refusal rolls back - whatever compaction
+            # achieved is kept, or the next turn meets the same wall.
+            before = len(messages) - 1
+            over = compaction.too_large(to_send(messages), effective_context)
+
+        if over is not None:
+            terminal.report_too_large(
+                over,
+                compaction.what_will_not_fit(
+                    line, effective_context, len(instructions["content"])
+                ),
+            )
             del messages[before:]
             continue
         sent_estimate = compaction.estimated_tokens(to_send(messages))

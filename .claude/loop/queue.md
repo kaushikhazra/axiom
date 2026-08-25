@@ -11,8 +11,8 @@ cycles resolving each other's conflicts.
 | 3 | [#35](https://github.com/kaushikhazra/axiom/issues/35) web search and fetch | `35-web` | **done** - merged in PR #38, 5 cycles, all 30 criteria |
 | 4 | [#32](https://github.com/kaushikhazra/axiom/issues/32) compaction overflow | `32-compaction-overflow` | **done** - merged in PR #39, 3 cycles, all 6 criteria (1, 2 and 5 amended on evidence) |
 | 5 | [#40](https://github.com/kaushikhazra/axiom/issues/40) plain-text pages | `40-plain-text-pages` | **done** - merged in PR #44, 3 cycles, all 12 criteria (AC 7 found broken by the cycle-3 cold read after cycle 2 called it met) |
-| 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **running** - started 2026-08-26 01:58 IST, fail-safe 13:58 IST |
-| 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | queued |
+| 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **done** - merged in PR #45, 4 cycles, all 12 criteria (AC 9 found decorative by the cycle-4 cold read after two cycles called it met) |
+| 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | **running** - started 2026-08-26 02:58 IST, fail-safe 14:58 IST |
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | queued |
 
 Rows 5 to 8 are ordered smallest blast radius first. #40 touches `fetch_page` alone. #41

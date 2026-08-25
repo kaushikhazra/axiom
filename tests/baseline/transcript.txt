@@ -31,6 +31,75 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 
 --- ending --- returned normally (exit status 0)
 
+=== a message too large to send says so, and the session carries on ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
+> > a reply
+> 
+--- stderr ---
+error: this message is about 538 tokens too large to send - try a shorter one
+
+--- ending --- returned normally (exit status 0)
+
+=== the conversation outgrows what is left, so the oldest of it is let go ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 7 tools including web)
+> a reply
+> a reply
+> a reply
+> a reply
+> axiom: compacting older history (everything)
+axiom: the summary is full - forgetting 17:
+  | - fact 5 the user mentioned earlier
+  | - fact 6 the user mentioned earlier
+  | - fact 7 the user mentioned earlier
+  | - fact 8 the user mentioned earlier
+  | - fact 9 the user mentioned earlier
+  | - fact 10 the user mentioned earlier
+  | - fact 11 the user mentioned earlier
+  | - fact 12 the user mentioned earlier
+  | - fact 13 the user mentioned earlier
+  | - fact 14 the user mentioned earlier
+  | - fact 15 the user mentioned earlier
+  | - fact 16 the user mentioned earlier
+  | - fact 17 the user mentioned earlier
+  | - fact 18 the user mentioned earlier
+  | - fact 19 the user mentioned earlier
+  | - fact 20 the user mentioned earlier
+  | - fact 21 the user mentioned earlier
+axiom: compacting older history (everything)
+axiom: the summary is full - forgetting 13:
+  | - fact 0 the user mentioned earlier
+  | - fact 1 the user mentioned earlier
+  | - fact 2 the user mentioned earlier
+  | - fact 3 the user mentioned earlier
+  | - fact 4 the user mentioned earlier
+  | - fact 22 the user mentioned earlier
+  | - fact 23 the user mentioned earlier
+  | - fact 24 the user mentioned earlier
+  | - fact 25 the user mentioned earlier
+  | - fact 26 the user mentioned earlier
+  | - fact 27 the user mentioned earlier
+  | - fact 28 the user mentioned earlier
+  | - fact 29 the user mentioned earlier
+a reply
+> a reply
+> a reply
+> a reply
+> 
+--- stderr ---
+
+--- ending --- returned normally (exit status 0)
+
+=== a context too small for any message at all ends the session ===
+--- stdout ---
+axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 7 tools including web)
+> 
+--- stderr ---
+error: this session cannot continue - the context is too small to hold even an empty message, so nothing you type will fit. Start axiom with a larger context.
+
+--- ending --- returned normally (exit status 0)
+
 === compaction fires and says so ===
 --- stdout ---
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)

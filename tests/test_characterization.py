@@ -245,6 +245,37 @@ def _scenarios() -> list[tuple]:
             StubClient(),
             None,
         ),
+        # #42's three refusals. The refusal path had never been scripted here
+        # at all, so three user-visible messages sat outside the behaviour
+        # record - which is why #42 AC 7 passed with the transcript untouched.
+        (
+            "a message too large to send says so, and the session carries on",
+            ["x" * 4000, "a short one", "/exit"],
+            StubClient(),
+            "1000",
+        ),
+        # Reachable in a narrow band: the summary is bounded to half the
+        # context in tokens, so prompt + summary only exceeds the context while
+        # the context is under roughly twice the prompt's cost.
+        (
+            "the conversation outgrows what is left, so the oldest of it is let go",
+            # Short enough that the message is never the bulk - what tips it is
+            # the history behind it, once compaction has squeezed that as far
+            # as the ladder goes.
+            ["please tell me a little more about that " * 2] * 8 + ["/exit"],
+            StubClient(
+                summary="\n".join(
+                    f"- fact {n} the user mentioned earlier" for n in range(30)
+                )
+            ),
+            "350",
+        ),
+        (
+            "a context too small for any message at all ends the session",
+            ["hello", "hi", "/exit"],
+            StubClient(),
+            "100",
+        ),
         (
             "compaction fires and says so",
             ["first message", "second message", "/exit"],
