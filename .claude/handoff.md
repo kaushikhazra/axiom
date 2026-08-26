@@ -53,6 +53,18 @@ uv run --directory C:/Projects/axiom axiom --working-directory C:/Projects/.tmp/
 inspects what a tool is about to do - the security stories have not been written, let alone
 landed.
 
+**Pointing at a different Ollama**, which came up at the end of the last session:
+
+```
+uv run --directory C:/Projects/axiom axiom --host http://192.168.1.50:11434   # one run
+$env:AXIOM_HOST = "http://192.168.1.50:11434"                                 # the session
+```
+
+Command line beats environment beats the `http://localhost:11434` default, and the startup
+line reports which took effect - worth reading rather than assuming, especially if a model
+appears to be missing. `tests/conftest.py` clears `AXIOM_HOST` for every test, so exporting
+it will not turn the suite red.
+
 ## What to try, and what to watch for
 
 **MCP with something real.** Write `.axiom/mcp.json`, point it at an actual server, and see
