@@ -17,6 +17,10 @@ cycles resolving each other's conflicts.
 
 **The queue is empty.** Every row is done. A new loop needs a new row here first.
 
+**Next up is manual testing, not another loop** - see [`../handoff.md`](../handoff.md).
+Nobody has actually used axiom yet: every criterion was settled by tests, stubs and
+single-question model probes, and no real MCP server has ever been connected.
+
 Four issues ran back to back on 2026-08-26 - #40, #41, #42, #43 - and **the cold read found a
 real defect in every one of them**, each time after the implementing cycle had written
 `met-with-evidence` beside the criterion. That is not a run of bad luck; it is the rule
