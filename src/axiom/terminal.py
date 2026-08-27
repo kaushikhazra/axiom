@@ -366,14 +366,36 @@ def note_starting(servers: int) -> None:
         print(f"{VOICE} starting {servers} MCP {word}...")
 
 
+def note_tool_cost(cost: int | None, window: int | None) -> None:
+    """What the declared tools take out of the window before anything is said.
+
+    Its own saying, not part of the server report. It used to live inside
+    `note_servers`, which returns early when nothing is attached - so this,
+    which is a fact about the *session*, was shown only to users who happened
+    to configure MCP. Everyone else was told `7 tools including web` and never
+    that those seven cost 653 tokens, or that with the standing prompt they
+    took 40% of a 2000-token window before a word was typed (#61).
+
+    `cost` is None when nothing is declared, and the line is then not said at
+    all. Deliberately not a cost of zero: zero is a number, it reads like one,
+    and a user who has switched tools off does not need to be told what they
+    are not paying.
+
+    The share is omitted rather than guessed when the window is unknown - a
+    percentage of an unknown is not a smaller claim, it is a wrong one.
+    """
+    if cost is None:
+        return
+    share = f", {100 * cost / window:.0f}% of the window" if window else ""
+    print(f"{VOICE} tools cost about {cost} tokens per request{share}")
+
+
 def note_servers(
     connected: dict[str, int],
     problems: list[str],
     bounds: tuple[float, float] | None = None,
-    cost: int | None = None,
-    window: int | None = None,
 ) -> None:
-    """Which MCP servers answered, what went wrong, and what it all costs.
+    """Which MCP servers answered, and what went wrong.
 
     Said after the startup line and only when there is something to say, so a
     run with nothing configured looks exactly as it did before MCP existed.
@@ -382,10 +404,9 @@ def note_servers(
     different action - setting a variable, correcting a command, removing a
     tool that does not exist - and a count says none of that.
 
-    `cost` is what the declared tools take out of the window before a
-    conversation has started. Tool declarations ride in every request, the way
-    #42 measured the system prompt at 205 tokens, so a server contributing
-    twenty is a fixed tax the user would otherwise never see.
+    What the tools *cost* is no longer said here. It never belonged: it is a
+    fact about every request, servers or not, and living inside a function that
+    returns early without them is what kept it hidden (#61).
     """
     if not connected and not problems:
         return
@@ -394,9 +415,6 @@ def note_servers(
         tools_word = "tool" if count == 1 else "tools"
         print(f"{VOICE} {name}: {count} {tools_word}")
 
-    if connected and cost is not None:
-        share = f", {100 * cost / window:.0f}% of the window" if window else ""
-        print(f"{VOICE} tools cost about {cost} tokens per request{share}")
     if connected and bounds is not None:
         start, call = bounds
         print(f"{VOICE} server start limit {start:g}s, tool call limit {call:g}s")

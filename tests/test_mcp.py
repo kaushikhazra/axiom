@@ -312,8 +312,15 @@ def test_a_tool_the_server_does_not_have_is_reported_by_name(running):
 
 
 def test_the_cost_of_the_declared_tools_is_shown(capsys):
-    """AC 13: before any conversation has started."""
-    terminal.note_servers({"tiny": 3}, [], cost=420, window=8192)
+    """AC 13: before any conversation has started.
+
+    Said by `note_tool_cost` since #61, not by `note_servers`. AC 13 asked
+    that the cost be visible, and it was built inside this story - so it
+    inherited MCP's scope and was shown only when a server happened to be
+    attached. The criterion still holds; the line simply moved to where it
+    is always said.
+    """
+    terminal.note_tool_cost(420, 8192)
 
     out = capsys.readouterr().out
     assert "420 tokens" in out
@@ -451,18 +458,36 @@ def children_of_this_process() -> set[int]:
     return {c.pid for c in psutil.Process().children(recursive=True)}
 
 
-def surviving(pids: set[int]) -> list[int]:
+def surviving(pids: set[int], within: float = 5.0) -> list[int]:
+    """Which of these processes are still running, given a moment to stop.
+
+    Waits, deliberately. `Servers.stop()` joins its own thread, but the operating
+    system does not necessarily reap the child by the time the next line runs -
+    so an instant check is a race, and it loses under load. It cost this suite
+    two red tests during #61's cold read, with nothing wrong in the code.
+
+    Waiting removes the race rather than shrinking the window, which is #43's
+    own standing note applied to #43's own test. It does not weaken anything: a
+    server that genuinely outlives axiom is still alive five seconds later and
+    still fails the assertion.
+    """
+    import time
+
     import psutil
 
-    alive = []
-    for pid in pids:
-        try:
-            process = psutil.Process(pid)
-            if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
-                alive.append(pid)
-        except psutil.NoSuchProcess:
-            pass
-    return alive
+    deadline = time.monotonic() + within
+    while True:
+        alive = []
+        for pid in pids:
+            try:
+                process = psutil.Process(pid)
+                if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
+                    alive.append(pid)
+            except psutil.NoSuchProcess:
+                pass
+        if not alive or time.monotonic() >= deadline:
+            return alive
+        time.sleep(0.05)
 
 
 def configured(tmp_path, monkeypatch) -> None:
