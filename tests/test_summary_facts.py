@@ -40,6 +40,50 @@ def test_the_instruction_asks_for_provenance_not_importance():
     assert "where a fact came from, not about how important it is" in text
 
 
+def test_the_instruction_allows_an_empty_answer():
+    """AC 11, as intent only.
+
+    Measured: `gemma4:e2b` returns nothing for five runs of six on pure
+    pleasantries, against four bullets every time before. `qwen2.5:7b` is
+    unmoved at 4.7. The numbers are the evidence; this pins the request.
+    """
+    text = compaction.COMPACTION_INSTRUCTION.lower()
+
+    assert "nothing at all" in text
+    assert "empty answer is correct" in text
+
+
+def test_the_summariser_is_shown_the_turns_it_must_not_repeat():
+    """AC 5, structurally - and this part *is* testable.
+
+    `compact` could not avoid duplicating the kept turns because it was never
+    given them. Whether a model then honours it is measured separately; that
+    it is now *possible* is not a matter of opinion.
+    """
+    asked = StubBackend(summary="x")
+    compaction.compact(
+        asked,
+        "m",
+        [{"role": "user", "content": "the deadline is the 14th"}],
+        kept=[{"role": "assistant", "content": "Your deadline is the 14th."}],
+    )
+
+    sent = asked.completed[-1][0]["content"]
+    assert "do not repeat them" in sent
+    assert "Your deadline is the 14th." in sent
+    assert "TURNS TO SUMMARISE" in sent
+
+
+def test_nothing_extra_is_sent_when_there_are_no_kept_turns():
+    """AC 5's cost. The second copy is only paid when it can buy something."""
+    asked = StubBackend(summary="x")
+    compaction.compact(asked, "m", [{"role": "user", "content": "hello"}])
+
+    sent = asked.completed[-1][0]["content"]
+    assert "TURNS BEING KEPT" not in sent
+    assert "TURNS TO SUMMARISE" not in sent
+
+
 def test_the_instruction_still_forbids_ranking_by_importance():
     """AC 12, and a guard on #32.
 
