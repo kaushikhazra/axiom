@@ -2,14 +2,39 @@
 
 from .backend import ModelBackend
 
+# Three paragraphs, and the order matters. What to extract, then what does not
+# belong, then what must not be dropped - so the "omit nothing" rule reads as a
+# floor on the conversation's own record rather than a licence to keep
+# everything the model happened to say.
+#
+# The middle paragraph is #62. Without it the instruction asks for "every fact
+# from the conversation", and a model that explained what an MMORPG stands for
+# *did* say that during the conversation - so it belongs, by this instruction.
+# Measured before the change: eight bullets from a short talk, three of them
+# general knowledge, in a store bounded at half the window.
+#
+# It is deliberately about **provenance, not importance**, and says so. The
+# third paragraph forbids ranking facts by importance, and #32 put it there
+# after oldest-first dropping lost "my cat is called Biscuit" from turn one.
+# Conflating the two axes would re-open that.
 COMPACTION_INSTRUCTION = (
     "Extract every distinct fact, stated preference, name, and number from "
     "the conversation below as a bulleted list - one bullet per fact, in "
-    "the order it was mentioned. Do not write a narrative summary. Do not "
-    "judge some facts as more important than others: a brief, early "
+    "the order it was mentioned. Do not write a narrative summary.\n\n"
+    "Then remove any bullet that would still be true if this conversation had "
+    "never happened. Definitions, dates, public facts and anything you "
+    "explained are all still true without it - drop them, because they can be "
+    "asked for again. What the user said, asked for, chose or decided is only "
+    "true because of this conversation - keep all of it, and keep anything a "
+    "tool found. This is about where a fact came from, not about how "
+    "important it is.\n\n"
+    "Do not judge some facts as more important than others: a brief, early "
     "statement (e.g. a stated preference) is exactly as important to keep "
-    "as a later, longer topic. Omit nothing a reader would need to answer "
-    "a question about anything mentioned below.\n\n"
+    "as a later, longer topic. Omit nothing from the conversation's own "
+    "record that a reader would need to answer a question about it later.\n\n"
+    "If nothing here is worth remembering - only greetings, thanks, or small "
+    "talk that establishes nothing - reply with nothing at all. An empty "
+    "answer is correct and expected when there is nothing to record.\n\n"
 )
 
 COMPACTION_TRIGGER_FRACTION = 0.90
@@ -57,9 +82,35 @@ def _as_line(message: dict) -> str:
     return f"{message['role']}: {message['content']}"
 
 
-def compact(backend: ModelBackend, model: str, pairs: list[dict[str, str]]) -> str:
-    """Summarize a run of messages into shorter text."""
+def compact(
+    backend: ModelBackend,
+    model: str,
+    pairs: list[dict[str, str]],
+    kept: list[dict[str, str]] | None = None,
+) -> str:
+    """Summarize a run of messages into shorter text.
+
+    `kept` is the turns that are *not* being summarized - the ones staying in
+    history verbatim. They are shown to the summarizer so it can avoid
+    repeating them, which is #62 AC 5 and was impossible before: `compact` was
+    given only what it was replacing, so it could not know what the reader
+    still had in front of them. Measured, a deadline stated and answered
+    appeared three times in one summary and four in another.
+
+    Shown, never summarized. The two halves are labelled so the distinction
+    survives a model that skims, and only the kept turns' text is sent - they
+    are already in history, so this is a second copy and it costs window. That
+    is the trade: a duplicated fact costs a slot in a store bounded at half the
+    window, permanently, while this costs part of one request.
+    """
     transcript = "\n".join(_as_line(m) for m in pairs)
+    if kept:
+        transcript = (
+            "TURNS BEING KEPT - the reader still has these, do not repeat them:\n"
+            + "\n".join(_as_line(m) for m in kept)
+            + "\n\nTURNS TO SUMMARISE:\n"
+            + transcript
+        )
     summary = backend.complete(
         model, [{"role": "user", "content": COMPACTION_INSTRUCTION + transcript}]
     )
@@ -203,12 +254,14 @@ def compacted_history(
     if older[0]["role"] == "system":
         prior_summary = older[0]["content"]
         new_older = older[1:]
-        new_facts = compact(backend, model, new_older) if new_older else ""
+        new_facts = compact(backend, model, new_older, kept) if new_older else ""
         content = prior_summary + (f"\n{new_facts}" if new_facts else "")
     else:
         # The header is its own line so that dropping the oldest fact does not
         # take the header with it and leave the model an unlabelled list.
-        content = f"Summary of earlier conversation:\n{compact(backend, model, older)}"
+        content = "Summary of earlier conversation:\n" + compact(
+            backend, model, older, kept
+        )
 
     return [{"role": "system", "content": content}, *kept]
 
