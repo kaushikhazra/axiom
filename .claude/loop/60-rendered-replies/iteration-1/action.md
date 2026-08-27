@@ -1,53 +1,70 @@
 # Action
 
-**Cycle 1 reads the prior art, adds the dependency, and probes the streaming problem. No
-production rendering yet.** The three references all solve the same problem and there is no
-reason to rediscover it.
+**Implement the renderer at the `terminal.py` seam.** Cycle 1 settled the approach with evidence:
+commit finished lines with an ordinary `print`, re-render only the unfinished tail, and never let
+Rich own the cursor.
 
-## 1. Baseline
+## 1. Check the ground
 
-- `env AXIOM_HOST=http://127.0.0.1:1 AXIOM_MODEL=nonsense:99b AXIOM_DEBUG_MAX_CONTEXT=7 uv run pytest -q`
-  Expect **539 passed**. Record it.
-- Copy `tests/baseline/transcript.txt` to `.tmp/transcript-baseline-60.txt`. **It should not
-  change this row** - check it every cycle.
-- `gh issue view 60`, record all 29 criteria `not-started`.
+- Full suite. **539 is the floor.**
+- `diff .tmp/transcript-baseline-60.txt tests/baseline/transcript.txt` - **unchanged**, and it
+  must stay that way. If it moves, stop and find out why before doing anything else.
 
-## 2. Read the prior art before writing anything
+## 2. The renderer
 
-`md2term`, `richify`, and the `simonw/llm` PR. **Fetch and read them.** Each solves streaming
-markdown; the question to answer for each is *how does it avoid redrawing what is already on
-screen*, because that is AC 7 and it is the whole difficulty.
+A small object in `terminal.py` holding the reply so far, with two operations:
 
-Record what each does, in one line each, and which approach this row will take and why.
+- **feed(text)** - accumulate, decide which lines are now *final*, print those, and re-render the
+  tail.
+- **finish()** - flush whatever remains, close any construct that never closed.
 
-## 3. Prove the naive approach is wrong, rather than assuming it
+**What makes a line final** is the whole design. A line is final when nothing that arrives later
+can change how it renders. Inside an unclosed fence, a line's *content* is fixed even though the
+block is not - so it can be shown as code as soon as the fence opener is complete. Outside a
+fence, a line is final once a newline follows it and it is not a setext heading candidate.
 
-Write a throwaway script in `.tmp/` that streams a long markdown reply through
-`rich.Live(Markdown(...))`, capturing the byte stream. **Count how many times a given line is
-emitted.** If it is more than once, that is AC 7's justification recorded as a measurement rather
-than an assertion - and if it is not, the assumption is wrong and this row is easier than
-thought.
+**Do not let Rich move the cursor.** Use `Console.render_lines` or `Console(file=...)` capture to
+turn markdown into styled lines, then print them. `Live` is not used.
 
-## 4. Add the dependency
+**Plain when not a terminal** - checked before any of this, and returning the old path exactly.
 
-`rich` in `pyproject.toml`, pinned. Record the version. `uv sync`, then the full suite again -
-**adding a dependency must not move a single test.**
+## 3. Wire it in
 
-## 5. Probe the hard case
+`show_piece` is called with `reply[shown:]` - the new text only - and `end_reply` ends the reply.
+Those two are the seam. **Nothing above `terminal.py` should need to change**; if it does, say
+why in the log.
 
-The tension between AC 8 and AC 9, with a real streamed reply from the local Ollama containing a
-fenced code block. Capture the chunk boundaries: how much of a fence arrives per chunk, and what
-a renderer would have to hold. Record the real chunk sizes rather than guessing them.
+AC 20: `_could_still_be_a_call` still decides whether anything is shown. The renderer only ever
+sees what the loop releases, and a reply that turns out to be a call is never fed to it.
 
-## 6. Write cycle 2's action
+## 4. The measurements, not impressions
 
-Cycle 2 implements. Say which criteria it takes and in what order. The seam is `show_piece` and
-`end_reply` in `terminal.py`; nothing above them should need to change, and if it does, say why.
+- **AC 7** - capture the byte stream for a reply taller than the screen. Assert **no line is
+  emitted twice** and **no cursor-up crosses the committed region**.
+- **AC 5** - for a set of replies, every non-markup character sent appears in the stripped
+  output. Property-style, several inputs.
+- **AC 9** - a half-arrived `##` is not styled as a heading; a fence opener split across chunks
+  does not produce a code block until it is complete. Feed text **four characters at a time**,
+  because that is what a real stream delivers.
+- **AC 14, AC 15** - piped output byte-identical to the saved baseline.
+- **AC 16** - the payload sent to the model is unchanged by rendering.
+- **AC 28** - force the renderer to raise; the reply still appears in full as plain text.
+- **AC 21** - an empty reply prints nothing and leaves #58's spacing alone.
+
+## 5. The judgement, recorded not asserted
+
+Run a real reply through it against the local Ollama and **paste the before and after into the
+log**. Kaushik asked for this because a transcript read badly; the log has to show that it reads
+better. One sample is enough to *show* it and not enough to *claim* it - say which.
+
+## 6. Then
+
+Full suite, hermeticity command, transcript. Break the renderer and record what goes red, naming
+survivors. Write cycle 3's action: the cold read.
 
 ## Record
 
-Status for all 29. What each reference does. The naive-redraw measurement. The pinned version.
-The real chunk sizes. Whether the transcript moved.
+Status for all 29. What makes a line final, and why. The AC 7 capture. The before and after.
+Whether anything above `terminal.py` changed.
 
-**Write no questions into anything.** Decide, record the decision and the reasoning under a
-heading that says so, carry on. The exception is safety, not uncertainty.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.
