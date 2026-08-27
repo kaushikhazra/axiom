@@ -2,14 +2,36 @@
 
 from .backend import ModelBackend
 
+# Three paragraphs, and the order matters. What to extract, then what does not
+# belong, then what must not be dropped - so the "omit nothing" rule reads as a
+# floor on the conversation's own record rather than a licence to keep
+# everything the model happened to say.
+#
+# The middle paragraph is #62. Without it the instruction asks for "every fact
+# from the conversation", and a model that explained what an MMORPG stands for
+# *did* say that during the conversation - so it belongs, by this instruction.
+# Measured before the change: eight bullets from a short talk, three of them
+# general knowledge, in a store bounded at half the window.
+#
+# It is deliberately about **provenance, not importance**, and says so. The
+# third paragraph forbids ranking facts by importance, and #32 put it there
+# after oldest-first dropping lost "my cat is called Biscuit" from turn one.
+# Conflating the two axes would re-open that.
 COMPACTION_INSTRUCTION = (
     "Extract every distinct fact, stated preference, name, and number from "
     "the conversation below as a bulleted list - one bullet per fact, in "
-    "the order it was mentioned. Do not write a narrative summary. Do not "
-    "judge some facts as more important than others: a brief, early "
+    "the order it was mentioned. Do not write a narrative summary.\n\n"
+    "Then remove any bullet that would still be true if this conversation had "
+    "never happened. Definitions, dates, public facts and anything you "
+    "explained are all still true without it - drop them, because they can be "
+    "asked for again. What the user said, asked for, chose or decided is only "
+    "true because of this conversation - keep all of it, and keep anything a "
+    "tool found. This is about where a fact came from, not about how "
+    "important it is.\n\n"
+    "Do not judge some facts as more important than others: a brief, early "
     "statement (e.g. a stated preference) is exactly as important to keep "
-    "as a later, longer topic. Omit nothing a reader would need to answer "
-    "a question about anything mentioned below.\n\n"
+    "as a later, longer topic. Omit nothing from the conversation's own "
+    "record that a reader would need to answer a question about it later.\n\n"
 )
 
 COMPACTION_TRIGGER_FRACTION = 0.90
