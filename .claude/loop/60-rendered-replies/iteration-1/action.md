@@ -1,86 +1,80 @@
 # Action
 
-**A second cold read, on the fixes themselves.** Cycle 4 found four real defects and then
-fixed all four in the same cycle — which is precisely the arrangement the rule exists to
-distrust. New code written under time pressure at the end of a row has had no hostile
-reader at all.
+**A third read, narrowed to what cycle 5 touched.** Not a re-read of the row.
 
-This is a shorter pass than cycle 4's. It is not a re-read of the whole row.
+The trend is the reason: cycle 4 found four defects in cycle 3's code, cycle 5 found three
+in cycle 4's. Every fix is new code, and new code is where the defects are. Cycle 5's three
+fixes have had no hostile reader.
+
+**The stopping rule is external, and it is this:** a read that finds nothing takes exit 1
+and closes the queue. A read that finds something fixes it and writes another action. The
+fail-safe at **07:07 IST** ends it either way. Do not substitute a judgement that the work
+looks finished.
 
 ## 1. Check the ground
 
-- Full suite. **603 is the floor.**
+- Full suite. **614 is the floor.**
 - `env AXIOM_HOST=http://127.0.0.1:1 AXIOM_MODEL=nonsense:99b AXIOM_DEBUG_MAX_CONTEXT=7 uv run pytest -q`
 - Golden transcript **unchanged**.
-- `python .tmp/break60.py` — 25 breaks, no survivors. If any says NOT APPLIED, its target
-  moved and the break is proving nothing; fix it before reading the results.
+- `python .tmp/break60.py` — 28 breaks. **Read every line of its output**, not just the
+  survivor count: three breaks were found stale in cycle 5, silently proving nothing while
+  the run reported no survivors. Five have now been found to be no-ops across this row.
 
-## 2. Attack the new code
+## 2. Attack cycle 5's three fixes
 
-Read `logs/cycle-4.md` for what each fix claims, then try to break the claim.
+**`_echo_limit`** holds one character back when the echo would land on a multiple of the
+width. What if the line is exactly one character long and the width is 1? What if a wide
+character means the echo *jumps over* the boundary rather than landing on it - 39 columns
+used, next character two cells wide, at width 40? Nothing lands on 40 and the terminal wraps
+anyway. Check it.
 
-**The erase arithmetic** — `_rows_used`. It assumes the terminal defers its wrap. What
-happens at exactly the width, one under, one over? What about a line containing a wide
-character *at* the wrap point, where the terminal moves it whole to the next row and the
-count is off by one? What if `_width()` returns a different number between the echo and the
-commit — a resize mid-line is exactly that, and `tests/screen.py` can be told to change
-width partway through.
+**`_echo_width`** is remembered when text is echoed and used when it is taken back. It is
+reset when a line commits and in `finish`. Is there a path where a line is echoed, the width
+is remembered, and then a *different* line is committed against it - the table hold, where
+`_finished` erases without committing? Follow the held-row path specifically.
 
-**The lexing window** — `CODE_CONTEXT`. `_code` is capped, and `_code_line` indexes
-`drawn[len(self._code) - 1]`. Does that still hold when `_highlighted` returns fewer lines
-than the window — an empty line, a line that lexes to nothing? The guard is
-`len(drawn) >= len(self._code)`; find an input where it is false and check what the user
-gets.
+**`_is_a_rule`** requires a line to be nothing but rule characters and spaces. What draws
+such a line other than a table? A model writing a horizontal rule `---` inside a table
+block; a row whose only cell content is a dash. Try a table whose *data* row is
+`| --- | --- |` repeated, and a reply that is only ` ─── ` inside pipes.
 
-**The table test** — `HEADER_RULE`. A table is recognised by a `─` appearing in the drawn
-output. What draws that character other than a header rule? A row whose *content* is a box
-character would be one. Try it.
+## 3. Attack the harness
 
-**Settle on failure** — `_settle_reply` in `report_failure`. Are there other routes out of
-a turn that skip `end_reply`? `report_too_large` and the round-limit path both print in
-axiom's voice; check whether a reply can be pending when either runs.
-
-## 3. Attack what cycle 4 did not reach
-
-- **AC 6 and the table.** Formatting appears as the reply streams — but a table's does not
-  appear until the table ends, measured at 4.3 to 4.5 seconds. Is that consistent with AC 6
-  as written, or is it a criterion met everywhere except the one construct that holds? Decide
-  and record; do not leave it unexamined because cycle 3 recorded a reason.
-- **AC 9 and highlighting.** A construct still incomplete is never shown as complete. Is a
-  half-arrived fence *opener* — ` ```pyth ` with the rest still coming — ever lexed as a
-  language?
-- **The plain path, byte for byte.** Run the same reply through both paths and diff them,
-  rather than trusting that two tests assert the same literal.
+Five of its breaks have been no-ops. Add a guard rather than finding a sixth by luck: make
+`.tmp/break60.py` **fail loudly** when a break's target does not match, and when a break
+produces no failures - a break that changes the file and breaks nothing is either a no-op or
+an untested behaviour, and both are worth stopping for. Then run it.
 
 ## 4. Then
 
-If it finds something: fix it with a test that fails first, add its break, and write cycle
-6's action. **Name the finding in the log** with what it would have cost a user.
+If it finds something: fix it with a test that fails first, add its break, write cycle 7's
+action, commit, push, exit.
 
 If it comes back clean, that is **exit 1**:
 
 - all 29 met, suite green and hermetic, transcript unchanged, a real before-and-after
-  recorded
+  recorded across the cycle logs
 - commit, push, open a PR referencing #60, **merge it**, delete the branch
-- then, in the same run: mark row 16 done in `queue.md` with the PR number, cycle count and
-  wall-clock time, **say the queue is empty**, and update `../../handoff.md` — manual testing
-  is still unfinished, #41, #34, #40, #35 and #26 were never reached, and seven rows have
-  merged since it was last written
+- then, in the same run: mark row 16 done in `queue.md` with the PR number, the cycle count
+  and the wall-clock time, **say the queue is empty**, and update `../../handoff.md` -
+  manual testing is still unfinished, #41, #34, #40, #35 and #26 were never reached, and
+  seven rows have merged since it was last written
 - **do not touch the cron.** With the queue empty there is no next row to redirect it to;
   say so in the handover and leave it for Kaushik to stop
 
 ## 5. Say how cold it was
 
-Cycle 4's read was not fully cold — same session, no separate agent available under this
-session's standing instruction. Say the same plainly if it is true again, rather than
-claiming a cold read that was not cold. What stood in for it, and worked, was **modelling
-the terminal instead of re-reading the code**: three of four findings came from hostile
-inputs run through `tests/screen.py`. Do that again.
+Cycles 4 and 5 were read by the same session that wrote the code, with no separate agent
+available under this session's standing instruction. Say so again if it is true. What has
+worked in place of a fresh reader, twice, is **hostile inputs through `tests/screen.py`
+rather than re-reading**: seven of the seven findings so far came that way, none from
+reading code again.
 
 ## Record
 
-Every claim of cycle 4's, with a verdict and what was tried against it. Anything found, by
-name. Whether the read was cold. If nothing is found, what was attacked and came back clean.
+Every claim of cycle 5's, with a verdict and what was tried against it. Anything found, by
+name, with what it would have cost a user. Whether the read was cold. If nothing is found,
+what was attacked and came back clean.
 
 **Write no questions into anything.** Decide, record the decision and the reasoning, carry
 on.
