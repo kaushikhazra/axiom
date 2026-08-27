@@ -333,7 +333,60 @@ def _switched_to(
         overridden=settings.debug_max_context is not None,
         web=settings.web_enabled,
     )
+    # AC 10, and the one startup fact a switch can make stale: declarations
+    # follow the model, so moving to one that cannot call tools drops the real
+    # cost to nothing while the figure from startup would stand.
+    terminal.note_tool_cost(_tool_cost(fresh, settings), fresh.context)
     return fresh
+
+
+def _limits(settings: config.Settings) -> "tools.Limits":
+    """The bounds tools act within, built from the run's settings.
+
+    One function because two callers need it: the chat loop, which hands it to
+    every tool, and `_tool_cost`, which needs the standing prompt built from
+    the same bounds. Building it twice would let the prompt a cost is measured
+    from drift from the prompt actually sent.
+    """
+    return tools.Limits(
+        working_directory=settings.working_directory,
+        command_timeout=settings.command_timeout,
+        search_results=settings.search_results,
+        fetch_timeout=settings.fetch_timeout,
+        page_characters=settings.page_characters,
+    )
+
+
+def _tool_cost(run: Running, settings: config.Settings) -> int | None:
+    """What rides in every request before the conversation starts. None if nothing does.
+
+    The declarations **and the standing prompt**. The prompt is the easy one to
+    forget: it is held outside `messages` on purpose, so it does not look like
+    part of the conversation, and it is roughly a fifth of the total. A figure
+    without it understates what the user has actually spent.
+
+    Weighed with `compaction.estimated_tokens` - the same function the size
+    checks use - so this line cannot disagree with the behaviour it describes.
+    That matters more than accuracy: `estimated_tokens` divides by four and
+    `too_large` by three, and this prompt has been quoted at 56, then 163,
+    before being measured at 205 by a third route (#43). A better number that
+    contradicts the compaction it is explaining would be worse than none.
+
+    None when there is nothing declared - tools off, or a model that cannot
+    call them - so the caller stays silent rather than reporting a cost of
+    zero, which is a number and reads like one.
+    """
+    if not run.declarations:
+        return None
+    return compaction.estimated_tokens(
+        [
+            *(
+                {"role": "system", "content": json.dumps(declaration)}
+                for declaration in run.declarations
+            ),
+            {"role": "system", "content": tools.system_prompt(_limits(settings))},
+        ]
+    )
 
 
 def _remember(chosen: str, host: str) -> None:
@@ -372,13 +425,7 @@ def _chat(
         return
 
     run = _prepare(model_backend, settings, attached, model)
-    limits = tools.Limits(
-        working_directory=settings.working_directory,
-        command_timeout=settings.command_timeout,
-        search_results=settings.search_results,
-        fetch_timeout=settings.fetch_timeout,
-        page_characters=settings.page_characters,
-    )
+    limits = _limits(settings)
 
     terminal.announce(
         run.model,
@@ -392,14 +439,16 @@ def _chat(
         attached.connected,
         [*settings.mcp_problems, *attached.failures],
         bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
-        cost=compaction.estimated_tokens(
-            [
-                {"role": "system", "content": json.dumps(declaration)}
-                for declaration in run.declarations or []
-            ]
-        ),
-        window=run.context,
     )
+    # After the server lines rather than inside them. The figure is a fact
+    # about the session - what rides in every request before a word is typed -
+    # and it lived inside `note_servers`, which returns early when nothing is
+    # attached. So a user with no MCP was told `7 tools including web` and
+    # never that those seven were eating 40% of a small window (#61).
+    #
+    # Last of the startup lines, deliberately: the server counts above explain
+    # where part of it comes from, so the total reads as their sum.
+    terminal.note_tool_cost(_tool_cost(run, settings), run.context)
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a
     # leading system message as a carried-forward summary: a prompt at index 0

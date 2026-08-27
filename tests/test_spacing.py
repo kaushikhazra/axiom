@@ -144,4 +144,8 @@ def test_startup_is_one_block_with_a_gap_before_the_first_prompt(capsys, monkeyp
 
     startup = printed[: printed.index("> ")]
     assert "\n\n" not in startup, "startup was broken into blocks"
-    assert startup.count("\n") == 2, "startup is not the two lines it should be"
+    # How *many* lines startup says is not this criterion's business - #61 added
+    # one and #58 AC 6 was never about the count. What matters is that they
+    # arrive as one block with nothing blank inside it.
+    assert startup.count("\n") >= 2, "startup said less than it should"
+    assert startup.strip(), "startup said nothing at all"

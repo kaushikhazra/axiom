@@ -312,8 +312,15 @@ def test_a_tool_the_server_does_not_have_is_reported_by_name(running):
 
 
 def test_the_cost_of_the_declared_tools_is_shown(capsys):
-    """AC 13: before any conversation has started."""
-    terminal.note_servers({"tiny": 3}, [], cost=420, window=8192)
+    """AC 13: before any conversation has started.
+
+    Said by `note_tool_cost` since #61, not by `note_servers`. AC 13 asked
+    that the cost be visible, and it was built inside this story - so it
+    inherited MCP's scope and was shown only when a server happened to be
+    attached. The criterion still holds; the line simply moved to where it
+    is always said.
+    """
+    terminal.note_tool_cost(420, 8192)
 
     out = capsys.readouterr().out
     assert "420 tokens" in out

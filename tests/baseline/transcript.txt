@@ -2,6 +2,7 @@
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 --- stderr ---
 
@@ -20,6 +21,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: Ollama default, no tools -
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 hi there
 
@@ -32,6 +34,7 @@ hi there
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > > > 
 --- stderr ---
 
@@ -41,6 +44,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 81% of the window
 > 
 
 > 
@@ -56,6 +60,7 @@ error: this message is about 538 tokens too large to send - try a shorter one
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 231% of the window
 > 
 a reply
 
@@ -123,6 +128,7 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 807% of the window
 > 
 
 > 
@@ -138,6 +144,7 @@ error: qwen2.5:7b cannot hold even an empty message - the context is too small, 
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 81% of the window
 > 
 a reply
 
@@ -154,6 +161,7 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 
 > 
@@ -166,6 +174,7 @@ error: model not found (status code: -1)
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 
 > 
@@ -178,6 +187,7 @@ error: cannot reach Ollama at http://localhost:11434 (connection refused)
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 partial 
 > 
@@ -191,6 +201,7 @@ error: reply cut off after 8 characters - lost connection to http://localhost:11
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 partial 
 > 
@@ -207,6 +218,7 @@ cancelled after 8 characters
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 
 --- stderr ---
@@ -217,6 +229,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 --- stderr ---
 
@@ -226,6 +239,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 --- stderr ---
 
@@ -235,6 +249,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 
 --- stderr ---
@@ -245,6 +260,7 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: read_file(path=<sandbox>\notes.txt)
 axiom: outside the working directory: <sandbox>\notes.txt
@@ -260,6 +276,7 @@ The cat is ginger.
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: read_file(path=<sandbox>\absent.txt)
 axiom: outside the working directory: <sandbox>\absent.txt
@@ -287,6 +304,7 @@ hello to you
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 81% of the window
 > 
 a reply
 
@@ -356,6 +374,7 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: read_file(path=<sandbox>/notes.txt)
 axiom: outside the working directory: <sandbox>\notes.txt
@@ -383,6 +402,7 @@ hello to you
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools, web off)
+axiom: tools cost about 575 tokens per request, 2% of the window
 > 
 hello to you
 
@@ -395,6 +415,7 @@ hello to you
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: search_web(query=what is teal)
   | Teal
@@ -412,6 +433,7 @@ axiom: found, not read: https://example.invalid/teal
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: search_web(query=throttle me)
   | error: the search provider is throttling us - wait and retry (202 Ratelimit)
@@ -426,6 +448,7 @@ I could not search just now.
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: fetch_page(url=https://example.invalid/page)
   | Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger.
@@ -441,6 +464,7 @@ axiom: read: https://example.invalid/page
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
+axiom: tools cost about 807 tokens per request, 2% of the window
 > 
 axiom: fetch_page(url=https://unreachable.invalid/x)
   | error: could not reach https://unreachable.invalid/x (connection refused)
