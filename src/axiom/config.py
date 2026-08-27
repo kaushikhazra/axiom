@@ -8,7 +8,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_HOST = "http://localhost:11434"
-DEFAULT_MODEL = "qwen2.5:7b"
+# There is deliberately no DEFAULT_MODEL. axiom used to name `qwen2.5:7b` here
+# and take it on faith, which meant a host without that model got a confident
+# startup line, a fabricated context and a fabricated tool verdict - because
+# `model_info` and `supports_tools` both swallow the error and return
+# None/False. A run's model now comes from the host, or from the user, and
+# `models.choose` settles which. A default here would quietly become the
+# fallback again the first time someone needed one.
 DEFAULT_COMMAND_TIMEOUT = 30.0
 DEFAULT_SEARCH_RESULTS = 5
 DEFAULT_FETCH_TIMEOUT = 20.0
@@ -27,7 +33,12 @@ class Settings:
     """
 
     host: str
-    model: str
+    # What the user *named*, not what the run uses. None means they named
+    # nothing, which is a real state now rather than an impossible one: it is
+    # what sends a run to the list. The settled model lives in the chat loop,
+    # because settling it needs the host's answer and this dataclass is built
+    # before anything has been asked.
+    model: str | None
     debug_max_context: int | None = None
     working_directory: str | None = None
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT
@@ -134,8 +145,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("AXIOM_MODEL", DEFAULT_MODEL),
-        help=f"Model to chat with. Overrides $AXIOM_MODEL. Default: {DEFAULT_MODEL}",
+        default=os.environ.get("AXIOM_MODEL"),
+        help=(
+            "Model to chat with. Overrides $AXIOM_MODEL. With neither set, "
+            "axiom lists the models installed on the host and asks - or uses "
+            "your last choice there when input is not a terminal"
+        ),
     )
     parser.add_argument(
         "--working-directory",
@@ -242,9 +257,16 @@ def resolve(argv: list[str] | None = None) -> Settings:
     """Settings for this run: command line, else environment, else default."""
     args = parse_args(argv)
     override = os.environ.get("AXIOM_DEBUG_MAX_CONTEXT")
+    # A blank model is nobody naming a model. `AXIOM_MODEL=` is how a shell
+    # unsets it in practice, and `--model "  "` is a slip - neither is a
+    # request for a model whose name is empty. Without this the empty string
+    # is carried as a name: it happens to behave correctly because "" is
+    # falsy, but whitespace is truthy and produced a message with a hole in
+    # it - "axiom:     is not installed on http://localhost:11434".
+    named = (args.model or "").strip() or None
     return Settings(
         host=args.host,
-        model=args.model,
+        model=named,
         debug_max_context=int(override) if override is not None else None,
         working_directory=args.working_directory,
         command_timeout=args.command_timeout,

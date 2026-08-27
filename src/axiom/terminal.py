@@ -32,6 +32,150 @@ PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
+def show_models(models: tuple[str, ...], host: str, default: str | None) -> None:
+    """The installed models, numbered, with the one a bare enter takes marked.
+
+    The host is named with the list because the list is *about* that host: a
+    model appearing to be missing is nearly always a run pointed somewhere the
+    user did not mean, and the answer is on screen rather than in a flag they
+    have to remember typing.
+
+    Numbers are right-aligned so a ten-model host does not stagger the names.
+    """
+    print(f"{VOICE} models on {host}")
+    width = len(str(len(models)))
+    for number, model in enumerate(models, start=1):
+        marker = "  (default)" if model == default else ""
+        print(f"  {number:>{width}}. {model}{marker}")
+
+
+def ask_model() -> str | None:
+    """The user's answer to the list, or None if they are leaving.
+
+    Ctrl-C and Ctrl-D both mean leave, matching an idle prompt. There is no
+    session to return to yet, so neither can mean "never mind" the way Ctrl-C
+    does once a conversation is running.
+
+    Takes no default, because there is always one and the hint never varies:
+    a run reaches this question only with two or more models, and something is
+    always marked - the remembered choice when the host still has it, the
+    first entry otherwise.
+    """
+    try:
+        return input(f"{VOICE} which model? (enter for the default) ")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+
+
+def refuse_model(answer: str, count: int) -> None:
+    """Why that answer did not name a model, said so the next try can work.
+
+    Two refusals, because there are two ways to get it wrong once an empty
+    line always works: a number out of range gets the range, and anything that
+    is not a number gets told that numbers are what this wants. Both name the
+    range, so the next attempt has what it needs without scrolling back.
+    """
+    given = answer.strip()
+    if given.isdigit():
+        print(
+            f"{VOICE} there is no model {given} - type a number from 1 to {count}",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"{VOICE} {given!r} is not a number - type a number from 1 to {count}",
+            file=sys.stderr,
+        )
+
+
+def note_model_missing(model: str, host: str) -> None:
+    """A named model the host does not have.
+
+    Said before anything else, and it never ends the run: what follows is the
+    ordinary no-model-named path. Naming both halves matters - a model missing
+    from the host the user meant is a different problem from a model missing
+    because the run is pointed at the wrong host.
+    """
+    print(f"{VOICE} {model} is not installed on {host}", file=sys.stderr)
+
+
+def note_choice_forgotten(model: str, host: str) -> None:
+    """The remembered choice has been removed from the host since it was made."""
+    print(
+        f"{VOICE} {model} was your last choice here but {host} no longer has it",
+        file=sys.stderr,
+    )
+
+
+def note_choice_unreadable(path: str) -> None:
+    """The remembered choice exists but cannot be used.
+
+    Its own sentence, and not `note_choice_forgotten`'s. The two are different
+    facts with different fixes: a model the host dropped is the host's news and
+    nothing is wrong locally, while this is a file the user can open and repair.
+    Naming the path is the whole value - without it there is nothing to act on.
+
+    Said rather than swallowed because the alternative is a user who edits the
+    file, sees no effect, and has no way to learn why.
+    """
+    print(
+        f"{VOICE} {path} could not be read - carrying on as though nothing "
+        f"had been chosen here",
+        file=sys.stderr,
+    )
+
+
+def note_settled(model: str, reason: str) -> None:
+    """A model settled without asking, and why.
+
+    Only for the routes that did not ask. A named model needs no explanation -
+    the user typed it - so `named` says nothing and the startup line carries
+    it. The other two are axiom choosing on the user's behalf, and AC 22 is
+    that this never happens invisibly.
+    """
+    if reason == "only":
+        print(f"{VOICE} using {model} - the only model installed")
+    elif reason == "remembered":
+        print(f"{VOICE} using {model} - your last choice here")
+    elif reason == "first":
+        print(f"{VOICE} using {model} - first installed, nothing was chosen")
+
+
+def note_choice_saved(problem: str | None, path: str) -> None:
+    """Said only when remembering failed, or when the folder is new.
+
+    A successful save into a folder that already existed is silent - the user
+    picked a model and got it, and a line confirming a file was written is
+    noise. A *new* folder is different: axiom has just created something in a
+    directory that is very often a git repository, and finding it later in
+    `git status` with no idea what made it is worse than one line now.
+    """
+    if problem:
+        print(f"{VOICE} {problem} - it will be asked again next time", file=sys.stderr)
+    elif path:
+        print(f"{VOICE} remembering this choice in {path}")
+
+
+def report_no_models(host: str) -> None:
+    """The host answered and has nothing to offer."""
+    print(
+        f"error: {host} has no models installed - pull one first, for example "
+        f"`ollama pull qwen2.5:7b`",
+        file=sys.stderr,
+    )
+
+
+def report_no_host(host: str, cause: BaseException) -> None:
+    """The host could not be asked at all.
+
+    Distinct from having no models, because the advice differs and the user
+    can act on exactly one of them. Reaching this means nothing was printed
+    that could be read as a list or a reply.
+    """
+    print(f"error: cannot reach Ollama at {host} ({cause})", file=sys.stderr)
+
+
 def announce(
     model: str,
     host: str,

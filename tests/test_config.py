@@ -1,5 +1,10 @@
 """Which source of a setting wins: command line, then environment, then default."""
 
+import re
+from pathlib import Path
+
+import pytest
+
 from axiom import config
 
 
@@ -10,8 +15,53 @@ def test_defaults_when_nothing_is_set(monkeypatch):
     settings = config.resolve([])
 
     assert settings.host == config.DEFAULT_HOST
-    assert settings.model == config.DEFAULT_MODEL
+    # AC 2. There is no default model to fall back to - naming nothing is a
+    # real state, and it is what sends a run to the host's list.
+    assert settings.model is None
     assert settings.debug_max_context is None
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_a_blank_model_is_nobody_naming_a_model(blank):
+    """AC 26. `AXIOM_MODEL=` is how a shell unsets it; a slip gives whitespace.
+
+    Neither names a model called "". Carrying the empty string through as a
+    name happened to work - "" is falsy - but whitespace is truthy and reached
+    the screen as `axiom:     is not installed on http://localhost:11434`.
+    """
+    assert config.resolve(["--model", blank]).model is None
+
+
+def test_a_blank_environment_model_is_nobody_naming_a_model(monkeypatch):
+    """AC 26, by the route a shell actually takes."""
+    monkeypatch.setenv("AXIOM_MODEL", "")
+
+    assert config.resolve([]).model is None
+
+
+def test_axiom_carries_no_model_name_of_its_own():
+    """AC 2, and it is not provable by a passing behaviour test.
+
+    A leftover default would sit unused on the happy path and quietly become
+    the fallback again the first time someone reached for one, so this asserts
+    the absence directly rather than asserting a behaviour that would hold
+    either way.
+    """
+    assert not hasattr(config, "DEFAULT_MODEL")
+
+    source = Path(config.__file__).parent
+    named = [
+        f"{file.name}:{number}: {line.strip()}"
+        for file in source.glob("*.py")
+        for number, line in enumerate(file.read_text(encoding="utf-8").splitlines(), 1)
+        # A model name is `family:tag`. Matched inside a string literal only,
+        # so the prose in a comment explaining why the default was removed is
+        # not itself mistaken for the default coming back. Wide enough for
+        # every tag shape on this machine - `7b`, `e2b`, `9b`, `latest` - since
+        # a pattern that only caught digits would miss `gemma4:e2b` entirely.
+        if re.search(r"""['"][A-Za-z0-9._-]+:[A-Za-z0-9._-]+['"]""", line)
+    ]
+    assert named == []
 
 
 def test_environment_beats_the_default(monkeypatch):
@@ -99,8 +149,12 @@ def test_tools_stay_on_unless_the_value_means_off(monkeypatch):
 
 def test_web_settings_have_defaults(monkeypatch):
     """AC 28."""
-    for name in ("AXIOM_SEARCH_RESULTS", "AXIOM_FETCH_TIMEOUT",
-                 "AXIOM_PAGE_CHARACTERS", "AXIOM_WEB"):
+    for name in (
+        "AXIOM_SEARCH_RESULTS",
+        "AXIOM_FETCH_TIMEOUT",
+        "AXIOM_PAGE_CHARACTERS",
+        "AXIOM_WEB",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     settings = config.resolve([])

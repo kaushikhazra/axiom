@@ -114,6 +114,7 @@ class StubClient:
         prompt_eval_count: int | None = None,
         show_raises: BaseException | None = None,
         capabilities: list[str] | None = None,
+        models: list[str] | None = None,
     ) -> None:
         self.capabilities = capabilities or ["completion", "tools"]
         self.info = FULL_INFO if info is None else info
@@ -121,7 +122,23 @@ class StubClient:
         self.summary = summary
         self.prompt_eval_count = prompt_eval_count
         self.show_raises = show_raises
+        self.models = ["qwen2.5:7b"] if models is None else list(models)
         self.index = 0
+
+    def list(self):
+        """What `/api/tags` gives back, shaped the way the client shapes it.
+
+        The entry exposes `model` and **not** `name` - the raw JSON carries
+        both and they are equal, but `ListResponse.Model` drops one. A stub
+        offering `name` would be a stub contradicting the thing under test,
+        which is the fault #40 found in `given_page` and #41 in the constant
+        `prompt_eval_count`.
+        """
+        return type(
+            "ListResponse",
+            (),
+            {"models": [type("Model", (), {"model": name})() for name in self.models]},
+        )()
 
     def show(self, model):  # noqa: ANN001, ARG002
         if self.show_raises is not None:

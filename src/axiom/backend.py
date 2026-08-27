@@ -82,6 +82,8 @@ def call_from_text(text: str, known: set[str]) -> Call | None:
 class ModelBackend(Protocol):
     """What axiom needs a model to do. Implemented here, and by the test stubs."""
 
+    def installed(self) -> list[str]: ...
+
     def model_info(self, model: str) -> dict | None: ...
 
     def supports_tools(self, model: str) -> bool: ...
@@ -102,6 +104,28 @@ class OllamaBackend:
 
     def __init__(self, host: str) -> None:
         self._client = ollama.Client(host=host)
+
+    def installed(self) -> list[str]:
+        """Every model on this host, in the order the host gave them.
+
+        Deliberately does *not* swallow the way `model_info` and `supports_tools`
+        do. Those two return None/False on failure, and that is precisely why a
+        missing model is silent today: the caller cannot tell "the host said no"
+        from "the host is not there." Here the difference is the whole point -
+        unreachable and reachable-but-empty are different messages with
+        different advice - so a failure is raised and the caller decides.
+
+        Sorting is the caller's job, not the host's. Ollama returns models
+        newest-modified first, so a single `ollama pull` reorders this list;
+        anything the user picks by number has to be sorted before it is shown.
+        """
+        try:
+            # `.model`, not `.name`. The raw /api/tags JSON carries both and
+            # they are equal, but the client's model object exposes only this
+            # one - measured, not assumed.
+            return [entry.model for entry in self._client.list().models]
+        except (ollama.ResponseError, ConnectionError, httpx.HTTPError) as lost:
+            raise ConnectionLost(str(lost)) from lost
 
     def model_info(self, model: str) -> dict | None:
         """The model's raw model_info, or None if it cannot be reached or asked."""

@@ -1,11 +1,18 @@
 """A terminal chat with a local Ollama model."""
 
 import json
+import sys
 
-from . import backend, compaction, config, context, servers, terminal, tools
+from . import backend, compaction, config, context, models, servers, terminal, tools
 from .backend import Call, ModelBackend
 
 EXIT_COMMANDS = {"/exit", "/quit"}
+
+# What a run exits with when it could not start at all. Distinct from 0, which
+# every ordinary way out uses - /exit, end of input, Ctrl-C - because a script
+# that pipes into axiom needs to tell "it ran and finished" from "it never got
+# a model." Nothing in axiom exited non-zero before this.
+CANNOT_START = 2
 
 # A turn may go model -> tool -> model more than once, but not forever: a model
 # that keeps calling tools without answering would otherwise never hand back.
@@ -47,18 +54,80 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
         attached.stop()
 
 
+def _settle_model(
+    model_backend: ModelBackend, settings: config.Settings, interactive: bool
+) -> str | None:
+    """Which model this run uses. None means the user left before choosing.
+
+    Everything here happens before a server is started or a tool is declared
+    (AC 1). Two conditions end the run outright - a host that cannot be reached
+    and a host with nothing on it - because neither has a model to offer and
+    carrying on would mean inventing one, which is the whole defect this
+    replaces.
+    """
+    try:
+        available = model_backend.installed()
+    except backend.BackendError as unreachable:
+        terminal.report_no_host(settings.host, unreachable)
+        sys.exit(CANNOT_START)
+    if not available:
+        terminal.report_no_models(settings.host)
+        sys.exit(CANNOT_START)
+
+    if models.unreadable():
+        terminal.note_choice_unreadable(str(models.DEFAULT_CHOICE_FILE))
+
+    decision = models.choose(settings.model, available, settings.host, interactive)
+    if decision.missing:
+        terminal.note_model_missing(decision.missing, settings.host)
+    if decision.forgotten:
+        terminal.note_choice_forgotten(decision.forgotten, settings.host)
+    if decision.model is not None:
+        terminal.note_settled(decision.model, decision.reason)
+        return decision.model
+
+    # Only a pick made here is remembered (AC 14). Everything above this line
+    # settled without the user choosing anything - a flag, the single-model
+    # case, the non-terminal fallback - and none of them writes.
+    terminal.show_models(decision.installed, settings.host, decision.default)
+    while True:
+        answer = terminal.ask_model()
+        if answer is None:
+            return None
+        chosen = models.picked(answer, decision.installed, decision.default)
+        if chosen is not None:
+            _remember(chosen, settings.host)
+            return chosen
+        terminal.refuse_model(answer, len(decision.installed))
+
+
+def _remember(chosen: str, host: str) -> None:
+    """Save the pick, and say so only when there is something worth saying."""
+    fresh = not models.DEFAULT_CHOICE_FILE.parent.exists()
+    problem = models.write_choice(chosen, host)
+    terminal.note_choice_saved(
+        problem, str(models.DEFAULT_CHOICE_FILE.parent) if fresh and not problem else ""
+    )
+
+
 def _chat(
     settings: config.Settings,
     attached: "servers.Servers",
     using: ModelBackend | None,
 ) -> None:
     model_backend = using or backend.OllamaBackend(settings.host)
+    interactive = sys.stdin.isatty()
+    model = _settle_model(model_backend, settings, interactive)
+    if model is None:
+        # Left at the list. Nothing has started yet, so there is nothing to
+        # unwind and nothing went wrong - status 0, like any other way out.
+        return
 
     # Asked once, before anything is sent: a model with no tool support is told
     # nothing about tools rather than being sent some and refusing. `available`
     # is None for "cannot", 0 for "switched off", a count otherwise - three
     # states the startup line reports differently.
-    capable = model_backend.supports_tools(settings.model)
+    capable = model_backend.supports_tools(model)
     declarations = tools.declarations() if capable and settings.tools_enabled else None
     if declarations is not None and not settings.web_enabled:
         declarations = [
@@ -87,9 +156,7 @@ def _chat(
         page_characters=settings.page_characters,
     )
 
-    effective_context = context.effective_context(
-        model_backend.model_info(settings.model)
-    )
+    effective_context = context.effective_context(model_backend.model_info(model))
     if settings.debug_max_context is not None:
         effective_context = settings.debug_max_context
 
@@ -97,7 +164,7 @@ def _chat(
         {"num_ctx": effective_context} if effective_context is not None else None
     )
     terminal.announce(
-        settings.model,
+        model,
         settings.host,
         effective_context,
         overridden=settings.debug_max_context is not None,
@@ -141,7 +208,7 @@ def _chat(
             continue
 
         messages, kept_pairs, forgotten = compaction.maybe_compact(
-            model_backend, settings.model, messages, running_usage, effective_context
+            model_backend, model, messages, running_usage, effective_context
         )
         if kept_pairs is not None:
             terminal.note_compaction(kept_pairs)
@@ -206,7 +273,7 @@ def _chat(
             pending = messages.pop()
             messages, squeezed, let_go = compaction.compact_to_fit(
                 model_backend,
-                settings.model,
+                model,
                 messages,
                 effective_context,
                 len(instructions["content"]) + len(pending["content"]),
@@ -252,7 +319,7 @@ def _chat(
                 # for every model that behaves.
                 withholding = declarations is not None
                 for event in model_backend.stream(
-                    settings.model, to_send(messages), chat_options, declarations
+                    model, to_send(messages), chat_options, declarations
                 ):
                     if isinstance(event, Call):
                         calls.append(event)
