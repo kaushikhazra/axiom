@@ -530,7 +530,7 @@ class Rendered:
         """
         if self._fence is None and _looks_like_a_table_row(line):
             self._table.append(line)
-            self._write("\r\x1b[K")  # take back the row that was typed here
+            self._write(self._erase(line))  # take back the row typed here
             return
         self._settle_table()
         self._commit(line)
@@ -544,12 +544,49 @@ class Rendered:
             self._write("\r\x1b[K" + line + "\n")
 
     def _commit(self, line: str) -> None:
-        """Write one finished line, styled, replacing whatever was echoed.
+        """Write one finished line, styled, replacing whatever was echoed."""
+        self._write(self._erase(line) + self._styled(line) + "\n")
 
-        `\\r` and erase-to-end-of-line, never cursor-up: the write stays on the
-        line being typed and cannot reach a line already committed.
+    def _erase(self, typed: str) -> str:
+        """Take back the line being typed - all of it, however tall it got.
+
+        `\\r` and erase-to-end-of-line are enough only while the echoed line fits
+        the window. A model writes prose as one long line, so it usually does
+        not: at 80 columns a paragraph wraps to three rows, `\\r` returns to the
+        start of the *third*, and the two rows above it keep the raw text while
+        the styled line is written below them. **The paragraph appears twice.**
+
+        Cycles 2 and 3 both marked AC 7 met on the strength of "no cursor-up is
+        ever emitted", counted in the byte stream. That promise was a proxy for
+        the criterion and it was the wrong proxy: it held perfectly while the
+        screen showed every long paragraph twice. Found by modelling a terminal
+        rather than counting escapes.
+
+        So the cursor does move up - by exactly the number of rows *this
+        unfinished line* occupies, which cannot reach a line already committed.
+        That is what AC 7 asks for: nothing shown is repositioned, and nothing
+        is printed twice. `\\x1b[J` then clears from there down in one go.
         """
-        self._write("\r\x1b[K" + self._styled(line) + "\n")
+        rows = self._rows_used(typed)
+        return "\r" + (f"\x1b[{rows}A" if rows else "") + "\x1b[J"
+
+    def _rows_used(self, typed: str) -> int:
+        """Rows below the first that the echoed text has spilled onto.
+
+        `cell_len`, not `len`: a wide character occupies two columns, and
+        counting it as one would leave a row behind. Assumes the terminal
+        defers its wrap - it stays on the last column until one more character
+        arrives - which is what every terminal from this century does.
+        """
+        if self._echoed <= 0:
+            return 0
+        try:
+            from rich.cells import cell_len
+
+            width = max(1, _width())
+            return max(0, (cell_len(typed[: self._echoed]) - 1) // width)
+        except Exception:
+            return 0
 
     def _styled(self, line: str) -> str:
         """One finished line, as it should look.

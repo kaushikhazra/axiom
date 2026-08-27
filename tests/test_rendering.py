@@ -17,6 +17,7 @@ import pytest
 from axiom import config, main, terminal
 from axiom.terminal import Rendered
 from conftest import StubBackend, feed, history
+from screen import shown
 
 
 REPLY = (
@@ -24,6 +25,14 @@ REPLY = (
     "- it uses recursion\n- it handles only non-negative integers\n\n"
     "```python\ndef factorial(n):\n    if n == 0:\n        return 1\n"
     "    return n * factorial(n - 1)\n```\n\nThat is `factorial` done.\n"
+)
+
+# One line, longer than any window. This is how a model writes a paragraph, and
+# it is the input that showed AC 7 was not met at all.
+LONG_PARAGRAPH = (
+    "This is one very long paragraph on a single line, the way a model actually "
+    "writes prose, and it is far wider than any terminal window someone would "
+    "have open while they are reading it.\n"
 )
 
 
@@ -50,13 +59,56 @@ def displayed(text: str) -> list[str]:
 # --- While it is still arriving -----------------------------------------
 
 
-def test_no_line_is_ever_moved(*_):
-    """AC 7, as the strongest measurable form of it.
+@pytest.mark.parametrize("width", [40, 80, 200])
+def test_nothing_is_shown_twice(width, monkeypatch):
+    """AC 7, measured on the screen rather than in the byte stream.
 
-    Not "does not move" but **no cursor-up is emitted at all**. Every
-    published streaming-markdown implementation fails this - Rich's `Live`
-    emits `CURSOR_UP` once per line of the previous render on every chunk.
+    **This is the test that matters in this file.** Cycles 2 and 3 asserted
+    AC 7 by counting cursor-up sequences and finding none - a promise that held
+    perfectly while every paragraph longer than the window was being drawn on
+    screen *twice*. A model writes prose as one long line, so that was most
+    replies.
+
+    A byte-stream assertion cannot see it: the duplication is what a terminal
+    does with a `\\r` that returns to the start of the last of three wrapped
+    rows, leaving the two above it untouched. So the screen is modelled.
     """
+    on_screen = shown(REPLY + LONG_PARAGRAPH, width=width, monkeypatch=monkeypatch)
+
+    # Rows joined with nothing between them: a wrapped line is one line of
+    # text split across rows, so a separator would break every phrase that
+    # happens to straddle a row edge and make the count meaningless.
+    flat = "".join(on_screen)
+    assert flat.count("This is one very long paragraph") == 1, "shown twice"
+    assert flat.count("def factorial(n):") == 1, "the code was shown twice"
+    for word in ("recursion", "non-negative"):
+        assert word in flat, f"{word} was lost"
+
+
+def test_a_line_of_wide_characters_is_not_shown_twice(monkeypatch):
+    """AC 7 and AC 24 together.
+
+    A CJK character occupies two columns, so a line of them wraps at half the
+    character count. Measuring the line's height with `len` instead of a cell
+    count leaves a row behind - the same duplication as before, for anyone
+    whose model answers in Chinese or Japanese.
+    """
+    wide = "这是一个很长的句子" * 6
+    on_screen = shown(wide + "\n", width=40, monkeypatch=monkeypatch)
+
+    assert "".join(on_screen) == wide, "the line came out doubled or short"
+
+
+def test_the_cursor_never_climbs_out_of_the_line_being_typed(monkeypatch):
+    """AC 7, the invariant that makes the above true rather than lucky.
+
+    The cursor does move up now - by the rows the *unfinished* line occupies,
+    which is how its own wrapped rows get taken back. What must never happen is
+    a move that reaches a line already committed. At a width wider than any
+    line here, that budget is zero and any cursor-up at all is a violation.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 500)
+
     assert re.findall(r"\x1b\[\d*A", stream(REPLY * 3)) == []
 
 
