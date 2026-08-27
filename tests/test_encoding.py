@@ -128,6 +128,40 @@ def test_no_environment_variable_name_carries_the_mark(tmp_path, monkeypatch):
     assert servers[0].env == {"TOKEN": "not-a-real-secret"}
 
 
+def test_no_value_anywhere_in_a_larger_file_carries_the_mark(tmp_path):
+    """AC 4, on the paths the first pass did not reach.
+
+    A mark lands on whatever comes first, so a file whose first key is *not*
+    `mcpServers`, with more than one server and a `tools` list, exercises the
+    places a decoder-level fix should reach and a text-level one would not.
+    """
+    where = written(
+        tmp_path / "mcp.json",
+        {
+            "notMcpServers": "decoy",
+            "mcpServers": {
+                "alpha": {
+                    "command": "a",
+                    "args": ["x"],
+                    "tools": ["ping", "shout"],
+                    "env": {"K": "v"},
+                },
+                "beta": {"command": "b"},
+            },
+        },
+        True,
+    )
+
+    servers, problems = config.read_servers(where)
+
+    assert problems == ()
+    assert [s.name for s in servers] == ["alpha", "beta"]
+    assert servers[0].tools == ("ping", "shout")
+    assert servers[0].env == {"K": "v"}
+    everything = repr([(s.name, s.command, s.args, s.tools, s.env) for s in servers])
+    assert "﻿" not in everything
+
+
 def test_no_host_key_carries_the_mark(tmp_path):
     """AC 4. The remembered choice is keyed by host - a marked key never matches."""
     where = written(tmp_path / "model.json", {"http://h:1": "ornith:9b"}, True)
@@ -165,8 +199,38 @@ def test_rewriting_a_marked_file_removes_the_mark(tmp_path):
 # --- Still failing when it should ---------------------------------------
 
 
+def test_rewriting_a_marked_and_malformed_file_leaves_no_mark(tmp_path):
+    """AC 6. `write_choice` replaces a document it could not parse.
+
+    The awkward case: a file that has a mark *and* is rubbish. It takes the
+    replacement path rather than the merge path, so it is the one route where
+    a mark could survive into a file axiom wrote.
+    """
+    where = tmp_path / "model.json"
+    where.write_bytes(BOM + b"]] not json at all [[")
+    assert models.unreadable(where) is True
+
+    assert models.write_choice("a:1b", "http://h:1", where) is None
+
+    raw = where.read_bytes()
+    assert BOM not in raw
+    assert json.loads(raw.decode("utf-8")) == {"http://h:1": "a:1b"}
+    assert models.unreadable(where) is False
+
+
 def test_rubbish_is_still_reported_in_todays_words(tmp_path):
-    """AC 7. A permissive decoder must not start accepting what it should refuse."""
+    """AC 7. A permissive decoder must not start accepting what it should refuse.
+
+    The message has to name the *real* malformation. A strict decoder rejects
+    this file at the mark, before it ever reaches the JSON - and reports
+    `could not be read (Unexpected UTF-8 BOM...)`, which satisfies any
+    assertion on `could not be read`. So that substring alone passes whether
+    the fix is present or not, and proves nothing.
+
+    Found by the cycle-2 cold read, and it is the third time this exact shape
+    has appeared: #48 AC 33 asserted `saved choice` and passed on a sentence
+    that was gibberish.
+    """
     where = tmp_path / "mcp.json"
     where.write_bytes(BOM + b"{ not json at all")
 
@@ -176,6 +240,9 @@ def test_rubbish_is_still_reported_in_todays_words(tmp_path):
     assert len(problems) == 1
     assert str(where) in problems[0]
     assert "could not be read" in problems[0]
+    # The cause named is the broken JSON, not the mark the decoder handled.
+    assert "BOM" not in problems[0], "rejected for the mark rather than the rubbish"
+    assert "property name" in problems[0]
 
 
 def test_a_document_that_is_not_an_object_is_still_reported(tmp_path):
