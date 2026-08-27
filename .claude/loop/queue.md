@@ -17,13 +17,13 @@ cycles resolving each other's conflicts.
 | 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **done** - merged in PR #50, 3 cycles, 25 minutes, all 38 criteria (the cycle-3 cold read found five, including AC 29 with no real test at all - the stub discarded the model name it was handed) |
 | 10 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session model switch | `49-model-switch` | **done** - merged in PR #51, 3 cycles, 75 minutes, all 34 criteria (the cycle-3 cold read found five, three of them criteria read too loosely and two with no test at all) |
 | 11 | [#57](https://github.com/kaushikhazra/axiom/issues/57) config file encoding | `57-config-encoding` | **done** - merged in PR #63, 2 cycles, 21 minutes, all 9 criteria (the cycle-2 cold read found a test passing for the wrong reason - a strict decoder rejects a rubbish file at the mark and reports 'could not be read' too) |
-| 12 | [#55](https://github.com/kaushikhazra/axiom/issues/55) announce the file, not the folder | `55-announce-the-file` | **running** - started 2026-08-28 00:42 IST, fail-safe 04:42 IST, 11 criteria |
-| 13 | [#56](https://github.com/kaushikhazra/axiom/issues/56) the same facts after a switch | `56-same-facts` | **queued** - 12 criteria |
+| 12 | [#55](https://github.com/kaushikhazra/axiom/issues/55) announce the file, not the folder | `55-announce-the-file` | **done** - merged in PR #64, 2 cycles, 29 minutes, all 11 criteria (the cycle-2 cold read found AC 1 and AC 7 conflicting over an empty file; resolved in AC 7's favour and recorded in a test) |
+| 13 | [#56](https://github.com/kaushikhazra/axiom/issues/56) the same facts after a switch | `56-same-facts` | **running** - started 2026-08-28 01:11 IST, fail-safe 05:11 IST, 12 criteria |
 | 14 | [#61](https://github.com/kaushikhazra/axiom/issues/61) what the tools cost | `61-tool-cost` | **queued** - 12 criteria |
 | 15 | [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | `62-summary-facts` | **queued** - 12 criteria |
 | 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **queued** - 29 criteria, one new dependency |
 
-**Row 12 is running. Every row through 16 runs, one after another, until the queue is empty.**
+**Row 13 is running. Every row through 16 runs, one after another, until the queue is empty.**
 
 **All six came out of the first manual pass**, 2026-08-27, and that is the point worth keeping.
 The suite was 440 green and hermetic, six loops had each survived a hostile cold read, and one
