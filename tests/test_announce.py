@@ -127,6 +127,49 @@ def test_the_file_decides_and_nothing_is_remembered_between_runs(
     assert "remembering this choice in" in again.out
 
 
+def test_an_empty_file_counts_as_the_file_being_there(capsys, monkeypatch, axiom_dir):
+    """AC 7 against AC 1, on a state the two criteria read differently.
+
+    An empty `model.json` holds no remembered choice - `read_choice` returns
+    None and `unreadable` returns True - so AC 1 ("the first time axiom writes
+    its remembered choice") argues for announcing. AC 7 says the announcement
+    is decided by "the file being there", and it is there.
+
+    **AC 7 wins, deliberately.** The alternative announces on every run for as
+    long as the file stays unusable, which is noise on top of a problem rather
+    than help. And the user is not left unaware: an unusable file already
+    produces its own line, from #48 AC 33 - it names the path and says axiom is
+    carrying on as though nothing had been chosen. They are told about the
+    file, just not by this line.
+    """
+    axiom_dir.mkdir(parents=True)
+    (axiom_dir / "model.json").write_text("", encoding="utf-8")
+
+    _, out = run(capsys, monkeypatch, ["2"])
+
+    assert "remembering this choice in" not in out.out
+    # But not silent about it, which is what makes the trade acceptable.
+    assert "could not be read" in out.err
+    assert json.loads((axiom_dir / "model.json").read_text(encoding="utf-8"))
+
+
+def test_a_directory_where_the_file_should_be_fails_without_claiming_a_write(
+    capsys, monkeypatch, axiom_dir
+):
+    """AC 11, on the strangest state a path can be in.
+
+    `exists()` is true for a directory, so nothing is announced - and the write
+    then fails. The criterion that matters is that the failure is reported and
+    no file is claimed.
+    """
+    (axiom_dir / "model.json").mkdir(parents=True)
+
+    _, out = run(capsys, monkeypatch, ["2"])
+
+    assert "could not remember this choice" in out.err
+    assert "remembering this choice in" not in out.out
+
+
 # --- Where it can happen ------------------------------------------------
 
 
@@ -221,7 +264,8 @@ def test_the_negatives_are_not_vacuous(capsys, monkeypatch, axiom_dir):
 
 
 def test_a_failed_save_says_so_and_claims_no_file(capsys, monkeypatch, axiom_dir):
-    """AC 11. Two assertions, and the second is the one a careless fix drops."""
+    """AC 11, with the directory failing. Two assertions, and the second is the
+    one a careless fix drops."""
 
     def refuse(*args, **kwargs):
         raise OSError("read-only file system")
@@ -232,4 +276,28 @@ def test_a_failed_save_says_so_and_claims_no_file(capsys, monkeypatch, axiom_dir
 
     assert "could not remember this choice" in out.err
     assert "remembering this choice in" not in out.out, "claimed a file it never wrote"
+    assert not (axiom_dir / "model.json").exists()
+
+
+def test_a_failed_write_says_so_too(capsys, monkeypatch, axiom_dir):
+    """AC 11, with the *write* failing rather than the directory.
+
+    A different failure with a different shape: the folder is created, so
+    `.axiom/` now exists while `model.json` does not. An implementation that
+    decided what to say from the folder would be at its most wrong here.
+    """
+    real = models.Path.write_text
+
+    def refuse(self, *args, **kwargs):
+        if self.name == "model.json":
+            raise OSError("read-only file system")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(models.Path, "write_text", refuse)
+
+    _, out = run(capsys, monkeypatch, ["2"])
+
+    assert "could not remember this choice" in out.err
+    assert "remembering this choice in" not in out.out
+    assert axiom_dir.exists(), "the folder was not created, so this tested nothing"
     assert not (axiom_dir / "model.json").exists()
