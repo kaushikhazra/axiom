@@ -5,6 +5,7 @@ this module to say things rather than saying them itself, which is what keeps
 one module from both talking to a backend and writing to a terminal.
 """
 
+import re
 import sys
 
 from .backend import ConnectionLost
@@ -459,11 +460,174 @@ def end_turn() -> None:
     print()
 
 
+class Rendered:
+    """A reply turned into formatted lines, each written exactly once.
+
+    The shape is settled by measurement, in `logs/cycle-1.md`. Rich's `Live` -
+    which every published streaming-markdown implementation uses - emits
+    `CURSOR_UP` and `ERASE_IN_LINE` once per line of the previous render on
+    *every* chunk, and truncates to the screen height with an ellipsis when the
+    render is taller than the terminal. On a long reply that means only the last
+    screenful is ever visible while it streams, and everything above it is
+    rewritten continuously.
+
+    So `Live` is not used. A line is written when it is complete, with an
+    ordinary write, and from that moment it belongs to the terminal's scrollback
+    and is never addressed again. **No cursor-up sequence is ever emitted**,
+    which is a stronger promise than "does not move" and is what the tests
+    assert.
+
+    The line still being typed is echoed plainly as it arrives, so no character
+    waits for the one after it, and it is re-drawn *in place* with a carriage
+    return once it is complete and can be styled. That redraw touches one line,
+    never leaves it, and never reaches anything already committed - which is the
+    resolution of AC 7 against AC 10, recorded in the cycle log.
+    """
+
+    def __init__(self, write=None) -> None:
+        self._write = write or (lambda text: print(text, end="", flush=True))
+        self._line = ""  # the line being typed, not yet complete
+        self._echoed = 0  # how much of it the user has already seen
+        self._fence: str | None = None  # the language of an open fence
+
+    def feed(self, text: str) -> None:
+        """Take a fragment of the reply and show what can now be shown."""
+        self._line += text
+        while "\n" in self._line:
+            line, _, self._line = self._line.partition("\n")
+            self._commit(line)
+            self._echoed = 0
+        # Whatever is left is incomplete. Echo the part not yet seen, plainly -
+        # holding it back until the newline would make output arrive a line at
+        # a time, which is visibly slower than today (AC 10).
+        if len(self._line) > self._echoed:
+            self._write(self._line[self._echoed :])
+            self._echoed = len(self._line)
+
+    def finish(self) -> None:
+        """Flush a reply that ended without a final newline."""
+        if self._line:
+            self._commit(self._line)
+        self._line, self._echoed = "", 0
+        self._fence = None
+
+    def _commit(self, line: str) -> None:
+        """Write one finished line, styled, replacing whatever was echoed.
+
+        `\\r` and erase-to-end-of-line, never cursor-up: the write stays on the
+        line being typed and cannot reach a line already committed.
+        """
+        self._write("\r\x1b[K" + self._styled(line) + "\n")
+
+    def _styled(self, line: str) -> str:
+        """One finished line, as it should look.
+
+        Fence markers open and close a block. Inside one, the line is code and
+        is left as it is - highlighting a single line in isolation guesses at
+        context it does not have, and guessing wrongly about code is worse than
+        not colouring it.
+
+        Nothing below may cost the user the answer (AC 28). `_as_markdown`
+        guards itself, but the guard is repeated here because the promise is
+        about *any* failure in styling, not about one function's internals -
+        and the day someone adds a second renderer above this line, the promise
+        should already hold.
+        """
+        try:
+            if line.lstrip().startswith("```"):
+                language = line.lstrip()[3:].strip()
+                self._fence = None if self._fence is not None else (language or "")
+                return f"\x1b[2m{line}\x1b[0m"
+            if self._fence is not None:
+                return f"\x1b[36m{line}\x1b[0m"
+            return _as_markdown(line)
+        except Exception:
+            return line
+
+
+def _as_markdown(line: str) -> str:
+    """One line through Rich, without letting it own the cursor or the width.
+
+    Rich pads a rendering to the console width and puts a blank line before a
+    list item; neither belongs here, where the caller is placing lines itself.
+    A line Rich cannot make sense of comes back as it went in - never dropped,
+    which is AC 5 and the failure mode markdown renderers are prone to.
+
+    `legacy_windows=False` is not cosmetic. Rich detects the old Windows console
+    and, believing it cannot emit a hyperlink, renders `[the docs](https://...)`
+    as the four words `see the docs for more` - **the address is gone**, with no
+    way for the user to read or copy it. Measured, not assumed: with the flag it
+    emits the OSC-8 sequence and the address survives. Anything axiom runs on is
+    a terminal from this decade.
+    """
+    if not line.strip():
+        return line
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.markdown import Markdown
+
+        buffer = StringIO()
+        Console(
+            file=buffer,
+            force_terminal=True,
+            legacy_windows=False,  # or a link's address is dropped; see above
+            width=_width(),
+            soft_wrap=True,
+        ).print(Markdown(line), end="")
+        shown = buffer.getvalue().strip("\n")
+        return _unpadded(shown) if shown.strip() else line
+    except Exception:
+        # AC 28. A formatting failure costs the formatting, never the answer.
+        return line
+
+
+# Trailing spaces Rich adds to pad a block element - a quote, a heading - out to
+# the console width. A line padded to exactly the width, plus the newline this
+# module writes, wraps to a blank line on most terminals (AC 12). `rstrip` alone
+# does not reach them: the padding sits *before* the closing reset sequence.
+_PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)")
+
+
+def _unpadded(shown: str) -> str:
+    return _PADDING.sub("", shown)
+
+
+def _width() -> int:
+    """The terminal's width, or a sane column count when there is no terminal."""
+    try:
+        import shutil
+
+        return max(20, shutil.get_terminal_size().columns)
+    except Exception:
+        return 80
+
+
+_reply: "Rendered | None" = None
+
+
 def show_piece(text: str) -> None:
-    print(text, end="", flush=True)
+    """A fragment of the model's reply, as it arrives.
+
+    Plain and unbuffered when output is not a terminal - byte for byte what a
+    redirected or piped run produced before any of this existed, which is what
+    keeps the golden transcript and `axiom | grep` working.
+    """
+    global _reply
+    if not sys.stdout.isatty():
+        print(text, end="", flush=True)
+        return
+    if _reply is None:
+        _reply = Rendered()
+    _reply.feed(text)
 
 
 def end_reply() -> None:
+    global _reply
+    if _reply is not None:
+        _reply.finish()
+        _reply = None
     print()
 
 
