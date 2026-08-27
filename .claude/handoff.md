@@ -8,7 +8,7 @@ like**, so its "start here" section was wrong and is replaced below.
 
 ## Where things stand
 
-`master` after PR #51. **419 tests, green and hermetic.** No open issues, no cron running,
+`master` after PR #53. **440 tests, green and hermetic.** No open issues, no cron running,
 `.claude/loop/queue.md` says the queue is empty.
 
 | issue | PR | cycles | what it changed |
@@ -19,6 +19,7 @@ like**, so its "start here" section was wrong and is replaced below.
 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | [#47](https://github.com/kaushikhazra/axiom/pull/47) | 4 | |
 | [#48](https://github.com/kaushikhazra/axiom/issues/48) the model the host has | [#50](https://github.com/kaushikhazra/axiom/pull/50) | 3 | **no default model any more** |
 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session switch | [#51](https://github.com/kaushikhazra/axiom/pull/51) | 3 | **`/model`** |
+| [#52](https://github.com/kaushikhazra/axiom/issues/52) tool-capable first | [#53](https://github.com/kaushikhazra/axiom/pull/53) | 1 | **list order** |
 
 ## What changed about starting it
 
@@ -67,8 +68,9 @@ Still never exercised:
 uv run --directory C:/Projects/axiom axiom
 ```
 
-Models on this machine: `gemma2:2b` (**no tool support** - useful for testing that path, and
-what an unchosen run now lands on), `gemma4:e2b`, `ornith:9b`, `qwen2.5:7b`, `qwen2.5-coder:7b`.
+Models on this machine, in the order the list now offers them: `gemma4:e2b`, `ornith:9b`
+(**see known issue 1**), `qwen2.5-coder:7b`, `qwen2.5:7b`, then `gemma2:2b` - the last being
+the only one with **no tool support**, and useful for testing that path deliberately.
 
 **Work in the sandbox, not the repo:**
 
@@ -92,9 +94,10 @@ else gets its own choice rather than a model that host may not have.
 
 ## What to try, and what to watch for
 
-**The model list, first run in a fresh directory.** Watch: is the order what you expect, does
-`(default)` land where you want it, and is `remembering this choice in .axiom` welcome or
-intrusive?
+**The model list, first run in a fresh directory.** Models that can call tools come first, each
+group in name order, and only a mixed host annotates the rows. Watch: is `(default)` where you
+want it, is `remembering this choice in .axiom` welcome or intrusive, and does the list feel
+slow on a host with many models (see known issue 2)?
 
 **Switching mid-conversation, for real.** Ask a 2B model something it fumbles, `/model` up to
 `ornith:9b`, and ask it to carry on. Watch whether the bigger model actually uses what came
@@ -110,19 +113,24 @@ forgetting N` drops, and whether the model notices.
 
 ## Known, recorded honestly, not bugs to re-report
 
-1. **An unchosen run lands on `gemma2:2b`**, which is alphabetically first here and the only
-   model with no tool support. Announced, one keystroke to change, remembered after that.
-   **This is the most likely thing to want changed** - Kaushik asked for it as a change request
-   rather than a loop decision. Sorting tool-capable models first is the obvious fix.
-2. **A small model will claim it accepted a limit change it cannot make.** `qwen2.5:7b`
+1. **`ornith:9b` crashes the Ollama server on load** - `CUDA error: shared object
+   initialization failed`, `llama-server process has terminated: 0xc0000409`. Not axiom's, and
+   axiom reports it as a failed turn and keeps the session, but **do not lean on that model for
+   manual testing** until it is looked at. It is otherwise the largest-context model here.
+2. **Establishing tool support costs one request per model** on any run that shows the list or
+   falls back - about 75 ms each, 377 ms for five. The Python client drops the `capabilities`
+   array that `/api/tags` already returns, so there is no cheaper way through the library. If a
+   host with thirty models feels slow to start, that is this, and `backend.tool_capable` says
+   what to do about it.
+3. **A small model will claim it accepted a limit change it cannot make.** `qwen2.5:7b`
    confirmed a 300-second timeout and then ran `sleep 120`. The limit holds structurally; axiom
    does not correct the claim. A story about that would be new scope.
-3. **The MCP call bound stops axiom waiting, not the server working.**
-4. **A server's stderr is discarded** - deliberate, but a misbehaving server gives you no
+4. **The MCP call bound stops axiom waiting, not the server working.**
+5. **A server's stderr is discarded** - deliberate, but a misbehaving server gives you no
    diagnostic. First thing to loosen while debugging.
-5. **The "conversation too large" refusal is still unreachable.** #42's last resort drops the
+6. **The "conversation too large" refusal is still unreachable.** #42's last resort drops the
    summary instead. Kept deliberately.
-6. **`.axiom/model.json` appears in whatever directory you run from.** Gitignored here; in
+7. **`.axiom/model.json` appears in whatever directory you run from.** Gitignored here; in
    someone else's project it is a new folder they did not ask for. axiom says so the first time.
 
 ## If manual testing turns up work
