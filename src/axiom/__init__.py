@@ -88,7 +88,18 @@ def _settle_model(
     if models.unreadable():
         terminal.note_choice_unreadable(str(models.DEFAULT_CHOICE_FILE))
 
-    decision = models.choose(settings.model, available, settings.host, interactive)
+    # Passed as a callable, not a set: establishing tool support costs one
+    # request per model, and `choose` only asks on the paths where the order
+    # decides something the user did not (#52 AC 10).
+    asked: dict[str, set[str]] = {}
+
+    def capable() -> set[str]:
+        asked["models"] = model_backend.tool_capable(list(available))
+        return asked["models"]
+
+    decision = models.choose(
+        settings.model, available, settings.host, interactive, capable=capable
+    )
     if decision.missing:
         terminal.note_model_missing(decision.missing, settings.host)
     if decision.forgotten:
@@ -100,7 +111,9 @@ def _settle_model(
     # Only a pick made here is remembered (AC 14). Everything above this line
     # settled without the user choosing anything - a flag, the single-model
     # case, the non-terminal fallback - and none of them writes.
-    terminal.show_models(decision.installed, settings.host, decision.default)
+    terminal.show_models(
+        decision.installed, settings.host, decision.default, capable=asked.get("models")
+    )
     while True:
         try:
             answer = terminal.ask_model()
@@ -223,7 +236,13 @@ def _switch_model(
     implementation is how two lists drift apart.
     """
     try:
-        available = models.sorted_models(model_backend.installed())
+        listed = model_backend.installed()
+        # Ordered the same way the startup list is (#49 AC 2), which now means
+        # paying for tool support here too. Worth it: the switch list is shown
+        # precisely so the user can pick, and a model that cannot call tools
+        # sitting at the top is the thing #52 exists to stop.
+        can_use_tools = model_backend.tool_capable(listed)
+        available = models.sorted_models(listed, can_use_tools)
     except backend.BackendError as unreachable:
         # Not fatal here, unlike at startup. There is a working session with a
         # working model; failing to list the alternatives is a reason to stay
@@ -243,7 +262,9 @@ def _switch_model(
     # Shown even when there is nothing to choose (AC 27) and even when the
     # current model is not in it (AC 31) - the list is how the user sees where
     # they are, and withholding it to save a line leaves them guessing.
-    terminal.show_models(available, settings.host, run.model, current=True)
+    terminal.show_models(
+        available, settings.host, run.model, current=True, capable=can_use_tools
+    )
     if run.model not in available:
         # AC 31. It cannot appear in the list - the list holds what the host
         # reports and nothing else - so the fact that it is still the model in

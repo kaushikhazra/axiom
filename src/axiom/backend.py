@@ -84,6 +84,8 @@ class ModelBackend(Protocol):
 
     def installed(self) -> list[str]: ...
 
+    def tool_capable(self, models: list[str]) -> set[str]: ...
+
     def model_info(self, model: str) -> dict | None: ...
 
     def supports_tools(self, model: str) -> bool: ...
@@ -126,6 +128,38 @@ class OllamaBackend:
             return [entry.model for entry in self._client.list().models]
         except (ollama.ResponseError, ConnectionError, httpx.HTTPError) as lost:
             raise ConnectionLost(str(lost)) from lost
+
+    def tool_capable(self, models: list[str]) -> set[str]:
+        """Which of these can call tools. Asked once, for the whole list.
+
+        One `show()` per model, which is an N+1 against a listing that already
+        knew the answer: `/api/tags` returns a `capabilities` array per model,
+        and the Python client throws it away - `ListResponse.Model` declares
+        only `model`, `modified_at`, `digest`, `size` and `details`, and the
+        base model does not keep extras, so `model_extra` is None. Measured on
+        ollama 0.6.2. There is no way to reach it through the client.
+
+        Hand-rolling a request to `/api/tags` would avoid the N+1, and is not
+        worth a second way of talking to Ollama for a field one library version
+        may expose. **If a later `ollama` adds `capabilities` to the listing,
+        this becomes one call and should.**
+
+        Measured at about 75 ms per model locally - 377 ms for five - so the
+        caller asks only when a choice is actually being made, never on the
+        path where the user named a model that exists.
+
+        A model that cannot be asked is simply absent from the result. It is
+        not a failure worth ending a run over, and treating "unknown" as "no
+        tools" is the reading that never overstates what a model can do.
+        """
+        capable = set()
+        for model in models:
+            try:
+                if "tools" in (self._client.show(model).capabilities or []):
+                    capable.add(model)
+            except (ollama.ResponseError, ConnectionError, httpx.HTTPError):
+                continue
+        return capable
 
     def model_info(self, model: str) -> dict | None:
         """The model's raw model_info, or None if it cannot be reached or asked."""
