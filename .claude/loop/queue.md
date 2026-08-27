@@ -14,7 +14,7 @@ cycles resolving each other's conflicts.
 | 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **done** - merged in PR #45, 4 cycles, all 12 criteria (AC 9 found decorative by the cycle-4 cold read after two cycles called it met) |
 | 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | **done** - merged in PR #46, 4 cycles, all 8 criteria (the cycle-3 cold read found the fix compacting away the user's own message, and AC 4 still violated) |
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | **done** - merged in PR #47, 4 cycles, all 30 criteria (the cycle-4 cold read found AC 6's routing broken for a server whose name contains the separator, and AC 22 marked met with no test at all) |
-| 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **running** - started 2026-08-27 11:41 IST, fail-safe 14:41 IST, 38 criteria |
+| 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **running** - started 2026-08-27 13:27 IST, fail-safe 16:27 IST, 38 criteria |
 | 10 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session model switch | `49-model-switch` | **queued** - 34 criteria |
 
 **Row 9 is running.** Rows 1 to 8 are done. Row 10 starts when row 9 exits, by whichever of

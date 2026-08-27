@@ -17,7 +17,7 @@ Cycles run BACK TO BACK - no cron, no schedule. ONE cycle is:
   - If goal met:     merge, then hand over to row 10 (#49) and start its first cycle
   - If goal not met: write the next action.md, then begin the next cycle immediately
 
-Fail-safe: 2026-08-27 14:41 IST - three hours of wall clock from the first cycle.
+Fail-safe: 2026-08-27 16:27 IST - three hours of wall clock from the first cycle.
 Stop then, converged or not, state why it did not converge, and still hand over.
 ```
 
@@ -35,7 +35,7 @@ that cycle and are never edited afterwards.**
 
 **The fail-safe is a clock, not a cycle count.** Cycles run back to back with nothing between
 them, so a hung cycle holds the whole chain rather than costing one firing. Check the clock at
-the start of every cycle. A cycle that finds 14:41 IST passed takes the fail-safe exit and
+the start of every cycle. A cycle that finds 16:27 IST passed takes the fail-safe exit and
 hands over - it does not start work it cannot finish.
 
 **Cycle 1 writes no production code.** It records the baseline - 317 tests, green and
@@ -95,4 +95,4 @@ per the queue's handing-over procedure, and **begin its first cycle immediately*
 scheduled; if this run stops without doing that, the chain stops with it and nobody is
 watching.
 
-**First cycle: 2026-08-27 11:41 IST. Fail-safe deadline: 2026-08-27 14:41 IST.**
+**First cycle: 2026-08-27 13:27 IST. Fail-safe deadline: 2026-08-27 16:27 IST.**

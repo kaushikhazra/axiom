@@ -39,8 +39,11 @@ Every earlier row merged. **317 tests, green and hermetic** at scaffold time.
 
 Do not re-research this. `curl http://localhost:11434/api/tags` was run at scaffold time.
 
-- Each model carries `name`, `model`, `modified_at`, `size`, `digest`, `capabilities`, and
-  `details` with `parameter_size`, `quantization_level` and sometimes `context_length`.
+- The raw JSON carries `name`, `model`, `modified_at`, `size`, `digest`, `capabilities`, and
+  `details`. **The Python client does not.** `Client.list()` returns a `ListResponse` whose
+  `.models` entries expose `model`, `modified_at`, `size`, `digest` and `details` - and
+  **no `name`, and no `capabilities`**. Corrected in cycle 1 after a probe; reaching for
+  `.name` raises `AttributeError`. Tool support still comes from `show()`, as it does today.
 - **The order is `modified_at` descending** - newest first. It is not sorted and it is not
   stable: pulling or re-pulling any model moves it to the front and renumbers everything
   after it. **This is the fact AC 6 exists for.**
