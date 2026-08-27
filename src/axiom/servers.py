@@ -126,9 +126,25 @@ class Servers:
 
     # -- lifetime ----------------------------------------------------------
 
+    @property
+    def started(self) -> bool:
+        """Whether the sessions are already open.
+
+        Asked before announcing a wait, so a switch that starts nothing says
+        nothing. Also what makes `start()` safe to call more than once.
+        """
+        return self._thread.is_alive()
+
     def start(self) -> None:
-        """Open every session, before the first prompt, and wait for them."""
-        if not self.specs:
+        """Open every session and wait for them. Calling twice does nothing.
+
+        Idempotent because a mid-session model switch reaches here: a session
+        that began on a model with no tool support has no servers running, and
+        switching to a capable model must be able to bring them up. Without the
+        guard the second call raises `RuntimeError: threads can only be started
+        once` - a crash mid-conversation, for asking twice.
+        """
+        if not self.specs or self.started:
             return
         self._thread.start()
         # The bound covers all of them together; a single slow server cannot
@@ -238,7 +254,9 @@ class Servers:
             )
             return as_text(future.result(self.call_timeout))
         except TimeoutError:
-            return f"error: {server} did not answer within {self.call_timeout:g} seconds"
+            return (
+                f"error: {server} did not answer within {self.call_timeout:g} seconds"
+            )
         except Exception as failed:  # noqa: BLE001
             # A server that died mid-session fails its own tools with a reason,
             # and every other tool keeps working.

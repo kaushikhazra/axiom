@@ -2,11 +2,22 @@
 
 import json
 import sys
+from dataclasses import dataclass
 
 from . import backend, compaction, config, context, models, servers, terminal, tools
 from .backend import Call, ModelBackend
 
 EXIT_COMMANDS = {"/exit", "/quit"}
+
+# The third command, and the first that is not an exit. Matched as a whole
+# word: a message that merely contains it is a message (#49 AC 9).
+MODEL_COMMAND = "/model"
+
+# Returned by a switch when the user ended the session at the list, as opposed
+# to cancelling it. A sentinel rather than a second return value, because the
+# ordinary answers are already "a new Running" and "nothing changed", and
+# threading a flag through both would make the common case carry the rare one.
+_LEAVING = object()
 
 # What a run exits with when it could not start at all. Distinct from 0, which
 # every ordinary way out uses - /exit, end of input, Ctrl-C - because a script
@@ -91,14 +102,194 @@ def _settle_model(
     # case, the non-terminal fallback - and none of them writes.
     terminal.show_models(decision.installed, settings.host, decision.default)
     while True:
-        answer = terminal.ask_model()
-        if answer is None:
+        try:
+            answer = terminal.ask_model()
+        except (EOFError, KeyboardInterrupt):
+            # Both mean leave. Nothing has started, so there is no session to
+            # return to and no difference between the two worth drawing.
             return None
         chosen = models.picked(answer, decision.installed, decision.default)
         if chosen is not None:
             _remember(chosen, settings.host)
             return chosen
         terminal.refuse_model(answer, len(decision.installed))
+
+
+@dataclass(frozen=True)
+class Running:
+    """Everything about a conversation that belongs to the model, not the session.
+
+    These six move together and always for the same reason: the model changed.
+    Held as one object rather than six locals so a switch is a single
+    assignment - updating five of six is the failure mode that separate
+    rebindings invite, and it would be silent.
+
+    Everything *not* here is deliberately not here. The history, the tool
+    limits, the working directory and the attached servers survive a switch
+    untouched, and keeping them out of this object is what makes that
+    structural rather than remembered (#49 AC 13, AC 14).
+    """
+
+    model: str
+    capable: bool
+    declarations: list[dict] | None
+    callable_names: set[str]
+    context: int | None
+    options: dict | None
+
+    @property
+    def offered(self) -> int | None:
+        """What the startup line reports: a count, 0 for off, None for cannot."""
+        return (
+            len(self.declarations)
+            if self.declarations
+            else (0 if self.capable else None)
+        )
+
+
+def _prepare(
+    model_backend: ModelBackend,
+    settings: config.Settings,
+    attached: "servers.Servers",
+    model: str,
+) -> Running:
+    """What this model can do, and how much room it has.
+
+    Used at startup and again on every switch, so the two cannot drift. Tool
+    support is asked once per model rather than discovered as a 400 at
+    generation time - which would spend a request to find out, and would tell
+    the user after they had already asked for something.
+
+    Servers are started here on first need rather than at launch. A session
+    that begins on a model with no tool support has none running, and switching
+    to a capable model has to be able to bring them up - AC 16 promises the new
+    model's tools, and a server that was never started is not one that is being
+    restarted (AC 14).
+    """
+    capable = model_backend.supports_tools(model)
+    declarations = tools.declarations() if capable and settings.tools_enabled else None
+    if declarations is not None and not settings.web_enabled:
+        declarations = [
+            tool
+            for tool in declarations
+            if tool["function"]["name"] not in tools.WEB_TOOLS
+        ]
+    if declarations is not None:
+        # Said before the wait, not after: starting a server can take seconds,
+        # and a silent pause reads as a hang. Only when something will actually
+        # be started - `start()` is a no-op once they are already up.
+        if not attached.started:
+            terminal.note_starting(len(settings.mcp_servers))
+        attached.start()
+        declarations = [*declarations, *attached.declarations]
+
+    window = context.effective_context(model_backend.model_info(model))
+    if settings.debug_max_context is not None:
+        window = settings.debug_max_context
+
+    return Running(
+        model=model,
+        capable=capable,
+        declarations=declarations,
+        callable_names={
+            declaration["function"]["name"] for declaration in declarations or []
+        },
+        context=window,
+        options={"num_ctx": window} if window is not None else None,
+    )
+
+
+def _switch_model(
+    model_backend: ModelBackend,
+    settings: config.Settings,
+    attached: "servers.Servers",
+    run: Running,
+    named: str,
+) -> "Running | object | None":
+    """A model change asked for mid-conversation.
+
+    Returns the new `Running`, `None` when nothing changed, or `_LEAVING` when
+    the user ended the session at the list.
+
+    Deliberately not `_settle_model`, which shares the pieces but not the
+    policy. Four of its behaviours are wrong once a conversation exists: it
+    exits the process when the host cannot be reached, where this carries on
+    with the model already in use (AC 30); it treats Ctrl-C as leaving, where
+    this cancels (AC 26); it marks the remembered model, where this marks the
+    current one (AC 3); and it can settle without asking at all.
+
+    What it does share is the list itself - `models.sorted_models` and
+    `terminal.show_models` - which is the whole of AC 2. A second sorting
+    implementation is how two lists drift apart.
+    """
+    try:
+        available = models.sorted_models(model_backend.installed())
+    except backend.BackendError as unreachable:
+        # Not fatal here, unlike at startup. There is a working session with a
+        # working model; failing to list the alternatives is a reason to stay
+        # where we are, not to end it (AC 30, AC 32).
+        terminal.report_switch_failed(settings.host, unreachable, run.model)
+        return None
+
+    if named:
+        # Exact match, tag included. Ollama reads a bare `qwen2.5` as
+        # `qwen2.5:latest` and would land on a model the user did not name -
+        # the failure both stories exist to prevent. A near miss is reported
+        # and falls through to the list (AC 7, AC 8).
+        if named in available:
+            return _switched_to(model_backend, settings, attached, run, named)
+        terminal.note_model_missing(named, settings.host)
+
+    if len(available) == 1:
+        terminal.note_only_model(available[0])
+        return None
+
+    terminal.show_models(available, settings.host, run.model, current=True)
+    while True:
+        try:
+            answer = terminal.ask_model("enter to keep the current one")
+        except KeyboardInterrupt:
+            # "Never mind" - the session continues on the model it had. Unlike
+            # at startup, there is something to return to (AC 26).
+            terminal.note_unchanged(run.model)
+            return None
+        except EOFError:
+            # Input has genuinely ended. There is nothing further to read, so
+            # the session ends the same way end of input at the prompt does,
+            # with status 0 (AC 33).
+            return _LEAVING
+        if not answer.strip():
+            # Enter keeps the current model rather than re-choosing it. At
+            # startup enter accepts a default; here there is nothing to accept,
+            # and a switch nobody asked for is worse than a wasted keystroke.
+            terminal.note_unchanged(run.model)
+            return None
+        chosen = models.picked(answer, available, None)
+        if chosen is not None:
+            return _switched_to(model_backend, settings, attached, run, chosen)
+        terminal.refuse_model(answer, len(available))
+
+
+def _switched_to(
+    model_backend: ModelBackend,
+    settings: config.Settings,
+    attached: "servers.Servers",
+    run: Running,
+    chosen: str,
+) -> "Running | None":
+    """Take the switch, remember it, and say what changed.
+
+    Choosing the model already in use is accepted and changes nothing - it is
+    not an error, and rebuilding `Running` would restart nothing but would
+    still reset the usage count for no reason (AC 28).
+    """
+    if chosen == run.model:
+        terminal.note_unchanged(chosen)
+        return None
+    _remember(chosen, settings.host)
+    fresh = _prepare(model_backend, settings, attached, chosen)
+    terminal.note_switched(fresh.model, fresh.context, fresh.offered)
+    return fresh
 
 
 def _remember(chosen: str, host: str) -> None:
@@ -123,31 +314,7 @@ def _chat(
         # unwind and nothing went wrong - status 0, like any other way out.
         return
 
-    # Asked once, before anything is sent: a model with no tool support is told
-    # nothing about tools rather than being sent some and refusing. `available`
-    # is None for "cannot", 0 for "switched off", a count otherwise - three
-    # states the startup line reports differently.
-    capable = model_backend.supports_tools(model)
-    declarations = tools.declarations() if capable and settings.tools_enabled else None
-    if declarations is not None and not settings.web_enabled:
-        declarations = [
-            tool
-            for tool in declarations
-            if tool["function"]["name"] not in tools.WEB_TOOLS
-        ]
-    # Connected before the startup line is printed, so that line can report
-    # what actually connected rather than what was asked for.
-    if declarations is not None:
-        # Said before the wait, not after: starting a server can take seconds,
-        # and a silent pause before the first prompt reads as a hang.
-        terminal.note_starting(len(settings.mcp_servers))
-        attached.start()
-        declarations = [*declarations, *attached.declarations]
-
-    available = len(declarations) if declarations else (0 if capable else None)
-    callable_names = {
-        declaration["function"]["name"] for declaration in declarations or []
-    }
+    run = _prepare(model_backend, settings, attached, model)
     limits = tools.Limits(
         working_directory=settings.working_directory,
         command_timeout=settings.command_timeout,
@@ -156,19 +323,12 @@ def _chat(
         page_characters=settings.page_characters,
     )
 
-    effective_context = context.effective_context(model_backend.model_info(model))
-    if settings.debug_max_context is not None:
-        effective_context = settings.debug_max_context
-
-    chat_options = (
-        {"num_ctx": effective_context} if effective_context is not None else None
-    )
     terminal.announce(
-        model,
+        run.model,
         settings.host,
-        effective_context,
+        run.context,
         overridden=settings.debug_max_context is not None,
-        tools=available,
+        tools=run.offered,
         web=settings.web_enabled,
     )
     terminal.note_servers(
@@ -178,10 +338,10 @@ def _chat(
         cost=compaction.estimated_tokens(
             [
                 {"role": "system", "content": json.dumps(declaration)}
-                for declaration in declarations or []
+                for declaration in run.declarations or []
             ]
         ),
-        window=effective_context,
+        window=run.context,
     )
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a
@@ -207,8 +367,28 @@ def _chat(
         if not line:
             continue
 
+        if line == MODEL_COMMAND or line.startswith(MODEL_COMMAND + " "):
+            switched = _switch_model(
+                model_backend,
+                settings,
+                attached,
+                run,
+                line[len(MODEL_COMMAND) :].strip(),
+            )
+            if switched is _LEAVING:
+                return
+            if switched is not None:
+                run = switched
+                # The previous turn's count came from a different model's
+                # tokenizer and is about to be weighed against a different
+                # window. `None` is what a first turn already carries, and
+                # `maybe_compact` handles it - the measured `too_large` check
+                # still runs, so nothing is left unguarded.
+                running_usage = None
+            continue
+
         messages, kept_pairs, forgotten = compaction.maybe_compact(
-            model_backend, model, messages, running_usage, effective_context
+            model_backend, run.model, messages, running_usage, run.context
         )
         if kept_pairs is not None:
             terminal.note_compaction(kept_pairs)
@@ -232,10 +412,10 @@ def _chat(
         # Weighed with the instructions included: they ride in every request,
         # so a check that only counts `messages` under-counts the real payload
         # by exactly the prompt, every turn.
-        over = compaction.too_large(to_send(messages), effective_context)
-        if over is not None and effective_context is not None:
+        over = compaction.too_large(to_send(messages), run.context)
+        if over is not None and run.context is not None:
             cause = compaction.what_will_not_fit(
-                line, effective_context, len(instructions["content"])
+                line, run.context, len(instructions["content"])
             )
             # Checked before compacting, not after: when the fixed part alone
             # exceeds the context, no amount of compaction changes anything and
@@ -248,8 +428,16 @@ def _chat(
             # there is no state where every message is refused, because there
             # are no more messages.
             if cause == compaction.CANNOT_CONTINUE:
-                terminal.report_too_large(over, cause)
-                return
+                # #42 ended the session here, and was right to at the time:
+                # nothing the user could type would fit, so repeating the line
+                # at every prompt was the discovery it was trying to prevent.
+                # `/model` changes that - the window is a property of the model
+                # and there is now a way to change the model without losing the
+                # conversation. So the session stays, and the message names the
+                # model and the way out rather than only the wall (#49 AC 19).
+                terminal.report_too_large(over, cause, run.model)
+                del messages[before:]
+                continue
 
         if over is not None:
             # Refusing here without trying throws away a compaction that
@@ -273,9 +461,9 @@ def _chat(
             pending = messages.pop()
             messages, squeezed, let_go = compaction.compact_to_fit(
                 model_backend,
-                model,
+                run.model,
                 messages,
-                effective_context,
+                run.context,
                 len(instructions["content"]) + len(pending["content"]),
             )
             messages.append(pending)
@@ -290,13 +478,13 @@ def _chat(
             # is the only thing a refusal rolls back - whatever compaction
             # achieved is kept, or the next turn meets the same wall.
             before = len(messages) - 1
-            over = compaction.too_large(to_send(messages), effective_context)
+            over = compaction.too_large(to_send(messages), run.context)
 
         if over is not None:
             terminal.report_too_large(
                 over,
                 compaction.what_will_not_fit(
-                    line, effective_context, len(instructions["content"])
+                    line, run.context, len(instructions["content"])
                 ),
             )
             del messages[before:]
@@ -317,9 +505,9 @@ def _chat(
                 # back only while it could still turn out to be one - and let
                 # it through the moment it cannot, or streaming would be lost
                 # for every model that behaves.
-                withholding = declarations is not None
+                withholding = run.declarations is not None
                 for event in model_backend.stream(
-                    model, to_send(messages), chat_options, declarations
+                    run.model, to_send(messages), run.options, run.declarations
                 ):
                     if isinstance(event, Call):
                         calls.append(event)
@@ -337,7 +525,7 @@ def _chat(
                     # Server tools are recognised here too, or a model that
                     # announces its calls as text could reach the built-ins
                     # and nothing else.
-                    announced = backend.call_from_text(reply, callable_names)
+                    announced = backend.call_from_text(reply, run.callable_names)
                     if announced is not None:
                         calls.append(announced)
                         reply = ""  # the text was the call, not an answer

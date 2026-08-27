@@ -314,16 +314,24 @@ def test_each_cause_gets_its_own_message_and_its_own_advice(capsys):
     assert "shorter" in said["message"]
     assert "shorter" not in said["conversation"], "advice that cannot be taken"
     assert "new session" in said["conversation"]
-    assert "cannot continue" in said["cannot-continue"]
+    assert "cannot hold even an empty message" in said["cannot-continue"]
     assert "shorter" not in said["cannot-continue"]
 
 
-def test_a_session_that_cannot_continue_says_so_once_and_stops(monkeypatch, capsys):
-    """AC 6: told plainly, "rather than discovering it by retrying".
+def test_a_session_that_cannot_continue_offers_the_way_out(monkeypatch, capsys):
+    """#42 AC 6, as amended by #49 AC 19.
 
-    Repeating the same unhelpable line at every prompt *is* that discovery.
-    Ending is also what makes AC 4 true here: there is no state where every
-    message is refused, because there are no more messages.
+    #42 ended the session here and was right to at the time: nothing the user
+    could type would fit, so repeating the line at every prompt was the
+    discovery-by-retrying it existed to prevent, and ending was what made #42
+    AC 4 true - no state where every message is refused, because there are no
+    more messages.
+
+    `/model` changes the premise. The window belongs to the model, and a switch
+    keeps the conversation, so the wall is now escapable without losing
+    anything. The line therefore names the model that cannot hold it and the
+    command that fixes it, and the session stays. #42 AC 4's protection
+    survives in a better form: there is a way out that is not "type less".
     """
     backend = Watched(info={"qwen2.context_length": PROMPT_TOKENS // 2}, usage=1)
     feed(monkeypatch, ["hello", "hi", "?", "a", "/exit"])
@@ -331,9 +339,25 @@ def test_a_session_that_cannot_continue_says_so_once_and_stops(monkeypatch, caps
     axiom.main([], using=backend)
     err = capsys.readouterr().err
 
-    assert err.count("cannot continue") == 1, "said more than once"
+    assert "/model" in err, "a wall with no way through it"
+    assert "qwen2.5:7b" in err, "does not name the model that cannot hold it"
     assert backend.compactions == 0, "compacted a session nothing can save"
-    assert len(backend.streamed) == 0
+    assert len(backend.streamed) == 0, "sent a payload that cannot fit"
+
+
+def test_a_session_that_cannot_continue_still_accepts_a_switch(monkeypatch, capsys):
+    """#49 AC 19. The session stays usable, and the way out really works."""
+    backend = Watched(
+        info={"qwen2.context_length": PROMPT_TOKENS // 2},
+        usage=1,
+        models=["big:70b", "qwen2.5:7b"],
+    )
+    feed(monkeypatch, ["hello", "/model", "1", "/exit"])
+
+    axiom.main([], using=backend)
+
+    # Reached the list rather than having ended four lines earlier.
+    assert "models on" in capsys.readouterr().out
 
 
 # --- AC 7 and AC 8: unchanged, and honest about forgetting ------------------
