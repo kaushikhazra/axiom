@@ -91,7 +91,11 @@ def read_choice(host: str, path: Path | None = None) -> str | None:
     """
     path = _where(path)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        # `utf-8-sig` for the same reason `config.read_servers` uses it: a file
+        # saved by an editor that writes a byte order mark is still this file.
+        # Written back as plain `utf-8` below, so axiom emits no mark of its own
+        # and a file it rewrites loses the one it arrived with.
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     if not isinstance(document, dict):
@@ -112,7 +116,7 @@ def unreadable(path: Path | None = None) -> bool:
     if not path.is_file():
         return False
     try:
-        return not isinstance(json.loads(path.read_text(encoding="utf-8")), dict)
+        return not isinstance(json.loads(path.read_text(encoding="utf-8-sig")), dict)
     except (OSError, ValueError):
         return True
 
@@ -133,7 +137,7 @@ def write_choice(model: str, host: str, path: Path | None = None) -> str | None:
     document = {}
     if path.is_file():
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
+            existing = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(existing, dict):
                 document = existing
         except (OSError, ValueError):

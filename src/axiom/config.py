@@ -106,7 +106,22 @@ def read_servers(path: Path) -> tuple[tuple[ServerSpec, ...], tuple[str, ...]]:
         return (), ()
 
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
+        # `utf-8-sig`, not `utf-8`. This is the one file axiom asks a user to
+        # write by hand, and on Windows the ordinary way to write it leaves a
+        # byte order mark: PowerShell's `Set-Content -Encoding utf8`, `Out-File`
+        # and Notepad all do. `json.loads` refuses one outright, so the file the
+        # platform's own default tooling produces could not be read at all.
+        #
+        # The mark is removed by the *decoder*, before any parsing, which is
+        # what keeps it out of every value. Stripping it from the decoded text
+        # instead would leave it glued to the first key - a server named
+        # `﻿tiny`, with a command that cannot be run and a name that never
+        # matches - and a test that merely counted servers would still pass.
+        #
+        # `utf-8-sig` reads a file without a mark exactly as `utf-8` does, so
+        # nothing is given up. Found by the first manual pass; 453 tests missed
+        # it because Python's own writer never emits one.
+        document = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as unreadable:
         return (), (f"{path} could not be read ({unreadable})",)
 
