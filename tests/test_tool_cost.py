@@ -126,6 +126,32 @@ def test_the_figure_is_the_one_the_size_checks_use(capsys, monkeypatch):
     )
 
 
+def test_the_prompt_measured_is_the_prompt_actually_sent(capsys, monkeypatch):
+    """AC 9, and without this the criterion has no test at all.
+
+    Every other test here runs with default settings, and the standing prompt
+    names the working directory and the command timeout - so a figure measured
+    from a *bare* `Limits()` matches a figure measured from the run's real one,
+    and only by coincidence. Breaking `_tool_cost` to use `tools.Limits()`
+    left all 520 tests green.
+
+    With non-default settings the two diverge - 807 against 813 - and this is
+    the only test that can tell them apart.
+    """
+    where = "C:/Projects/.tmp/a-much-longer-sandbox-path"
+    _, out = run(
+        capsys,
+        monkeypatch,
+        argv=["--working-directory", where, "--command-timeout", "900"],
+    )
+
+    real = tools.Limits(working_directory=where, command_timeout=900.0)
+    assert reported(out.out) == weighed(tools.declarations(), tools.system_prompt(real))
+    assert reported(out.out) != weighed(
+        tools.declarations(), tools.system_prompt(tools.Limits())
+    ), "the settings made no difference, so this proves nothing"
+
+
 def test_it_is_said_once(capsys, monkeypatch):
     """AC 4."""
     _, out = run(capsys, monkeypatch)
