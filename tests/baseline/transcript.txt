@@ -20,7 +20,9 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: Ollama default, no tools -
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> hi there
+> 
+hi there
+
 > 
 --- stderr ---
 
@@ -39,7 +41,11 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
-> > a reply
+> 
+
+> 
+a reply
+
 > 
 --- stderr ---
 error: this message is about 538 tokens too large to send - try a shorter one
@@ -50,11 +56,20 @@ error: this message is about 538 tokens too large to send - try a shorter one
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 7 tools including web)
-> a reply
-> a reply
-> a reply
-> a reply
-> axiom: compacting older history (everything)
+> 
+a reply
+
+> 
+a reply
+
+> 
+a reply
+
+> 
+a reply
+
+> 
+axiom: compacting older history (everything)
 axiom: the summary is full - forgetting 17:
   | - fact 5 the user mentioned earlier
   | - fact 6 the user mentioned earlier
@@ -89,9 +104,16 @@ axiom: the summary is full - forgetting 13:
   | - fact 28 the user mentioned earlier
   | - fact 29 the user mentioned earlier
 a reply
-> a reply
-> a reply
-> a reply
+
+> 
+a reply
+
+> 
+a reply
+
+> 
+a reply
+
 > 
 --- stderr ---
 
@@ -101,7 +123,11 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 7 tools including web)
-> > > 
+> 
+
+> 
+
+> 
 --- stderr ---
 error: qwen2.5:7b cannot hold even an empty message - the context is too small, so nothing you type will fit. Use /model to switch to a model with a larger context, or restart axiom with one.
 error: qwen2.5:7b cannot hold even an empty message - the context is too small, so nothing you type will fit. Use /model to switch to a model with a larger context, or restart axiom with one.
@@ -112,9 +138,13 @@ error: qwen2.5:7b cannot hold even an empty message - the context is too small, 
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
-> a reply
-> axiom: compacting older history (everything)
+> 
 a reply
+
+> 
+axiom: compacting older history (everything)
+a reply
+
 > 
 --- stderr ---
 
@@ -124,7 +154,9 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> > 
+> 
+
+> 
 --- stderr ---
 error: model not found (status code: -1)
 
@@ -134,7 +166,9 @@ error: model not found (status code: -1)
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> > 
+> 
+
+> 
 --- stderr ---
 error: cannot reach Ollama at http://localhost:11434 (connection refused)
 
@@ -144,7 +178,9 @@ error: cannot reach Ollama at http://localhost:11434 (connection refused)
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> partial > 
+> 
+partial 
+> 
 --- stderr ---
 
 error: reply cut off after 8 characters - lost connection to http://localhost:11434 (connection reset)
@@ -155,7 +191,11 @@ error: reply cut off after 8 characters - lost connection to http://localhost:11
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> partial > second reply
+> 
+partial 
+> 
+second reply
+
 > 
 --- stderr ---
 
@@ -205,10 +245,12 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools incl
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: read_file(path=<sandbox>\notes.txt)
+> 
+axiom: read_file(path=<sandbox>\notes.txt)
 axiom: outside the working directory: <sandbox>\notes.txt
   | Biscuit the cat is ginger.
 The cat is ginger.
+
 > 
 --- stderr ---
 
@@ -218,10 +260,12 @@ The cat is ginger.
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: read_file(path=<sandbox>\absent.txt)
+> 
+axiom: read_file(path=<sandbox>\absent.txt)
 axiom: outside the working directory: <sandbox>\absent.txt
   | error: No such file or directory: <sandbox>\absent.txt
 I could not read that file.
+
 > 
 --- stderr ---
 
@@ -231,7 +275,9 @@ I could not read that file.
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, no tools - this model cannot call them)
-> hello to you
+> 
+hello to you
+
 > 
 --- stderr ---
 
@@ -241,8 +287,11 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, no tools - t
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 7 tools including web)
-> a reply
-> axiom: compacting older history (everything)
+> 
+a reply
+
+> 
+axiom: compacting older history (everything)
 axiom: the summary is full - forgetting 7:
   | - fact 5 the user mentioned some turns ago
   | - fact 6 the user mentioned some turns ago
@@ -252,7 +301,9 @@ axiom: the summary is full - forgetting 7:
   | - fact 10 the user mentioned some turns ago
   | - fact 11 the user mentioned some turns ago
 a reply
-> axiom: compacting older history (everything)
+
+> 
+axiom: compacting older history (everything)
 axiom: the summary is full - forgetting 40:
   | - fact 12 the user mentioned some turns ago
   | - fact 13 the user mentioned some turns ago
@@ -295,6 +346,7 @@ axiom: the summary is full - forgetting 40:
   | - fact 10 the user mentioned some turns ago
   | - fact 11 the user mentioned some turns ago
 a reply
+
 > 
 --- stderr ---
 
@@ -304,10 +356,12 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: read_file(path=<sandbox>/notes.txt)
+> 
+axiom: read_file(path=<sandbox>/notes.txt)
 axiom: outside the working directory: <sandbox>\notes.txt
   | Biscuit the cat is ginger.
 The cat is ginger.
+
 > 
 --- stderr ---
 
@@ -317,7 +371,9 @@ The cat is ginger.
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, tools off)
-> hello to you
+> 
+hello to you
+
 > 
 --- stderr ---
 
@@ -327,7 +383,9 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, tools off)
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools, web off)
-> hello to you
+> 
+hello to you
+
 > 
 --- stderr ---
 
@@ -337,12 +395,14 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 5 tools, web
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: search_web(query=what is teal)
+> 
+axiom: search_web(query=what is teal)
   | Teal
   | https://example.invalid/teal
   | A blue-green colour.
 Teal is a blue-green colour.
 axiom: found, not read: https://example.invalid/teal
+
 > 
 --- stderr ---
 
@@ -352,9 +412,11 @@ axiom: found, not read: https://example.invalid/teal
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: search_web(query=throttle me)
+> 
+axiom: search_web(query=throttle me)
   | error: the search provider is throttling us - wait and retry (202 Ratelimit)
 I could not search just now.
+
 > 
 --- stderr ---
 
@@ -364,10 +426,12 @@ I could not search just now.
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: fetch_page(url=https://example.invalid/page)
+> 
+axiom: fetch_page(url=https://example.invalid/page)
   | Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger.
 The page says Biscuit is ginger.
 axiom: read: https://example.invalid/page
+
 > 
 --- stderr ---
 
@@ -377,9 +441,11 @@ axiom: read: https://example.invalid/page
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 7 tools including web)
-> axiom: fetch_page(url=https://unreachable.invalid/x)
+> 
+axiom: fetch_page(url=https://unreachable.invalid/x)
   | error: could not reach https://unreachable.invalid/x (connection refused)
 I could not read that.
+
 > 
 --- stderr ---
 
