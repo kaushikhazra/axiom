@@ -461,6 +461,11 @@ def end_turn() -> None:
     print()
 
 
+# Lines of a fenced block kept as context for highlighting the next one. See
+# `Rendered._code_line` for the measurement that chose it.
+CODE_CONTEXT = 20
+
+
 class Rendered:
     """A reply turned into formatted lines, each written exactly once.
 
@@ -490,6 +495,8 @@ class Rendered:
         self._line = ""  # the line being typed, not yet complete
         self._echoed = 0  # how much of it the user has already seen
         self._fence: str | None = None  # the language of an open fence
+        self._lexer: str | None = None  # that language, if one exists for it
+        self._code: list[str] = []  # the open fence's lines, for context
         self._table: list[str] = []  # rows waiting for the table to end
 
     def feed(self, text: str) -> None:
@@ -512,7 +519,7 @@ class Rendered:
             self._finished(self._line)
         self._settle_table()
         self._line, self._echoed = "", 0
-        self._fence = None
+        self._fence, self._lexer, self._code = None, None, []
 
     def _finished(self, line: str) -> None:
         """One complete line: committed now, or held because it is a table.
@@ -591,10 +598,11 @@ class Rendered:
     def _styled(self, line: str) -> str:
         """One finished line, as it should look.
 
-        Fence markers open and close a block. Inside one, the line is code and
-        is left as it is - highlighting a single line in isolation guesses at
-        context it does not have, and guessing wrongly about code is worse than
-        not colouring it.
+        Fence markers open and close a block. Inside one, the line is code:
+        highlighted when the fence names a language that exists (AC 2), and
+        plain cyan when it names none or names one nobody has a lexer for
+        (AC 3) - still set apart from the prose, which is what that criterion
+        asks for.
 
         Nothing below may cost the user the answer (AC 28). `_as_markdown`
         guards itself, but the guard is repeated here because the promise is
@@ -604,18 +612,107 @@ class Rendered:
         """
         try:
             if line.lstrip().startswith("```"):
-                language = line.lstrip()[3:].strip()
-                self._fence = None if self._fence is not None else (language or "")
+                self._open_or_close(line.lstrip()[3:].strip())
                 return f"\x1b[2m{line}\x1b[0m"
             if self._fence is not None:
-                # Cyan is a colour, so `NO_COLOR` takes it. The dim on a fence
-                # marker above is an attribute rather than a colour and stays -
-                # which is the same line Rich draws, and the same line the
-                # convention draws.
-                return line if _colourless() else f"\x1b[36m{line}\x1b[0m"
+                return self._code_line(line)
             return _as_markdown(line)
         except Exception:
             return line
+
+    def _open_or_close(self, language: str) -> None:
+        """A fence marker arrived: start a block, or end the one open."""
+        if self._fence is not None:
+            self._fence, self._lexer, self._code = None, None, []
+            return
+        self._fence = language or ""
+        self._lexer = _lexer_for(self._fence)
+        self._code = []
+
+    def _code_line(self, line: str) -> str:
+        """One line of a fenced block, highlighted in the block's own context.
+
+        Highlighting a line *alone* guesses at context it does not have - the
+        middle of a triple-quoted string is not code, and colouring it as code
+        is a confident lie. So the whole block so far is lexed and only the new
+        line's rendering is taken. Cheap: a block is tens of lines, and this
+        happens once per line rather than once per chunk.
+
+        No line is ever redrawn by this. A line already committed keeps whatever
+        it was given, which is right - re-lexing changes the *next* line's
+        context, never an earlier line's text.
+
+        The context is **bounded**, and the bound was measured rather than
+        picked. Lexing the whole block on every line is quadratic: 7.2ms a line
+        at 10 lines, 29ms at 200, **71ms at 500** - 35 seconds of CPU for a
+        500-line block, a visible stall and so an AC 10 failure.
+
+        Held to a window the cost is flat and linear in the window: 2.2ms at 5
+        lines, 6.1 at 20, 16.0 at 60, 28.3 at 120. Twenty is the choice - well
+        inside the gap between two streamed lines, and more context than any
+        multi-line string in a chat reply plausibly needs. What it costs is a
+        string opened more than twenty lines earlier being coloured as code;
+        what it buys is a long block that still streams.
+        """
+        self._code.append(line)
+        del self._code[:-CODE_CONTEXT]
+        if self._lexer:
+            drawn = _highlighted("\n".join(self._code), self._lexer)
+            if len(drawn) >= len(self._code):
+                return drawn[len(self._code) - 1]
+        # Cyan is a colour, so `NO_COLOR` takes it. The dim on a fence marker is
+        # an attribute rather than a colour and stays - which is the line Rich
+        # draws, and the line the convention draws.
+        return line if _colourless() else f"\x1b[36m{line}\x1b[0m"
+
+
+def _lexer_for(language: str) -> str | None:
+    """The named language, if anything can actually highlight it.
+
+    Rich falls back to plain text for a name it does not know, silently - so
+    asking it is no way to tell a recognised language from an unrecognised one,
+    and AC 2 and AC 3 want different things for the two.
+    """
+    if not language:
+        return None
+    try:
+        from pygments.lexers import get_lexer_by_name
+
+        get_lexer_by_name(language)
+        return language
+    except Exception:
+        return None
+
+
+def _highlighted(code: str, language: str) -> list[str]:
+    """A block of code, drawn one output line per source line.
+
+    A very wide console and no word wrapping, on purpose: the caller places
+    lines itself and needs the two to correspond. The terminal does the
+    wrapping afterwards, as it does for every other line here.
+    """
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.syntax import Syntax
+
+        buffer = StringIO()
+        Console(
+            file=buffer, force_terminal=True, legacy_windows=False, width=10_000
+        ).print(
+            Syntax(
+                code,
+                language,
+                theme="ansi_dark",  # the terminal's own colours, not a palette
+                background_color="default",  # never paint behind the text
+                word_wrap=False,
+            ),
+            end="",
+        )
+        return [_unpadded(line) for line in buffer.getvalue().split("\n")]
+    except Exception:
+        return []
 
 
 def _colourless() -> bool:
@@ -638,6 +735,10 @@ def _colourless() -> bool:
 # closes. Missing a table reads badly; eating a paragraph loses the answer.
 _TABLE_ROW = re.compile(r"^\s*\|")
 
+# What Rich draws under a table's header row, and the only reliable sign that it
+# understood the rows as a table at all rather than as a paragraph of pipes.
+HEADER_RULE = "─"
+
 
 def _looks_like_a_table_row(line: str) -> bool:
     return bool(_TABLE_ROW.match(line))
@@ -646,9 +747,14 @@ def _looks_like_a_table_row(line: str) -> bool:
 def _as_table(rows: list[str]) -> list[str]:
     """The held rows drawn as one table, or handed back untouched.
 
-    A single stray `| pipe |` line is not a table - markdown needs the
-    delimiter row - and Rich draws it as a paragraph. Whatever comes back, the
-    rows are never dropped: this is AC 5 at the one place in the renderer that
+    Whether Rich *drew a table* is asked explicitly, by looking for the rule it
+    puts under a header. It is not enough that it returned something: handed
+    rows it cannot parse - a delimiter row narrower than the header, which AC 23
+    names - it draws them as one paragraph, and four rows come back run together
+    into a single wrapped line of pipes. The rows are all there and unreadable.
+
+    So anything that is not a table goes back exactly as the model wrote it, one
+    line per row. This is AC 5 and AC 23 at the one place in the renderer that
     holds anything.
     """
     try:
@@ -675,6 +781,8 @@ def _as_table(rows: list[str]) -> list[str]:
             drawn.pop(0)
         while drawn and not _visible(drawn[-1]):
             drawn.pop()
+        if not any(HEADER_RULE in line for line in drawn):
+            return rows  # not a table; hand back what the model wrote
         return drawn or rows
     except Exception:
         # AC 28, and AC 5. A table that cannot be drawn is still a table the
@@ -779,11 +887,20 @@ def show_piece(text: str) -> None:
     _reply.feed(text)
 
 
-def end_reply() -> None:
+def _settle_reply() -> None:
+    """Finish and let go of any reply still being rendered.
+
+    Does nothing at all when there is none - which is every plain-path run, so
+    the bytes a redirected run produces are untouched.
+    """
     global _reply
     if _reply is not None:
         _reply.finish()
         _reply = None
+
+
+def end_reply() -> None:
+    _settle_reply()
     print()
 
 
@@ -953,7 +1070,17 @@ def report_failure(failure: BaseException, reply: str, host: str) -> None:
     interrupt or a single error family. The leading blank line separates the
     message from a partial reply already on screen; a cancellation always gets
     one, because the user pressed the key mid-line.
+
+    The pending reply is settled first. This is the only route out of a turn
+    that does not pass `end_reply`, so without it the renderer keeps the dead
+    turn's half-line and feeds the *next* answer into it - a fresh question
+    after a dropped connection came back as `partial a fresh answer`, with the
+    failed reply glued to the front of a new one. Settling here rather than at
+    the call site because this is the function that cannot be forgotten, and
+    settling after the message would erase it: the erase runs to the end of the
+    screen, and by then the message is on it.
     """
+    _settle_reply()
     if isinstance(failure, KeyboardInterrupt):
         message = f"cancelled after {len(reply)} characters"
     elif isinstance(failure, ConnectionLost) and reply:

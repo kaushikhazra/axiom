@@ -192,9 +192,77 @@ def test_markdown_is_styled(source, expected):
 
 
 def styling(text: str, containing: str) -> list[str]:
-    """The escape sequences on the line that holds `containing`."""
-    line = next(part for part in text.split("\n") if containing in part)
+    """The escape sequences on the line that holds `containing`.
+
+    Matched against the line with its escapes removed: highlighting breaks
+    `x = 1` into separately coloured runs, so the text is no longer contiguous
+    in the raw bytes.
+    """
+    line = next(part for part in text.split("\n") if containing in stripped(part))
     return re.findall(r"\x1b\[[0-9;]*m", line)
+
+
+def test_a_named_language_is_syntax_highlighted():
+    """AC 2, which says "with syntax highlighting when the fence names a
+    language" and had been answered with one flat colour for every fence.
+
+    Cycles 2 and 3 both read that criterion as "set the code apart", which is
+    the *other half* of the same sentence, and recorded a reason for not
+    highlighting - that a line lexed alone guesses at context. The reason was
+    sound and the conclusion did not follow: the fix is to lex the block, not
+    to abandon the criterion.
+
+    A keyword and a number must not be coloured the same, or nothing is being
+    highlighted.
+    """
+    emitted = stream("```python\ndef f():\n    return 42\n```\n")
+    keyword = styling(emitted, "def f():")
+    number = styling(emitted, "return 42")
+
+    assert keyword and number, "no styling at all inside the fence"
+    assert set(keyword) != {"\x1b[36m", "\x1b[0m"}, "still one flat colour"
+    assert keyword != number, "every line coloured identically"
+
+
+def test_highlighting_reads_the_block_and_not_the_line():
+    """AC 2, and the reason cycles 2 and 3 gave for not doing it at all.
+
+    A line inside a triple-quoted string is not code. Lexed alone it looks
+    like an expression and gets coloured as one - a confident lie about what
+    the model wrote. Lexed as part of the block it is a string, and this test
+    is what says the block is what gets lexed.
+    """
+    emitted = stream('```python\nx = """\nreturn 42\n"""\n```\n')
+    inside = styling(emitted, "return 42")
+
+    assert inside, "the line inside the string was not styled at all"
+    assert all("94" not in code for code in inside), "'return' coloured as a keyword"
+
+
+def test_a_long_block_does_not_carry_the_whole_of_itself():
+    """AC 10. Lexing the whole block on every line is quadratic.
+
+    Measured before bounding it: 71ms a line at 500 lines, 35 seconds of CPU
+    for one block. A timing assertion would be flaky, so what is asserted is
+    the thing that made it quadratic - how much context is kept - and the
+    numbers live in the docstring beside the code.
+    """
+    out: list[str] = []
+    rendered = Rendered(write=out.append)
+    rendered.feed("```python\n")
+    for n in range(200):
+        rendered.feed(f"value_{n} = {n}\n")
+
+    assert len(rendered._code) <= terminal.CODE_CONTEXT
+    assert stripped("".join(out)).count("value_199") >= 1, "the last line was lost"
+
+
+def test_an_unknown_language_falls_back_rather_than_failing():
+    """AC 3. Rich falls back silently, so it is asked before rather than after."""
+    emitted = stream("```nosuchlanguage\nx = 1\n```\n")
+
+    assert "\x1b[36m" in emitted, "no fallback colour, so not set apart"
+    assert "x = 1" in stripped(emitted)
 
 
 @pytest.mark.parametrize("opener", ["```python", "```", "```nosuchlanguage"])
@@ -400,6 +468,25 @@ def test_a_reply_that_ends_inside_a_table_still_shows_it():
     assert any("1" in line and "2" in line for line in shown)
 
 
+def test_a_ragged_table_keeps_the_rows_the_model_wrote(monkeypatch):
+    """AC 23, which names this case: "a table with a row of the wrong width".
+
+    Rich cannot parse a table whose delimiter row is narrower than its header,
+    and does not say so - it draws the rows as one paragraph, so four rows come
+    back run together into a single wrapped line of pipes. All the text is
+    there and none of it is readable, which is not "shown as text".
+
+    Found by running hostile inputs through a modelled screen. The byte-stream
+    tests were content: every character was present.
+    """
+    ragged = "| a | b | c |\n| --- | --- |\n| 1 |\n| 2 | 3 | 4 | 5 |\nafter\n"
+    on_screen = shown(ragged, width=40, monkeypatch=monkeypatch)
+
+    assert "| a | b | c |" in on_screen, "the rows were run together"
+    assert "| 2 | 3 | 4 | 5 |" in on_screen
+    assert "after" in on_screen
+
+
 def test_a_stray_pipe_row_is_shown_not_swallowed():
     """AC 23. One `| pipe |` line is not a table - markdown needs the rule."""
     shown = " ".join(displayed(stream("| a stray pipe row |\nand on we go\n")))
@@ -512,9 +599,15 @@ def test_no_color_drops_colour_and_keeps_formatting(monkeypatch):
 
 
 def test_no_color_reaches_the_colour_this_module_writes_itself(monkeypatch):
-    """AC 26. Rich honours it for free; the fence styling is hand-written."""
+    """AC 26. Rich honours it for free; the fence fallback is hand-written.
+
+    A fence naming *no* language, deliberately: that is the path where this
+    module chooses the colour itself. With `python` the highlighter runs and
+    Rich has already honoured `NO_COLOR`, so the assertion would hold for a
+    renderer that had never heard of it.
+    """
     monkeypatch.setenv("NO_COLOR", "1")
-    emitted = stream("```python\nx = 1\n```\n")
+    emitted = stream("```\nx = 1\n```\n")
 
     assert "\x1b[36m" not in emitted, "fenced code kept its cyan"
     assert "x = 1" in stripped(emitted)
@@ -524,7 +617,7 @@ def test_colour_is_there_without_no_color(monkeypatch):
     """The other half - otherwise the test above passes on a broken renderer."""
     monkeypatch.delenv("NO_COLOR", raising=False)
 
-    assert "\x1b[36m" in stream("```python\nx = 1\n```\n")
+    assert "\x1b[36m" in stream("```\nx = 1\n```\n")
 
 
 def test_no_color_set_to_nothing_still_counts(monkeypatch):
@@ -534,10 +627,14 @@ def test_no_color_set_to_nothing_still_counts(monkeypatch):
     draws most of what reaches the screen here, so presence it is - a session
     where headings lose their colour and fenced code keeps it is worse than
     either rule applied consistently.
+
+    A fence naming no language, for the same reason as the test above: with
+    `python` the highlighter runs and there is no cyan to find whatever this
+    function returns. Written that way first, and it survived its break.
     """
     monkeypatch.setenv("NO_COLOR", "")
 
-    assert "\x1b[36m" not in stream("```python\nx = 1\n```\n")
+    assert "\x1b[36m" not in stream("```\nx = 1\n```\n")
 
 
 # --- What the model and the history see ------------------------------------
@@ -593,6 +690,37 @@ def test_a_reply_that_turns_out_to_be_a_call_never_reaches_the_renderer(
     assert '{"name"' not in printed
     assert "read_file(path=x)" in printed, "the call was not made"
     assert "the answer" in printed, "the reply after the call never arrived"
+    # AC 18, with rendering on. The transcript records the plain path only, so
+    # this is the one place the marker is checked against a rendered session.
+    assert "  | " in printed, "the tool's output lost its marker"
+    assert "axiom: read_file" in printed, "the call lost axiom's own voice"
+
+
+def test_a_cut_off_reply_does_not_leak_into_the_next_one(monkeypatch, capsys):
+    """AC 17, and the second real defect the cold read found.
+
+    A failed turn is the only route out that does not pass `end_reply`, so the
+    renderer kept the dead turn's half-finished line. The next answer was fed
+    into it and came out as `partial a fresh answer` - the failed reply glued
+    to the front of a new one, with nothing on screen to say so. A user would
+    read it as the model's own words.
+
+    The golden transcript could not have caught this: it is captured with
+    output redirected, which is the plain path, where there is no renderer to
+    hold anything.
+    """
+    from axiom.backend import ConnectionLost
+
+    backend = StubBackend(
+        models=["a:1b"],
+        turns=[["partial ", ConnectionLost("dropped")], ["a fresh answer\n"]],
+    )
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["one", "two", "/exit"])
+
+    main([], using=backend)
+
+    assert "partial a fresh answer" not in capsys.readouterr().out
 
 
 def test_characters_the_console_cannot_spell_survive_rendering():
