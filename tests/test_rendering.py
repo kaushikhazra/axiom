@@ -85,6 +85,55 @@ def test_nothing_is_shown_twice(width, monkeypatch):
         assert word in flat, f"{word} was lost"
 
 
+@pytest.mark.parametrize("length", [38, 39, 40, 41, 42, 79, 80, 81, 120])
+def test_a_line_that_lands_on_the_wrap_boundary_is_not_shown_twice(length, monkeypatch):
+    """AC 7 at the one place two terminals disagree about where the cursor is.
+
+    Sent exactly as many characters as it has columns, the VT-series and xterm
+    hold the cursor at the last column with the wrap *pending*; a simpler
+    terminal has already moved to the next row. Taking the line back is off by
+    one row for whichever guess is wrong - a duplicated row, or a climb one row
+    too far into a line already committed.
+
+    So the boundary is never reached: one character is held back when the echo
+    would land exactly on a multiple of the width. Every length around the
+    boundary is checked, because "it works at 40" was true before this and the
+    failure was at 40, 41, 42 and 80 alike.
+    """
+    body = "x" * length
+    on_screen = shown(body + "\n", width=40, monkeypatch=monkeypatch)
+
+    assert "".join(on_screen) == body
+
+
+def test_a_narrowed_window_does_not_erase_a_line_already_committed(monkeypatch):
+    """AC 13, in the direction that costs something.
+
+    The erase climbs by the rows the echoed line occupies. Measured with the
+    width in force at the *newline* rather than at the echo, a window narrowed
+    in between makes that number far too large - at 200 columns down to 20, a
+    150-character line goes from nought rows to seven, and seven rows up is
+    into the answer already on screen.
+
+    Terminals disagree about whether they reflow what is already drawn, so no
+    arithmetic is right for both. Measuring what was actually emitted fails the
+    safe way, and this pins that direction.
+    """
+    width = {"now": 200}
+    monkeypatch.setattr(terminal, "_width", lambda: width["now"])
+
+    out: list[str] = []
+    rendered = Rendered(write=out.append)
+    rendered.feed("FIRST COMMITTED LINE\n")
+    rendered.feed("z" * 150)
+    width["now"] = 20  # the user drags the window narrow
+    rendered.feed("\n")
+    rendered.finish()
+
+    climbed = [int(count or 1) for count in re.findall(r"\x1b\[(\d*)A", "".join(out))]
+    assert max(climbed, default=0) <= 1, f"climbed {max(climbed)} rows at width 200"
+
+
 def test_a_line_of_wide_characters_is_not_shown_twice(monkeypatch):
     """AC 7 and AC 24 together.
 
@@ -485,6 +534,23 @@ def test_a_ragged_table_keeps_the_rows_the_model_wrote(monkeypatch):
     assert "| a | b | c |" in on_screen, "the rows were run together"
     assert "| 2 | 3 | 4 | 5 |" in on_screen
     assert "after" in on_screen
+
+
+def test_a_box_character_in_a_cell_is_not_mistaken_for_a_table(monkeypatch):
+    """AC 23. What tells a drawn table from a paragraph of pipes.
+
+    A table is recognised by the rule Rich puts under the header. Asking
+    whether that character is *present* takes a row like `| a─b | c |` - a
+    model drawing a diagram in a cell - as proof, and hands back the paragraph
+    Rich actually produced with every row run together. The test is now that a
+    whole line is nothing but rule, which is what a rule is.
+    """
+    on_screen = shown(
+        "| a─b | c |\n| d | e |\nafter\n", width=40, monkeypatch=monkeypatch
+    )
+
+    assert "| a─b | c |" in on_screen, "the rows were run together"
+    assert "| d | e |" in on_screen
 
 
 def test_a_stray_pipe_row_is_shown_not_swallowed():

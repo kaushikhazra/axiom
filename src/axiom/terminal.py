@@ -494,6 +494,7 @@ class Rendered:
         self._write = write or (lambda text: print(text, end="", flush=True))
         self._line = ""  # the line being typed, not yet complete
         self._echoed = 0  # how much of it the user has already seen
+        self._echo_width = 0  # the width it was drawn at, for taking it back
         self._fence: str | None = None  # the language of an open fence
         self._lexer: str | None = None  # that language, if one exists for it
         self._code: list[str] = []  # the open fence's lines, for context
@@ -505,20 +506,50 @@ class Rendered:
         while "\n" in self._line:
             line, _, self._line = self._line.partition("\n")
             self._finished(line)
-            self._echoed = 0
+            self._echoed, self._echo_width = 0, 0
         # Whatever is left is incomplete. Echo the part not yet seen, plainly -
         # holding it back until the newline would make output arrive a line at
         # a time, which is visibly slower than today (AC 10).
-        if len(self._line) > self._echoed:
-            self._write(self._line[self._echoed :])
-            self._echoed = len(self._line)
+        want = self._echo_limit()
+        if want > self._echoed:
+            self._write(self._line[self._echoed : want])
+            self._echoed = want
+            # The width *this* text was drawn at. Taking it back later must use
+            # the same number - see `_rows_used`.
+            self._echo_width = _width()
+
+    def _echo_limit(self) -> int:
+        """How much of the unfinished line may be echoed - all but the boundary.
+
+        A terminal that has been sent exactly as many characters as it has
+        columns is in an ambiguous state: the VT-series and xterm hold the
+        cursor at the last column with the wrap *pending*, while a simpler
+        terminal has already moved to the next row. `_erase` cannot tell which,
+        and being wrong either leaves a duplicated row behind or climbs one row
+        too far and erases a line already committed.
+
+        Rather than pick a side, the boundary is never reached: one character is
+        held back whenever the echo would land exactly on a multiple of the
+        width. It arrives with the next chunk, or with the line - so it costs a
+        few hundred microseconds and removes the whole class.
+        """
+        full = len(self._line)
+        try:
+            from rich.cells import cell_len
+
+            width = max(1, _width())
+            if full and cell_len(self._line[:full]) % width == 0:
+                return full - 1
+        except Exception:
+            pass
+        return full
 
     def finish(self) -> None:
         """Flush a reply that ended without a final newline."""
         if self._line:
             self._finished(self._line)
         self._settle_table()
-        self._line, self._echoed = "", 0
+        self._line, self._echoed, self._echo_width = "", 0, 0
         self._fence, self._lexer, self._code = None, None, []
 
     def _finished(self, line: str) -> None:
@@ -581,16 +612,22 @@ class Rendered:
         """Rows below the first that the echoed text has spilled onto.
 
         `cell_len`, not `len`: a wide character occupies two columns, and
-        counting it as one would leave a row behind. Assumes the terminal
-        defers its wrap - it stays on the last column until one more character
-        arrives - which is what every terminal from this century does.
+        counting it as one would leave a row behind.
+
+        The width used is the one the text was **echoed** at, not the one in
+        force now. A window narrowed between the echo and the newline would
+        otherwise make this climb rows the echo never occupied and erase lines
+        already committed. Terminals disagree about whether they reflow what is
+        already drawn - Windows Terminal does, xterm does not - so there is no
+        arithmetic that is right for both. Measuring what was actually emitted
+        fails the safe way: leftover text, never a destroyed answer.
         """
         if self._echoed <= 0:
             return 0
         try:
             from rich.cells import cell_len
 
-            width = max(1, _width())
+            width = max(1, self._echo_width or _width())
             return max(0, (cell_len(typed[: self._echoed]) - 1) // width)
         except Exception:
             return 0
@@ -735,9 +772,21 @@ def _colourless() -> bool:
 # closes. Missing a table reads badly; eating a paragraph loses the answer.
 _TABLE_ROW = re.compile(r"^\s*\|")
 
-# What Rich draws under a table's header row, and the only reliable sign that it
-# understood the rows as a table at all rather than as a paragraph of pipes.
+# What Rich draws under a table's header row, and the sign that it understood
+# the rows as a table at all rather than as a paragraph of pipes.
 HEADER_RULE = "─"
+
+
+def _is_a_rule(line: str) -> bool:
+    """Whether a drawn line is a header rule and not text that contains one.
+
+    A whole line of it, not an appearance of it. Asking whether the character
+    is *present* takes a row like `| a─b | c |` - a model drawing a diagram in
+    a table cell - as proof that a table was drawn, and hands back the
+    paragraph Rich actually produced, with every row run together.
+    """
+    visible = _ESCAPE.sub("", line)
+    return bool(visible.strip()) and not visible.strip(" " + HEADER_RULE)
 
 
 def _looks_like_a_table_row(line: str) -> bool:
@@ -781,7 +830,7 @@ def _as_table(rows: list[str]) -> list[str]:
             drawn.pop(0)
         while drawn and not _visible(drawn[-1]):
             drawn.pop()
-        if not any(HEADER_RULE in line for line in drawn):
+        if not any(_is_a_rule(line) for line in drawn):
             return rows  # not a table; hand back what the model wrote
         return drawn or rows
     except Exception:
