@@ -324,7 +324,15 @@ def _switched_to(
         return None
     _remember(chosen, settings.host)
     fresh = _prepare(model_backend, settings, attached, chosen)
-    terminal.note_switched(fresh.model, fresh.context, fresh.offered)
+    terminal.note_switched(
+        fresh.model,
+        fresh.context,
+        fresh.offered,
+        # The same two settings `announce` was given at startup, so the two
+        # lines cannot disagree about facts a switch does not change (#56).
+        overridden=settings.debug_max_context is not None,
+        web=settings.web_enabled,
+    )
     return fresh
 
 
