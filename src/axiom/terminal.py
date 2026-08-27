@@ -169,13 +169,20 @@ def note_settled(model: str, reason: str) -> None:
 
 
 def note_choice_saved(problem: str | None, path: str) -> None:
-    """Said only when remembering failed, or when the folder is new.
+    """Said only when remembering failed, or when the file is new.
 
-    A successful save into a folder that already existed is silent - the user
-    picked a model and got it, and a line confirming a file was written is
-    noise. A *new* folder is different: axiom has just created something in a
+    A save over a file that was already there is silent - the user picked a
+    model and got it, and a line confirming a write they have seen before is
+    noise. A *new file* is different: axiom has just put something in a
     directory that is very often a git repository, and finding it later in
     `git status` with no idea what made it is worse than one line now.
+
+    The caller decides which case this is, and decides it by whether the file
+    existed - not the folder. Asking about the folder meant a project that
+    already had `.axiom/mcp.json` was never told at all.
+
+    `path` empty means silence, so a failed save reports the failure and never
+    also claims a file was written.
     """
     if problem:
         print(f"{VOICE} {problem} - it will be asked again next time", file=sys.stderr)
