@@ -11,6 +11,7 @@ still interrogating the old model - #48 AC 29 was exactly that mistake.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -328,6 +329,56 @@ def test_switching_sends_no_message_by_itself(capsys, monkeypatch, choice):
     assert stub.streamed == []
 
 
+# --- When the carried conversation does not fit --------------------------
+
+
+def test_a_conversation_too_large_for_the_new_model_is_compacted(
+    capsys, monkeypatch, choice
+):
+    """AC 18. Compacted the way a long conversation is, and said before sending.
+
+    Had no test at all after cycle 2 - the existing compaction machinery does
+    the work, which is exactly the kind of thing that gets assumed rather than
+    checked. The new model's window is a fifth of the old one's.
+    """
+    long_enough = "x" * 3000
+    stub, out = run(
+        capsys,
+        monkeypatch,
+        [long_enough, long_enough, "/model", "3", "third"],
+        infos={
+            "qwen2.5:7b": {"qwen2.context_length": 32768},
+            "ornith:9b": {"qwen35.context_length": 600},
+        },
+    )
+
+    assert "compacting" in out.out, "the carried conversation was never squeezed"
+    assert out.out.index("now ornith:9b") < out.out.index("compacting")
+    assert stub.completed, "no summary was ever made"
+    # Said before the payload went out, not after it came back.
+    assert out.out.index("compacting") < out.out.rindex("a reply")
+
+
+def test_a_window_that_cannot_hold_anything_keeps_the_session_and_says_so(
+    capsys, monkeypatch, choice
+):
+    """AC 19. Names the model, offers /model, and does not end the session."""
+    stub, out = run(
+        capsys,
+        monkeypatch,
+        ["/model", "3", "hello", "still here?"],
+        infos={
+            "qwen2.5:7b": {"qwen2.context_length": 32768},
+            "ornith:9b": {"qwen35.context_length": 1},
+        },
+    )
+
+    assert "ornith:9b cannot hold even an empty message" in out.err
+    assert "/model" in out.err
+    # Still at the prompt afterwards rather than gone four lines earlier.
+    assert out.err.count("cannot hold") == 2
+
+
 # --- Remembering ---------------------------------------------------------
 
 
@@ -361,6 +412,20 @@ def test_a_refused_name_remembers_nothing(capsys, monkeypatch, choice):
     assert not choice.exists()
 
 
+def test_a_switch_that_cannot_be_saved_still_takes_effect(capsys, monkeypatch, choice):
+    """AC 23. Had no test after cycle 2 - the save path was assumed shared."""
+
+    def refuse(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(Path, "mkdir", refuse)
+    stub, out = run(capsys, monkeypatch, ["/model ornith:9b", "hello"])
+
+    assert "could not remember this choice" in out.err
+    assert "now ornith:9b" in out.out
+    assert stub.asked_about[-1] == "ornith:9b", "the switch did not take effect"
+
+
 # --- Getting it wrong ----------------------------------------------------
 
 
@@ -381,6 +446,57 @@ def test_something_that_is_neither_a_number_nor_a_name_is_refused(
     assert "is not a number" in out.err
 
 
+def test_an_installed_name_typed_at_the_list_is_accepted(capsys, monkeypatch, choice):
+    """AC 25, read as written.
+
+    The refusal condition is "not a number **and** not an installed name", so
+    a name is one of the two things the list accepts. The first implementation
+    only took numbers and answered `'ornith:9b' is not a number` - refusing
+    something the criterion says is valid, and telling the user the name they
+    would type at `/model <name>` does not work here.
+    """
+    stub, out = run(capsys, monkeypatch, ["/model", "ornith:9b", "hello"])
+
+    assert "is not a number" not in out.err
+    assert "now ornith:9b" in out.out
+
+
+def test_the_refusal_mentions_names_where_names_are_accepted(
+    capsys, monkeypatch, choice
+):
+    """AC 25. Advice narrower than the truth is its own defect."""
+    stub, out = run(capsys, monkeypatch, ["/model", "nonsense", "2"])
+
+    assert "or a model's full name" in out.err
+
+
+def test_a_removed_current_model_is_still_named_and_a_switch_still_works(
+    capsys, monkeypatch, choice
+):
+    """AC 31.
+
+    The model in use cannot appear in the list - the list holds what the host
+    reports - so nothing is marked, and without a word about it the user has no
+    way to tell what they are talking to.
+    """
+
+    class Vanishing(StubBackend):
+        def installed(self):
+            seen = getattr(self, "listed", 0)
+            self.listed = seen + 1
+            return ["gemma2:2b", "ornith:9b"] if seen else list(INSTALLED)
+
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    stub = Vanishing(models=INSTALLED)
+    feed(monkeypatch, ["/model", "2", "hello", "/exit"])
+    main(["--model", "qwen2.5:7b"], using=stub)
+    out = capsys.readouterr()
+
+    assert "still on qwen2.5:7b" in out.err
+    assert "no longer lists" in out.err
+    assert "now ornith:9b" in out.out
+
+
 def test_ctrl_c_at_the_list_cancels_and_keeps_the_session(capsys, monkeypatch, choice):
     """AC 26. Cancels the switch - it does not end the session."""
     stub, out = run(capsys, monkeypatch, ["/model", KeyboardInterrupt(), "still here?"])
@@ -392,10 +508,15 @@ def test_ctrl_c_at_the_list_cancels_and_keeps_the_session(capsys, monkeypatch, c
 # --- Boundaries ----------------------------------------------------------
 
 
-def test_one_installed_model_says_there_is_nothing_to_switch_to(
+def test_one_installed_model_shows_it_as_current_and_says_so(
     capsys, monkeypatch, choice
 ):
-    """AC 27."""
+    """AC 27, which asks for the model to be *shown*, not merely described.
+
+    The first implementation printed the sentence and no list at all. The
+    criterion is "shows that model marked as current **and** says there is
+    nothing to switch to" - two things, and only one of them was happening.
+    """
     stub, out = run(
         capsys,
         monkeypatch,
@@ -404,6 +525,7 @@ def test_one_installed_model_says_there_is_nothing_to_switch_to(
         argv=["--model", "solo:1b"],
     )
 
+    assert "1. solo:1b  (current)" in out.out
     assert "nothing to switch to" in out.out
     assert "which model?" not in out.out
 

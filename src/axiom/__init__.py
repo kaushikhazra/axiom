@@ -240,11 +240,20 @@ def _switch_model(
             return _switched_to(model_backend, settings, attached, run, named)
         terminal.note_model_missing(named, settings.host)
 
-    if len(available) == 1:
+    # Shown even when there is nothing to choose (AC 27) and even when the
+    # current model is not in it (AC 31) - the list is how the user sees where
+    # they are, and withholding it to save a line leaves them guessing.
+    terminal.show_models(available, settings.host, run.model, current=True)
+    if run.model not in available:
+        # AC 31. It cannot appear in the list - the list holds what the host
+        # reports and nothing else - so the fact that it is still the model in
+        # use has to be said outright, or nothing on screen is marked and the
+        # user cannot tell what they are on.
+        terminal.note_current_missing(run.model, settings.host)
+    if len(available) == 1 and run.model in available:
         terminal.note_only_model(available[0])
         return None
 
-    terminal.show_models(available, settings.host, run.model, current=True)
     while True:
         try:
             answer = terminal.ask_model("enter to keep the current one")
@@ -264,10 +273,16 @@ def _switch_model(
             # and a switch nobody asked for is worse than a wasted keystroke.
             terminal.note_unchanged(run.model)
             return None
-        chosen = models.picked(answer, available, None)
+        # A number or an installed name. AC 25 refuses only what is *neither*,
+        # so a user who already knows the name they want does not have to find
+        # its number - and the name they would type at `/model <name>` is the
+        # same one that works here.
+        chosen = models.picked(answer, available, None) or (
+            answer.strip() if answer.strip() in available else None
+        )
         if chosen is not None:
             return _switched_to(model_backend, settings, attached, run, chosen)
-        terminal.refuse_model(answer, len(available))
+        terminal.refuse_model(answer, len(available), names=True)
 
 
 def _switched_to(

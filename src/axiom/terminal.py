@@ -76,25 +76,28 @@ def ask_model(hint: str = "enter for the default") -> str:
         raise
 
 
-def refuse_model(answer: str, count: int) -> None:
+def refuse_model(answer: str, count: int, names: bool = False) -> None:
     """Why that answer did not name a model, said so the next try can work.
 
     Two refusals, because there are two ways to get it wrong once an empty
     line always works: a number out of range gets the range, and anything that
-    is not a number gets told that numbers are what this wants. Both name the
-    range, so the next attempt has what it needs without scrolling back.
+    is not a number gets told what this wants. Both name the range, so the
+    next attempt has what it needs without scrolling back.
+
+    `names` widens the advice where a name is also accepted - the switch list
+    takes either, and telling a user there only that a number is wanted would
+    be advice that is narrower than the truth.
     """
     given = answer.strip()
+    wanted = (
+        f"type a number from 1 to {count}, or a model's full name"
+        if names
+        else f"type a number from 1 to {count}"
+    )
     if given.isdigit():
-        print(
-            f"{VOICE} there is no model {given} - type a number from 1 to {count}",
-            file=sys.stderr,
-        )
+        print(f"{VOICE} there is no model {given} - {wanted}", file=sys.stderr)
     else:
-        print(
-            f"{VOICE} {given!r} is not a number - type a number from 1 to {count}",
-            file=sys.stderr,
-        )
+        print(f"{VOICE} {given!r} is not a number - {wanted}", file=sys.stderr)
 
 
 def note_model_missing(model: str, host: str) -> None:
@@ -186,6 +189,25 @@ def note_switched(model: str, context: int | None, tools: int | None) -> None:
 def note_unchanged(model: str) -> None:
     """Nothing happened, said so the silence is not mistaken for a switch."""
     print(f"{VOICE} still {model}")
+
+
+def note_current_missing(model: str, host: str) -> None:
+    """The model in use is no longer on the host, and is still in use.
+
+    Said because it cannot be shown: the list holds what the host reports and
+    nothing else, so a model that has been removed has no row to be marked in.
+    Without this the list appears with nothing marked and the user has no way
+    to tell what they are currently talking to (#49 AC 31).
+
+    The session is unaffected - Ollama has the model loaded or will load it
+    from what it still has; being absent from `/api/tags` is not the same as
+    being unusable this second, and guessing otherwise would end a working
+    conversation over a listing.
+    """
+    print(
+        f"{VOICE} still on {model}, which {host} no longer lists",
+        file=sys.stderr,
+    )
 
 
 def note_only_model(model: str) -> None:
