@@ -14,11 +14,21 @@ cycles resolving each other's conflicts.
 | 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **done** - merged in PR #45, 4 cycles, all 12 criteria (AC 9 found decorative by the cycle-4 cold read after two cycles called it met) |
 | 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | **done** - merged in PR #46, 4 cycles, all 8 criteria (the cycle-3 cold read found the fix compacting away the user's own message, and AC 4 still violated) |
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | **done** - merged in PR #47, 4 cycles, all 30 criteria (the cycle-4 cold read found AC 6's routing broken for a server whose name contains the separator, and AC 22 marked met with no test at all) |
-| 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **running** - started 2026-08-27 13:27 IST, fail-safe 16:27 IST, 38 criteria |
-| 10 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session model switch | `49-model-switch` | **queued** - 34 criteria |
+| 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **done** - merged in PR #50, 3 cycles, 25 minutes, all 38 criteria (the cycle-3 cold read found five, including AC 29 with no real test at all - the stub discarded the model name it was handed) |
+| 10 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session model switch | `49-model-switch` | **done** - merged in PR #51, 3 cycles, 75 minutes, all 34 criteria (the cycle-3 cold read found five, three of them criteria read too loosely and two with no test at all) |
 
-**Row 9 is running.** Rows 1 to 8 are done. Row 10 starts when row 9 exits, by whichever of
-its three exits it reaches.
+**The queue is empty.** Every row is done. A new loop needs a new row here first.
+
+**Next up is manual testing, not another loop** - see [`../handoff.md`](../handoff.md), rewritten
+2026-08-27 because #48 and #49 both changed what starting axiom looks like. Nobody has still
+ever sat down and used it, and no real MCP server has ever been connected.
+
+**Rows 9 and 10 ran back to back on 2026-08-27**, the first two under the no-cron rule, and
+**the cold read found real defects in both** - six for six across #40, #41, #42, #43, #48, #49.
+Two of this pair's findings were a new shape worth naming: not a bug in the code but a
+**criterion read too loosely by the cycle that implemented it**, with a test written from the
+implementation rather than from the issue text. #48 AC 33 and #49 AC 25 and AC 27 were all that.
+Reading the criteria from GitHub *first* is what caught them; nothing in the diff looked wrong.
 
 **#48 before #49, and the order is structural rather than a preference.** #49 AC 2 requires
 the switch list to match the startup list - same contents, same order, same numbering - and

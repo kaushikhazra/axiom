@@ -101,9 +101,10 @@ a reply
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
 axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 7 tools including web)
-> 
+> > > 
 --- stderr ---
-error: this session cannot continue - the context is too small to hold even an empty message, so nothing you type will fit. Start axiom with a larger context.
+error: qwen2.5:7b cannot hold even an empty message - the context is too small, so nothing you type will fit. Use /model to switch to a model with a larger context, or restart axiom with one.
+error: qwen2.5:7b cannot hold even an empty message - the context is too small, so nothing you type will fit. Use /model to switch to a model with a larger context, or restart axiom with one.
 
 --- ending --- returned normally (exit status 0)
 

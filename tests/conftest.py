@@ -69,8 +69,15 @@ class StubBackend:
         tools_supported: bool = True,
         models: list[str] | None = None,
         listing: BaseException | None = None,
+        infos: dict[str, dict | None] | None = None,
+        capable: dict[str, bool] | None = None,
     ) -> None:
         self.info = info
+        # Per-model overrides, for tests where a switch must be shown to have
+        # adopted the new model's window or its tool support rather than
+        # keeping the old one's.
+        self.infos = infos
+        self.capable = capable
         self.turns = list(turns or [])
         self.summary = summary
         self.usage = usage
@@ -102,10 +109,17 @@ class StubBackend:
         # that discards the name it was asked about cannot tell a correct
         # implementation from one that asks about the wrong model entirely.
         self.asked_about.append(model)
+        # Per-model when a test says so. One `info` for every model cannot show
+        # that a mid-session switch adopted the *new* model's window - the
+        # number printed would be identical either way (#49 AC 15).
+        if self.infos is not None and model in self.infos:
+            return self.infos[model]
         return self.info
 
     def supports_tools(self, model):  # noqa: ANN001
         self.asked_about.append(model)
+        if self.capable is not None and model in self.capable:
+            return self.capable[model]
         return self.tools_supported
 
     def stream(self, model, messages, options=None, tools=None):  # noqa: ANN001, ARG002

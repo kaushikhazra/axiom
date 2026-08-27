@@ -32,8 +32,16 @@ PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
-def show_models(models: tuple[str, ...], host: str, default: str | None) -> None:
-    """The installed models, numbered, with the one a bare enter takes marked.
+def show_models(
+    models: tuple[str, ...], host: str, marked: str | None, current: bool = False
+) -> None:
+    """The installed models, numbered, with one marked.
+
+    The same list at startup and at a switch - same contents, same order, same
+    numbering (#49 AC 2), which is why both callers come here rather than each
+    building one. Only the marker's wording differs: at startup it names what a
+    bare enter accepts, and at a switch it names the model already in use,
+    which enter keeps.
 
     The host is named with the list because the list is *about* that host: a
     model appearing to be missing is nearly always a run pointed somewhere the
@@ -44,49 +52,52 @@ def show_models(models: tuple[str, ...], host: str, default: str | None) -> None
     """
     print(f"{VOICE} models on {host}")
     width = len(str(len(models)))
+    label = "  (current)" if current else "  (default)"
     for number, model in enumerate(models, start=1):
-        marker = "  (default)" if model == default else ""
-        print(f"  {number:>{width}}. {model}{marker}")
+        print(f"  {number:>{width}}. {model}{label if model == marked else ''}")
 
 
-def ask_model() -> str | None:
-    """The user's answer to the list, or None if they are leaving.
+def ask_model(hint: str = "enter for the default") -> str:
+    """The user's answer to the list. Raises rather than swallowing.
 
-    Ctrl-C and Ctrl-D both mean leave, matching an idle prompt. There is no
-    session to return to yet, so neither can mean "never mind" the way Ctrl-C
-    does once a conversation is running.
+    `EOFError` and `KeyboardInterrupt` reach the caller deliberately, because
+    the two callers want different things from them. At startup both mean
+    leave - there is no session to return to. Mid-conversation Ctrl-C means
+    "never mind" and Ctrl-D means input has genuinely ended, and a single
+    `None` for both could not tell them apart (#49 AC 26, AC 33).
 
-    Takes no default, because there is always one and the hint never varies:
-    a run reaches this question only with two or more models, and something is
-    always marked - the remembered choice when the host still has it, the
-    first entry otherwise.
+    The blank line on the way out is printed here either way: the user pressed
+    a key mid-line, and the next thing printed would otherwise land on it.
     """
     try:
-        return input(f"{VOICE} which model? (enter for the default) ")
+        return input(f"{VOICE} which model? ({hint}) ")
     except (EOFError, KeyboardInterrupt):
         print()
-        return None
+        raise
 
 
-def refuse_model(answer: str, count: int) -> None:
+def refuse_model(answer: str, count: int, names: bool = False) -> None:
     """Why that answer did not name a model, said so the next try can work.
 
     Two refusals, because there are two ways to get it wrong once an empty
     line always works: a number out of range gets the range, and anything that
-    is not a number gets told that numbers are what this wants. Both name the
-    range, so the next attempt has what it needs without scrolling back.
+    is not a number gets told what this wants. Both name the range, so the
+    next attempt has what it needs without scrolling back.
+
+    `names` widens the advice where a name is also accepted - the switch list
+    takes either, and telling a user there only that a number is wanted would
+    be advice that is narrower than the truth.
     """
     given = answer.strip()
+    wanted = (
+        f"type a number from 1 to {count}, or a model's full name"
+        if names
+        else f"type a number from 1 to {count}"
+    )
     if given.isdigit():
-        print(
-            f"{VOICE} there is no model {given} - type a number from 1 to {count}",
-            file=sys.stderr,
-        )
+        print(f"{VOICE} there is no model {given} - {wanted}", file=sys.stderr)
     else:
-        print(
-            f"{VOICE} {given!r} is not a number - type a number from 1 to {count}",
-            file=sys.stderr,
-        )
+        print(f"{VOICE} {given!r} is not a number - {wanted}", file=sys.stderr)
 
 
 def note_model_missing(model: str, host: str) -> None:
@@ -155,6 +166,72 @@ def note_choice_saved(problem: str | None, path: str) -> None:
         print(f"{VOICE} {problem} - it will be asked again next time", file=sys.stderr)
     elif path:
         print(f"{VOICE} remembering this choice in {path}")
+
+
+def note_switched(model: str, context: int | None, tools: int | None) -> None:
+    """What changed, said the moment it changes.
+
+    The window and the tool count are named because they are the two things a
+    switch silently alters underneath a conversation that is already running -
+    and both can shrink. A user who moves to a smaller model and is not told
+    the window shrank will read the next compaction as axiom losing its place.
+    """
+    room = "Ollama default" if context is None else f"{context} tokens"
+    if tools is None:
+        can_do = "no tools - this model cannot call them"
+    elif tools == 0:
+        can_do = "tools off"
+    else:
+        can_do = f"{tools} tools"
+    print(f"{VOICE} now {model} (context: {room}, {can_do})")
+
+
+def note_unchanged(model: str) -> None:
+    """Nothing happened, said so the silence is not mistaken for a switch."""
+    print(f"{VOICE} still {model}")
+
+
+def note_current_missing(model: str, host: str) -> None:
+    """The model in use is no longer on the host, and is still in use.
+
+    Said because it cannot be shown: the list holds what the host reports and
+    nothing else, so a model that has been removed has no row to be marked in.
+    Without this the list appears with nothing marked and the user has no way
+    to tell what they are currently talking to (#49 AC 31).
+
+    The session is unaffected - Ollama has the model loaded or will load it
+    from what it still has; being absent from `/api/tags` is not the same as
+    being unusable this second, and guessing otherwise would end a working
+    conversation over a listing.
+    """
+    print(
+        f"{VOICE} still on {model}, which {host} no longer lists",
+        file=sys.stderr,
+    )
+
+
+def note_only_model(model: str) -> None:
+    """There is nothing to switch to, and the list would say nothing useful."""
+    print(f"{VOICE} {model} is the only model installed - nothing to switch to")
+
+
+def report_switch_failed(host: str, cause: BaseException, model: str) -> None:
+    """The host could not be listed, and the session is carrying on regardless.
+
+    Says which model it is carrying on with, because the user asked to change
+    it and is entitled to know they did not. Not fatal, unlike the same failure
+    at startup: there is a working session and a working model here, and losing
+    the list is a reason to stay put rather than to end it.
+    """
+    print(
+        f"{VOICE} cannot reach Ollama at {host} ({cause}) - staying on {model}",
+        file=sys.stderr,
+    )
+
+
+def refuse_command(form: str) -> None:
+    """A command that was recognised but not usable as typed."""
+    print(f"{VOICE} {form}", file=sys.stderr)
 
 
 def report_no_models(host: str) -> None:
@@ -368,7 +445,7 @@ def note_facts_forgotten(dropped: list[str]) -> None:
         print(f"  | {fact}")
 
 
-def report_too_large(over: int, cause: str = "message") -> None:
+def report_too_large(over: int, cause: str = "message", model: str = "") -> None:
     """Said instead of sending a payload that would not fit.
 
     Three causes, three messages, because #42 AC 5 asks that the user be told
@@ -381,12 +458,21 @@ def report_too_large(over: int, cause: str = "message") -> None:
     has already had its turn, so none of these suggest waiting for one.
     """
     if cause == "cannot-continue":
-        # AC 6. Not "try something", because nothing will work - this session
-        # cannot hold a single message and the user should hear it once.
+        # #42 AC 6 asked that the user hear this once and that the session end,
+        # because nothing they typed could work and repeating an unhelpable
+        # line at every prompt *is* discovery-by-retrying.
+        #
+        # #49 AC 19 makes it helpable. The window belongs to the model, and
+        # `/model` moves to another without losing the conversation - so the
+        # line names the model that cannot hold it and the way out, and the
+        # session stays. It may now repeat, and that is the right trade: a
+        # repeated line carrying an action beats one refusal and a closed
+        # session with the conversation gone.
+        cannot = f"{model} cannot" if model else "this session cannot"
         print(
-            "error: this session cannot continue - the context is too small to "
-            "hold even an empty message, so nothing you type will fit. Start "
-            "axiom with a larger context.",
+            f"error: {cannot} hold even an empty message - the context is too "
+            f"small, so nothing you type will fit. Use /model to switch to a "
+            f"model with a larger context, or restart axiom with one.",
             file=sys.stderr,
         )
     elif cause == "conversation":
