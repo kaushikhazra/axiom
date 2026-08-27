@@ -1,62 +1,59 @@
 # Action
 
-**Cycle 1 records the baseline, reproduces the invisibility, fixes it, and covers the twelve.**
+**Cold-read all 12 criteria, then take the exit.** Cycle 1 wrote the fix and the tests and
+declined to judge them.
 
-## 1. Baseline
+## 1. Read the criteria as written
 
-- `env AXIOM_HOST=http://127.0.0.1:1 AXIOM_MODEL=nonsense:99b AXIOM_DEBUG_MAX_CONTEXT=7 uv run pytest -q`
-  Expect **505 passed**. Record it.
-- Copy `tests/baseline/transcript.txt` to `.tmp/transcript-baseline-61.txt`.
-- `gh issue view 61`, record all 12 criteria `not-started`.
+`gh issue view 61` **first** - before the diff, before `logs/cycle-1.md`.
 
-## 2. Reproduce it, before touching src
+Then `git diff master...HEAD -- src/ tests/`.
 
-A run with tools and **no MCP server**: today no cost line appears at all. Watch it fail.
+## 2. Attack the five cycle 1 named, and any it did not
 
-Then a second failing test: the figure must include the standing prompt. Today the sum passed to
-`note_servers` covers only the declarations, so even the MCP case understates it.
+- **AC 9 - the same measurement the size checks use.** The test builds its own prompt from
+  `tools.Limits()` with no arguments; `_chat` builds one from the run's actual settings via
+  `_limits`. **Are they the same string?** With `--working-directory` set they are not, and the
+  test would then be asserting a figure the code never produces. Check with a non-default
+  setting, and if it diverges, that is a real defect in the test rather than the code.
+- **AC 3 - everything that rides in every request.** Declarations and the prompt. Is there a
+  third? Walk what `to_send` actually assembles and account for each part.
+- **AC 2 - the share.** The guard is `if window`, so a window of `0` is treated as absent rather
+  than dividing by zero. Correct, but is `0` reachable, and would silence be right if it were?
+- **AC 10's negative** passes under the break. Confirm its positive genuinely discriminates by
+  breaking **the switch call** specifically, not the startup one.
+- **AC 4 - said once.** With a server attached *and* a switch, how many cost lines does a
+  session print? Once at startup and once per switch is right; twice at startup is not.
 
-## 3. Fix
+## 3. The standing question
 
-Move the cost out of `note_servers` into its own saying, printed whenever tools are available.
-`note_servers` keeps the per-server counts, the bounds and the problems.
+For each of the fifteen: **could this pass if the feature did nothing?** Cycle 1 named five
+survivors of the startup break. Re-judge them independently, and additionally break the **switch**
+call and name that set - the two breaks have different survivors and only doing one is half the
+question.
 
-Include the standing prompt in the sum, and take the figure from
-`compaction.estimated_tokens` over the same payload the size checks weigh.
+## 4. Re-run everything
 
-**Decide and record**: where the line sits relative to the startup line and the server lines, and
-why. It is a fact about the session, so it belongs with the session's other facts.
+- Full suite and the hermeticity command. **520 is the floor.**
+- `diff .tmp/transcript-baseline-61.txt tests/baseline/transcript.txt` - 24 added, 0 removed,
+  every line a cost line. Confirm rather than assume.
+- No stray `.axiom/` in the repo.
 
-## 4. Cover the twelve
+## 5. Then take the exit
 
-- **AC 1, AC 2, AC 4** - a run with tools and no server says the cost, against the window, once,
-  at startup.
-- **AC 3** - the figure covers built-ins, server tools **and** the standing prompt. Assert it
-  equals `estimated_tokens` over all three, computed in the test.
-- **AC 5, AC 6** - `--no-tools` and a model that cannot call them are both silent. **Pair each
-  with a positive**, or "said nothing" passes for an implementation that never speaks.
-- **AC 7, AC 8** - `--no-web` reports the cost of what is *actually* declared, and the figure
-  falls relative to web-on. Two settings, compared to each other.
-- **AC 9** - asserted against `compaction.estimated_tokens`, never a constant.
-- **AC 10** - after a switch, the figure belongs to the new model's tools. Two models, different
-  tool support.
-- **AC 11, AC 12** - the transcript, and the existing MCP tests, are the evidence.
+**All twelve hold:** `loop.md` exit 1. Commit, push, PR referencing #61, merge, delete the
+branch. Then in the same run: mark row 14 **done** in `queue.md` with the PR number, cycle count
+and wall-clock time, scaffold `.claude/loop/62-summary-facts/iteration-1/` per the queue's
+handing-over procedure, mark row 15 **running**, and say what its first cycle will do.
 
-## 5. The transcript
+**Do not touch the cron.** Marking row 15 running *is* the handover.
 
-It **will** change - a line appears in every scenario that has tools. Fix every stub first,
-regenerate deliberately, read the whole diff, `grep -c "^<"`. Account for every changed line.
-
-## 6. Then
-
-Full suite and the hermeticity command. Break the fix, record how many go red **and name every
-survivor with a verdict**. Write cycle 2's action: a cold read of all 12 from GitHub, before the
-diff and before this log.
+**Any criterion does not hold:** do not merge. Fix it, record what the cold read caught, and
+write cycle 3's action.
 
 ## Record
 
-Status for all 12. The failing-test-first evidence. The placement decision. The break count and
-survivors. Every transcript line that changed and why.
+Status for all 12, judged against the criteria text rather than cycle 1's table. Both break sets
+with verdicts. The AC 9 prompt-identity answer, with evidence.
 
-**Write no questions into anything.** Decide, record the decision and the reasoning under a
-heading that says so, carry on. The exception is safety, not uncertainty.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.
