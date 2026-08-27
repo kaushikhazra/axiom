@@ -1,65 +1,72 @@
 # Action
 
-**Cycle 1 reproduces the defect against a real model, changes the instruction, and covers what
-can honestly be covered.** More of this row rests on a live probe than any before it - say so
-plainly rather than dressing a stub test up as evidence.
+**Cold-read all 12 criteria, then take the exit.** Cycle 1 measured rather than assumed, and its
+own conclusion is that two of the twelve rest on nothing a test can hold. Judge that honestly.
 
-## 1. Baseline
+## 1. Read the criteria as written
 
-- `env AXIOM_HOST=http://127.0.0.1:1 AXIOM_MODEL=nonsense:99b AXIOM_DEBUG_MAX_CONTEXT=7 uv run pytest -q`
-  Expect **521 passed**. Record it.
-- Copy `tests/baseline/transcript.txt` to `.tmp/transcript-baseline-62.txt`.
-- `gh issue view 62`, record all 12 criteria `not-started`.
+`gh issue view 62` **first** - before the diff, before `logs/cycle-1.md`. That log argues for its
+own conclusions and its author wrote both the wording and the case for it.
 
-## 2. Reproduce it live, before changing anything
+Then `git diff master...HEAD -- src/ tests/`.
 
-Call `compaction.summarised` (or whatever produces the summary) directly against the local
-Ollama, with a transcript that mixes:
+## 2. The question that decides this row
 
-- a fact only the user could know - a name, a number, a preference,
-- and the model explaining something general, the way it explained what RPG stands for.
+**AC 4 and AC 5 do not say "on some models".**
 
-**Paste the real output into the log.** If the general fact does not appear, say so - the defect
-may be model-dependent, and that changes what this row can claim.
+> 4. General knowledge the model already has is not stored as though it were something learned
+>    here.
+> 5. Something restated in the turns that were kept is not also held in the summary.
 
-## 3. Change the instruction
+Cycle 1 measured `qwen2.5:7b` ignoring the instruction - 3.5 general bullets before, 3.8 after,
+inside the noise. On that model the criterion is **not met**, and the change did not make it met.
 
-Add the distinction the instruction lacks: facts the **conversation** established, not knowledge
-the model brought to it. Keep the third sentence's protection - a brief early statement matters
-as much as a later topic - because that is a different axis and #32 measured why it is there.
+Decide, and say it plainly: is AC 4 met, met-in-part, or not met? `observe.md` says a criterion
+that cannot be met as written is an acceptable outcome here and a likelier one than in the four
+rows before. **Do not round it up to met because the code changed.**
 
-Then **run the same probe again** and paste the output. That comparison is AC 4 and AC 5's
-evidence, and there is no substitute for it.
+If it is not met, the exit is still exit 1 or exit 2 - but the row's honest state goes in the
+queue and, if criteria are left behind, in a follow-up issue.
 
-## 4. AC 3, honestly
+**AC 5 was never separately measured at all.** "Something restated in the turns that were kept"
+is a different claim from "general knowledge" - it is about duplication between the summary and
+the surviving pairs. Nothing in cycle 1 tested or probed it. Do so, or mark it honestly.
 
-Decide whether an honest structural signal separates "least particular", or whether keeping
-general knowledge out makes the question moot. **Record the decision and the reasoning.** Do not
-build a scorer that guesses importance - `assumption.md` rules that out and says why.
+## 3. Attack the rest
 
-Whatever is decided, `bounded()` is testable directly with hand-written fact lists. Cover it.
+- **The instruction tests** assert substrings of the instruction. Intent, not effect - the exact
+  shape the cold read has found in four of the last five rows. Do they earn their place, or are
+  they decoration that will pass forever while the behaviour rots?
+- **AC 3's decision.** Cycle 1 argues role is not a proxy for particularity because assistant
+  turns carry answers as well as general knowledge. Is that right? Look for a counter-example.
+- **AC 9, AC 10.** The stub returns a summary the test wrote, so these prove carrying rather
+  than summarising. Is that enough for the criteria as worded?
+- **AC 11.** Half is tested. The other half - a model inventing facts from small talk - was never
+  probed. Probe it: a transcript of pure pleasantries, and see what comes back.
 
-## 5. Cover what a stub can honestly cover
+## 4. The break
 
-- **AC 6, AC 7, AC 8** - the honesty and the bound, unchanged from #32. The existing
-  `tests/test_compaction.py` largely holds these; add what is missing.
-- **AC 9, AC 10** - recall across one compaction and across two, with a stub returning a summary
-  the test wrote.
-- **AC 12** - the transcript.
-- **AC 11** - a stub can prove axiom does not *invent* a summary when the model returns nothing.
-  It cannot prove the model does not invent one. Test the first, probe the second.
+Revert the instruction and record what goes red. **Expect little, and if nothing goes red, say
+so** - that is the honest measure of how much of this row the suite actually holds, and it
+belongs in the log rather than hidden behind a green run.
 
-## 6. Then
+## 5. Re-run everything
 
-Full suite and the hermeticity command. Break the instruction change and record what goes red -
-**expect little, and say so**: an instruction has few hermetic consequences, which is itself the
-finding to record rather than hide. Write cycle 2's action.
+- Full suite and the hermeticity command. **536 is the floor.**
+- Transcript unchanged.
+- No stray `.axiom/`.
+
+## 6. Then take the exit
+
+Whatever the verdict, hand over: mark row 15 done in `queue.md` with the PR number, cycle count,
+wall-clock time **and the honest criteria state**, scaffold
+`.claude/loop/60-rendered-replies/iteration-1/`, mark row 16 **running**. #60 is the last row.
+
+**Do not touch the cron.**
 
 ## Record
 
-Status for all 12, and **for each, whether its evidence is a test or a live probe**. The before
-and after probe output, verbatim. The AC 3 decision with reasoning. The break count and
-survivors.
+Status for all 12, judged against the criteria text rather than cycle 1's table. The AC 4 and
+AC 5 verdicts with reasoning. The AC 11 probe output. What the break turned red.
 
-**Write no questions into anything.** Decide, record the decision and the reasoning under a
-heading that says so, carry on. The exception is safety, not uncertainty.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.
