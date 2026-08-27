@@ -16,12 +16,49 @@ cycles resolving each other's conflicts.
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | **done** - merged in PR #47, 4 cycles, all 30 criteria (the cycle-4 cold read found AC 6's routing broken for a server whose name contains the separator, and AC 22 marked met with no test at all) |
 | 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **done** - merged in PR #50, 3 cycles, 25 minutes, all 38 criteria (the cycle-3 cold read found five, including AC 29 with no real test at all - the stub discarded the model name it was handed) |
 | 10 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session model switch | `49-model-switch` | **done** - merged in PR #51, 3 cycles, 75 minutes, all 34 criteria (the cycle-3 cold read found five, three of them criteria read too loosely and two with no test at all) |
+| 11 | [#57](https://github.com/kaushikhazra/axiom/issues/57) config file encoding | `57-config-encoding` | **running** - started 2026-08-28 00:21 IST, fail-safe 04:21 IST, 9 criteria |
+| 12 | [#55](https://github.com/kaushikhazra/axiom/issues/55) announce the file, not the folder | `55-announce-the-file` | **queued** - 11 criteria |
+| 13 | [#56](https://github.com/kaushikhazra/axiom/issues/56) the same facts after a switch | `56-same-facts` | **queued** - 12 criteria |
+| 14 | [#61](https://github.com/kaushikhazra/axiom/issues/61) what the tools cost | `61-tool-cost` | **queued** - 12 criteria |
+| 15 | [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | `62-summary-facts` | **queued** - 12 criteria |
+| 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **queued** - 29 criteria, one new dependency |
 
-**The queue is empty.** Every row is done. A new loop needs a new row here first.
+**Row 11 is running. Every row through 16 runs, one after another, until the queue is empty.**
 
-**Next up is manual testing, not another loop** - see [`../handoff.md`](../handoff.md), rewritten
-2026-08-27 because #48 and #49 both changed what starting axiom looks like. Nobody has still
-ever sat down and used it, and no real MCP server has ever been connected.
+**All six came out of the first manual pass**, 2026-08-27, and that is the point worth keeping.
+The suite was 440 green and hermetic, six loops had each survived a hostile cold read, and one
+evening of a person actually using axiom found six more things. Four of them are shapes no test
+could have produced:
+
+- **#57 is a plain bug**, and the most likely of all of these to have already bitten someone:
+  the one file axiom asks a user to hand-write cannot be read if Windows' own default tooling
+  wrote it. Every test writes config with Python's encoding, which never emits a byte order
+  mark, so the stubs and the world disagreed about what a file looks like.
+- **#55 and #56 are criteria that were satisfied exactly as written and still left a hole.**
+  #48 AC 30 announces a folder, so a project that already has `.axiom/mcp.json` gets a file
+  written into it silently forever. #49 AC 16 promises a tool count, so the switch line drops
+  the web state and the debug-override note - and a forced context then reads as the model's
+  own.
+- **#61 and #62 are things nobody thought to ask.** Seven built-in tools cost 653 tokens and
+  the standing prompt 154, and that 807 is only ever reported when an MCP server happens to be
+  attached - so a 2000-token window was 40% spent before a word was typed, invisibly. And the
+  summary, which has a hard bound, spent one of its slots on "RPG stands for role-playing
+  game".
+
+Rows 11 to 15 are ordered smallest blast radius first. #57 touches only how two files are
+decoded. #55, #56 and #61 all change lines in `terminal.py` and are sequenced so they do not
+argue over the same output. #62 reaches into the summariser #32 settled. **#60 is last** because
+it is the largest, adds the first new dependency since #43, and rewrites what every reply looks
+like - and if the fail-safe takes it, the five small ones are already merged.
+
+**Manual testing is not finished.** #52, #49, #48 and #43 passed; #42 is half done; **#41, #34,
+#40, #35 and #26 were never reached** - tools doing real work, the web, and the basics. See
+[`../handoff.md`](../handoff.md). Two findings are recorded there and in no issue, deliberately:
+a model **fabricating tool results** (it invented the contents of a file the tool never read),
+and compaction **corrupting** a detail rather than dropping it ("ventured" became "Vented").
+Both belong to a **system prompt story that has not been written**, and Kaushik's ruling stands
+that axiom must not try to detect or challenge an unsupported answer - that builds smarts that
+cannot be kept consistent.
 
 **Rows 9 and 10 ran back to back on 2026-08-27**, the first two under the no-cron rule, and
 **the cold read found real defects in both** - six for six across #40, #41, #42, #43, #48, #49.
@@ -35,17 +72,6 @@ the switch list to match the startup list - same contents, same order, same numb
 #49 AC 20 requires a switch to be remembered "the same way a startup choice is". Both of
 those are #48's to build. Running #49 first would mean inventing the list and the
 remembered-choice file inside the switch story, then having #48 rewrite them.
-
-**Manual testing has still never happened** - see [`../handoff.md`](../handoff.md), which is
-otherwise still accurate. Nobody has sat down and used axiom; no real MCP server has ever
-been connected. #48 came out of exactly the kind of thing manual use surfaces - a hardcoded
-`qwen2.5:7b` default that a different Ollama host may simply not have - so the handoff's
-"what to try" list is worth reading before or alongside these two, not instead of them.
-
-**Both rows change the startup line, so both regenerate `tests/baseline/transcript.txt`.**
-That is a deliberate regeneration under **Standing** below, not a failure to clear: #48
-replaces the model name's provenance, and #49 adds a line whenever a switch happens. Each
-loop says in its log which lines changed and why.
 
 **Listing models belongs behind `ModelBackend`, like every other thing Ollama is asked.**
 `backend.py` is the only module under `src/` that imports a vendor client, and both rows
@@ -94,26 +120,28 @@ On reaching any exit in `loop.md`:
 5. Write that iteration's `goal.md`, `observe.md`, `assumption.md`, `action.md` and
    `loop.md`, reading the issue with `gh issue view` for the criteria. Carry forward
    anything in **Standing** below that applies. Record the fail-safe as a **clock time** -
-   three hours from now, written out - not as a number of cycles.
+   four hours from now, written out - not as a number of cycles.
 6. Create the branch `feature/{slug}` from `master`, and commit the scaffold.
-7. Mark the new row **running** here, with the time it started.
-8. Begin its first cycle immediately. Nothing is scheduled and nothing waits - the next
-   cycle of the running loop, and the first cycle of the next loop, both start as soon as
-   the thing before them finishes.
+7. Mark the new row **running** here, with the time it started and its fail-safe clock time.
+8. Say in the handover which loop just started and what its first cycle will do.
+
+**There is one cron for the whole queue, not one per row.** It reads *this file* for whichever
+row says `running`, so a handover needs no cron work at all - marking the next row `running` in
+step 7 is what redirects it. **Do not delete it between rows.** Deleting it on a handover would
+end the chain silently with every remaining row still queued, which is the exact failure the
+one-cron design removes.
 
 ## Standing
 
 These apply to every loop in this queue and do not need rediscovering.
 
-- **Cycles run back to back. Three-hour fail-safe per story.** There is no cron and no
-  cadence: a cycle starts the moment the one before it finishes, and the next loop starts
-  the moment the one before it exits. The fail-safe is **wall-clock time on the row** -
-  three hours from the first cycle of that story, however many cycles fit - and each
-  iteration's `loop.md` writes it out as a clock time rather than a count. This is the one
-  place back-to-back running is more dangerous than a schedule: under cron a hung run cost
-  one firing and the next fired anyway, whereas here a hung run holds the whole chain, which
-  is exactly why the bound is a clock and not a cycle count. A cycle that finds the clock
-  spent stops the row at its fail-safe exit and hands over to the next one.
+- **15-minute cycles, four-hour fail-safe per story.** One cycle per firing, on a cron. A
+  hung run costs one firing and the next fires anyway, which is the reason to prefer a
+  schedule over running back to back - rows 9 and 10 ran back to back and a hung cycle there
+  would have held the whole chain. The fail-safe is **wall-clock time on the row**: four
+  hours from its first cycle, however many firings fit, written into that iteration's
+  `loop.md` as a clock time rather than a count. A cycle that finds the clock spent takes the
+  row's fail-safe exit and hands over to the next row.
 - **A loop never waits for an answer.** The queue runs unattended, one loop after another,
   and nobody is watching between cycles. A cycle that stops to ask a question does not
   pause - it holds the chain against a clock that keeps running, and takes the loops queued
