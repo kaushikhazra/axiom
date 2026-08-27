@@ -190,22 +190,33 @@ def note_choice_saved(problem: str | None, path: str) -> None:
         print(f"{VOICE} remembering this choice in {path}")
 
 
-def note_switched(model: str, context: int | None, tools: int | None) -> None:
+def note_switched(
+    model: str,
+    context: int | None,
+    tools: int | None,
+    overridden: bool = False,
+    web: bool = False,
+) -> None:
     """What changed, said the moment it changes.
 
     The window and the tool count are named because they are the two things a
     switch silently alters underneath a conversation that is already running -
     and both can shrink. A user who moves to a smaller model and is not told
     the window shrank will read the next compaction as axiom losing its place.
+
+    It carries **every fact the startup line carries** that a switch does not
+    make stale, and it says each in the same words, because it builds them with
+    the same two functions. It used to build its own, and two facts were
+    missing: the web state, so `--no-web` was unknowable from the line after a
+    switch; and the override note, so a forced window read as the model's own.
+
+    The host is the one thing deliberately left out. A switch cannot change it
+    and the startup line already named it (#56 AC 11).
     """
-    room = "Ollama default" if context is None else f"{context} tokens"
-    if tools is None:
-        can_do = "no tools - this model cannot call them"
-    elif tools == 0:
-        can_do = "tools off"
-    else:
-        can_do = f"{tools} tools"
-    print(f"{VOICE} now {model} (context: {room}, {can_do})")
+    print(
+        f"{VOICE} now {model} "
+        f"(context: {_room(context, overridden)}, {_can_do(tools, web)})"
+    )
 
 
 def note_unchanged(model: str) -> None:
@@ -275,6 +286,42 @@ def report_no_host(host: str, cause: BaseException) -> None:
     print(f"error: cannot reach Ollama at {host} ({cause})", file=sys.stderr)
 
 
+def _room(context: int | None, overridden: bool) -> str:
+    """How much room there is, in words.
+
+    Shared by the startup line and the switch line, deliberately. The two used
+    to phrase this independently, and the `debug override` note existed in one
+    and not the other - so after a switch a forced window read as the model's
+    own, which is the exact number someone debugging a compaction problem
+    reasons from (#56 AC 2, AC 9).
+
+    One function means they cannot say it differently for the same state,
+    whatever either is later changed to say.
+    """
+    if context is None:
+        return "Ollama default"
+    return f"{context} tokens{', debug override' if overridden else ''}"
+
+
+def _can_do(tools: int | None, web: bool) -> str:
+    """What the model can reach, in words. Shared for the same reason as `_room`.
+
+    `tools` is how many are available, 0 when the user switched them off, and
+    None when the model cannot call them at all. The three read differently
+    because the user can act on them differently - one is their own choice,
+    one is a fact about the model.
+
+    `web` only means anything when tools are available, which is what keeps two
+    three-state settings from becoming nine sentences: with no tools there is
+    nothing to say about the web, and the line stays one line.
+    """
+    if tools is None:
+        return "no tools - this model cannot call them"
+    if tools == 0:
+        return "tools off"
+    return f"{tools} tools including web" if web else f"{tools} tools, web off"
+
+
 def announce(
     model: str,
     host: str,
@@ -295,21 +342,10 @@ def announce(
     two three-state settings from becoming nine sentences: with no tools there
     is nothing to say about the web, and the line stays one line.
     """
-    if context is None:
-        room = "Ollama default"
-    else:
-        room = f"{context} tokens{', debug override' if overridden else ''}"
-
-    if tools is None:
-        can_do = "no tools - this model cannot call them"
-    elif tools == 0:
-        can_do = "tools off"
-    elif web:
-        can_do = f"{tools} tools including web"
-    else:
-        can_do = f"{tools} tools, web off"
-
-    print(f"{VOICE} {model} at {host} (context: {room}, {can_do})")
+    print(
+        f"{VOICE} {model} at {host} "
+        f"(context: {_room(context, overridden)}, {_can_do(tools, web)})"
+    )
 
 
 def note_starting(servers: int) -> None:
