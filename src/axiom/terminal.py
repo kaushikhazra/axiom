@@ -5,6 +5,7 @@ this module to say things rather than saying them itself, which is what keeps
 one module from both talking to a backend and writing to a terminal.
 """
 
+import os
 import re
 import sys
 
@@ -489,13 +490,14 @@ class Rendered:
         self._line = ""  # the line being typed, not yet complete
         self._echoed = 0  # how much of it the user has already seen
         self._fence: str | None = None  # the language of an open fence
+        self._table: list[str] = []  # rows waiting for the table to end
 
     def feed(self, text: str) -> None:
         """Take a fragment of the reply and show what can now be shown."""
         self._line += text
         while "\n" in self._line:
             line, _, self._line = self._line.partition("\n")
-            self._commit(line)
+            self._finished(line)
             self._echoed = 0
         # Whatever is left is incomplete. Echo the part not yet seen, plainly -
         # holding it back until the newline would make output arrive a line at
@@ -507,9 +509,39 @@ class Rendered:
     def finish(self) -> None:
         """Flush a reply that ended without a final newline."""
         if self._line:
-            self._commit(self._line)
+            self._finished(self._line)
+        self._settle_table()
         self._line, self._echoed = "", 0
         self._fence = None
+
+    def _finished(self, line: str) -> None:
+        """One complete line: committed now, or held because it is a table.
+
+        A table is the one construct that cannot be drawn a line at a time -
+        the column widths are not known until the last row has arrived, and a
+        row rendered alone is just its own text. It is also the only construct
+        held back, and that is a rule rather than a habit: AC 8 forbids holding
+        a fence's contents, and AC 10 forbids holding anything else.
+
+        Holding costs nothing that was ever shown. A held row is erased from
+        the line it was typed on, so the next row is typed over it, and when
+        the table ends the whole of it is written at once. Nothing that
+        reached the scrollback is touched, so AC 7 still holds exactly.
+        """
+        if self._fence is None and _looks_like_a_table_row(line):
+            self._table.append(line)
+            self._write("\r\x1b[K")  # take back the row that was typed here
+            return
+        self._settle_table()
+        self._commit(line)
+
+    def _settle_table(self) -> None:
+        """Write the held rows as one table, now that its extent is known."""
+        if not self._table:
+            return
+        rows, self._table = self._table, []
+        for line in _as_table(rows):
+            self._write("\r\x1b[K" + line + "\n")
 
     def _commit(self, line: str) -> None:
         """Write one finished line, styled, replacing whatever was echoed.
@@ -539,10 +571,71 @@ class Rendered:
                 self._fence = None if self._fence is not None else (language or "")
                 return f"\x1b[2m{line}\x1b[0m"
             if self._fence is not None:
-                return f"\x1b[36m{line}\x1b[0m"
+                # Cyan is a colour, so `NO_COLOR` takes it. The dim on a fence
+                # marker above is an attribute rather than a colour and stays -
+                # which is the same line Rich draws, and the same line the
+                # convention draws.
+                return line if _colourless() else f"\x1b[36m{line}\x1b[0m"
             return _as_markdown(line)
         except Exception:
             return line
+
+
+def _colourless() -> bool:
+    """Whether the user has asked for no colour.
+
+    Presence, not truth: `NO_COLOR=` with nothing after it counts. The published
+    convention says "not an empty string", but Rich tests for presence, and Rich
+    draws most of what reaches the screen here. Agreeing with the renderer beats
+    agreeing with the specification and then disagreeing with itself - a session
+    where headings lose their colour and fenced code keeps it is the worse
+    outcome of the two.
+    """
+    return "NO_COLOR" in os.environ
+
+
+# A row of a table, kept deliberately tight: a line whose first non-space
+# character is a pipe. Markdown allows a table without leading pipes, but
+# treating any line *containing* one as a table row would swallow ordinary
+# prose - a shell pipeline, a regex alternation - into a table that never
+# closes. Missing a table reads badly; eating a paragraph loses the answer.
+_TABLE_ROW = re.compile(r"^\s*\|")
+
+
+def _looks_like_a_table_row(line: str) -> bool:
+    return bool(_TABLE_ROW.match(line))
+
+
+def _as_table(rows: list[str]) -> list[str]:
+    """The held rows drawn as one table, or handed back untouched.
+
+    A single stray `| pipe |` line is not a table - markdown needs the
+    delimiter row - and Rich draws it as a paragraph. Whatever comes back, the
+    rows are never dropped: this is AC 5 at the one place in the renderer that
+    holds anything.
+    """
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.markdown import Markdown
+
+        buffer = StringIO()
+        Console(
+            file=buffer,
+            force_terminal=True,
+            legacy_windows=False,
+            width=_width(),
+            soft_wrap=False,  # a table draws its own edges; do not let them wrap
+        ).print(Markdown("\n".join(rows)), end="")
+        drawn = [_unpadded(line) for line in buffer.getvalue().split("\n")]
+        while drawn and not drawn[-1].strip():
+            drawn.pop()
+        return drawn or rows
+    except Exception:
+        # AC 28, and AC 5. A table that cannot be drawn is still a table the
+        # user asked for; hand back exactly what the model wrote.
+        return rows
 
 
 def _as_markdown(line: str) -> str:
@@ -605,6 +698,19 @@ def _width() -> int:
 
 
 _reply: "Rendered | None" = None
+_rendering = True
+
+
+def use_rendering(enabled: bool) -> None:
+    """Whether replies are formatted at all this run (AC 25).
+
+    Set once from the resolved settings. Off takes the same path a redirected
+    run takes, rather than a quieter rendering - so "off" is the behaviour the
+    golden transcript already records, and there is one plain path rather than
+    two that have to be kept identical.
+    """
+    global _rendering
+    _rendering = enabled
 
 
 def show_piece(text: str) -> None:
@@ -615,7 +721,7 @@ def show_piece(text: str) -> None:
     keeps the golden transcript and `axiom | grep` working.
     """
     global _reply
-    if not sys.stdout.isatty():
+    if not _rendering or not sys.stdout.isatty():
         print(text, end="", flush=True)
         return
     if _reply is None:

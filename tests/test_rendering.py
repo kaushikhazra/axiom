@@ -14,7 +14,7 @@ import re
 
 import pytest
 
-from axiom import terminal
+from axiom import config, terminal
 from axiom.terminal import Rendered
 
 
@@ -294,3 +294,224 @@ def test_an_empty_reply_prints_nothing(capsys, monkeypatch):
 def test_a_single_character_reply_is_shown():
     """AC 22."""
     assert "x" in stripped(stream("x"))
+
+
+# --- Tables, the one construct that is held --------------------------------
+
+
+TABLE = (
+    "Here are the results.\n\n"
+    "| language | year |\n| --- | --- |\n| Python | 1991 |\n| Rust | 2010 |\n"
+    "\nThat is all of them.\n"
+)
+
+
+def test_a_table_is_drawn_as_a_table():
+    """AC 1. The last construct a line-at-a-time renderer can reach.
+
+    Column widths are not known until the last row has arrived, so a row drawn
+    alone is only its own text. Rows are held - the one construct that is -
+    and the whole table is written when it ends.
+    """
+    shown = [line for line in displayed(stream(TABLE)) if line.strip()]
+
+    assert not any(line.startswith("|") for line in shown), "rows drawn as raw pipes"
+    assert any("─" in line for line in shown), "no rule between header and body"
+    for word in ("language", "Python", "1991", "Rust"):
+        assert any(word in line for line in shown), f"{word} was lost"
+
+
+def test_holding_a_table_still_moves_no_committed_line():
+    """AC 7 against AC 1. Held rows were never shown, so nothing moves."""
+    assert re.findall(r"\x1b\[\d*A", stream(TABLE * 3)) == []
+
+
+def test_a_reply_that_ends_inside_a_table_still_shows_it():
+    """The held rows are not lost when there is no line after them."""
+    shown = displayed(stream("| a | b |\n| --- | --- |\n| 1 | 2 |\n"))
+
+    assert any("1" in line and "2" in line for line in shown)
+
+
+def test_a_stray_pipe_row_is_shown_not_swallowed():
+    """AC 23. One `| pipe |` line is not a table - markdown needs the rule."""
+    shown = " ".join(displayed(stream("| a stray pipe row |\nand on we go\n")))
+
+    assert "a stray pipe row" in shown
+    assert "and on we go" in shown
+
+
+def test_prose_containing_a_pipe_is_not_held():
+    """The reason a row is tested by its *leading* pipe and nothing looser.
+
+    Treating any line containing `|` as a table row would swallow a shell
+    pipeline or a regex alternation into a table that never closes - eating a
+    paragraph to avoid missing a table.
+
+    Measured on the *committed* line, and **before the reply ends**. Both
+    matter, and each was found by a break that survived without it:
+
+    - a held row is echoed verbatim before it is taken back, so the text is in
+      the byte stream either way
+    - a held row is drawn when the reply finishes, so it reaches the screen
+      eventually even when it was wrongly held - `finish()` hides the bug
+
+    What a wrongly-held line actually costs is AC 10: it appears at the end of
+    the reply instead of when it was written. So the assertion is that the line
+    is on screen *while the reply is still arriving*.
+    """
+    committed = displayed(stream("run `ls | wc -l` to count them\n", finish=False))
+
+    assert any("wc -l" in line for line in committed), "held as though a table"
+
+
+# --- The switch ------------------------------------------------------------
+
+
+def test_rendering_can_be_switched_off(capsys, monkeypatch):
+    """AC 25. Off is today's output, not a quieter rendering."""
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr(terminal, "_reply", None)
+    monkeypatch.setattr(terminal, "_rendering", False)
+
+    terminal.show_piece("# Heading\nand **bold**\n")
+    terminal.end_reply()
+    printed = capsys.readouterr().out
+
+    assert printed == "# Heading\nand **bold**\n\n"
+    assert "\x1b[" not in printed
+
+
+@pytest.mark.parametrize(
+    ("argv", "environment", "expected"),
+    [
+        ([], {}, True),
+        ([], {"AXIOM_RENDER": "off"}, False),
+        ([], {"AXIOM_RENDER": "0"}, False),
+        (["--no-render"], {}, False),
+        (["--no-render"], {"AXIOM_RENDER": "on"}, False),
+    ],
+)
+def test_the_switch_follows_the_usual_precedence(
+    argv, environment, expected, monkeypatch
+):
+    """AC 25. Flag beats environment beats default, as every setting does."""
+    monkeypatch.delenv("AXIOM_RENDER", raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+
+    assert config.resolve(argv).render_enabled is expected
+
+
+def test_switching_off_tools_says_nothing_about_rendering(monkeypatch):
+    """A decision, recorded: --no-tools takes the web and MCP, not this.
+
+    Those are things the model may *do*. Rendering is about reading the answer,
+    and someone who wants a session without tools has said nothing about how
+    they want to read it.
+    """
+    monkeypatch.delenv("AXIOM_RENDER", raising=False)
+
+    assert config.resolve(["--no-tools"]).render_enabled is True
+
+
+def test_help_names_the_flag_and_its_variable(capsys):
+    """AC 27."""
+    with pytest.raises(SystemExit):
+        config.parse_args(["--help"])
+    text = capsys.readouterr().out
+
+    assert "--no-render" in text
+    assert "$AXIOM_RENDER" in text
+    assert "NO_COLOR" in text
+
+
+# --- NO_COLOR --------------------------------------------------------------
+
+
+def test_no_color_drops_colour_and_keeps_formatting(monkeypatch):
+    """AC 26.
+
+    A decision, recorded: `NO_COLOR` means no *colour*, not no formatting. A
+    heading stays bold and underlined; inline code loses its cyan. That is the
+    published convention's own wording, and it is what Rich does natively - so
+    the two agree instead of arguing.
+    """
+    monkeypatch.setenv("NO_COLOR", "1")
+    emitted = stream("# Heading\nwith `inline code`\n")
+
+    assert "\x1b[1" in emitted, "formatting was dropped along with the colour"
+    assert not re.search(r"\x1b\[[0-9;]*3[0-7]m", emitted), "colour survived"
+
+
+def test_no_color_reaches_the_colour_this_module_writes_itself(monkeypatch):
+    """AC 26. Rich honours it for free; the fence styling is hand-written."""
+    monkeypatch.setenv("NO_COLOR", "1")
+    emitted = stream("```python\nx = 1\n```\n")
+
+    assert "\x1b[36m" not in emitted, "fenced code kept its cyan"
+    assert "x = 1" in stripped(emitted)
+
+
+def test_colour_is_there_without_no_color(monkeypatch):
+    """The other half - otherwise the test above passes on a broken renderer."""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+
+    assert "\x1b[36m" in stream("```python\nx = 1\n```\n")
+
+
+def test_no_color_set_to_nothing_still_counts(monkeypatch):
+    """A decision, recorded.
+
+    The convention says "not an empty string"; Rich tests for presence. Rich
+    draws most of what reaches the screen here, so presence it is - a session
+    where headings lose their colour and fenced code keeps it is worse than
+    either rule applied consistently.
+    """
+    monkeypatch.setenv("NO_COLOR", "")
+
+    assert "\x1b[36m" not in stream("```python\nx = 1\n```\n")
+
+
+# --- Scrolling, wrapping, resize -------------------------------------------
+
+
+def test_a_reply_taller_than_the_screen_is_not_truncated(monkeypatch):
+    """AC 11. `rich.Live` would have cut this to the screen height."""
+    monkeypatch.setattr(terminal, "_width", lambda: 80)
+    tall = "".join(f"line number {n}\n" for n in range(200))
+    shown = [line for line in displayed(stream(tall)) if line.strip()]
+
+    assert len(shown) == 200
+    assert "…" not in " ".join(shown), "truncated with an ellipsis"
+
+
+@pytest.mark.parametrize("width", [40, 80, 200])
+def test_nothing_is_padded_out_to_the_console_width(width, monkeypatch):
+    """AC 12."""
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+    for line in displayed(stream("> a quoted line\n# a heading\nplain words\n")):
+        assert line == line.rstrip(), f"padded out at width {width}"
+
+
+def test_a_resize_mid_reply_cannot_corrupt_what_is_on_screen(monkeypatch):
+    """AC 13, and it is a consequence rather than a feature.
+
+    A resize corrupts a stream that redraws. Nothing here is redrawn, so the
+    property to assert is that the committed lines survive a width moving
+    under them - and that no cursor-up appears when it does.
+    """
+    widths = iter([80, 80, 40, 200, 30, 120, 60])
+    monkeypatch.setattr(terminal, "_width", lambda: next(widths, 100))
+
+    out: list[str] = []
+    rendered = Rendered(write=out.append)
+    for chunk in ("# One\n", "two **words**\n", "- three\n", "`four`\n", "five\n"):
+        rendered.feed(chunk)
+    rendered.finish()
+    emitted = "".join(out)
+
+    assert re.findall(r"\x1b\[\d*A", emitted) == []
+    shown = [line for line in displayed(emitted) if line.strip()]
+    assert len(shown) == 5, "a line was rewritten when the width moved"
+    assert "five" in shown[-1]
