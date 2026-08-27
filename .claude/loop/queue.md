@@ -20,10 +20,10 @@ cycles resolving each other's conflicts.
 | 12 | [#55](https://github.com/kaushikhazra/axiom/issues/55) announce the file, not the folder | `55-announce-the-file` | **done** - merged in PR #64, 2 cycles, 29 minutes, all 11 criteria (the cycle-2 cold read found AC 1 and AC 7 conflicting over an empty file; resolved in AC 7's favour and recorded in a test) |
 | 13 | [#56](https://github.com/kaushikhazra/axiom/issues/56) the same facts after a switch | `56-same-facts` | **done** - merged in PR #65, 2 cycles, 32 minutes, all 12 criteria (the cycle-2 cold read found three tests passing because a default happened to be right; the arguments are now required) |
 | 14 | [#61](https://github.com/kaushikhazra/axiom/issues/61) what the tools cost | `61-tool-cost` | **done** - merged in PR #66, 2 cycles, 35 minutes, all 12 criteria (the cycle-2 cold read found AC 9 with no test at all - every test used default settings, so a figure measured from a bare Limits() matched by coincidence; also fixed a flaky lifetime test in #43) |
-| 15 | [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | `62-summary-facts` | **running** - started 2026-08-28 02:18 IST, fail-safe 06:18 IST, 12 criteria |
-| 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **queued** - 29 criteria, one new dependency |
+| 15 | [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | `62-summary-facts` | **done** - merged in PR #67 at **exit 2**, 3 cycles, 49 minutes. **6 of 12 criteria met outright**, 3 met on one model of two, 2 not met as written. Follow-up [#68](https://github.com/kaushikhazra/axiom/issues/68). The two changes work on *opposite* models - showing the kept turns fixes qwen and not gemma, allowing an empty answer fixes gemma and not qwen |
+| 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **running** - started 2026-08-28 03:07 IST, fail-safe 07:07 IST, 29 criteria, one new dependency |
 
-**Row 15 is running. Every row through 16 runs, one after another, until the queue is empty.**
+**Row 16 is running. Every row through 16 runs, one after another, until the queue is empty.**
 
 **All six came out of the first manual pass**, 2026-08-27, and that is the point worth keeping.
 The suite was 440 green and hermetic, six loops had each survived a hostile cold read, and one
