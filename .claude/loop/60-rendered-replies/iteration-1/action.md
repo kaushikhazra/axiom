@@ -1,85 +1,77 @@
 # Action
 
-**Close the four gaps cycle 2 named.** The renderer is built, committed and measured;
-read `logs/cycle-2.md` first, particularly the status of all 29 and the two bugs that
-only a break-and-watch found.
+**The cold read.** This is the whole cycle. No feature work unless the read finds something
+that needs it.
 
-This is not a cold read. Cycle 2 said what is missing, so finding it again would be
-theatre. The cold read is cycle 4, once there is a complete thing to read coldly.
+Cycle 3 ended with all 29 criteria marked met with evidence. That is the exact sentence the
+implementing cycle wrote in **eleven consecutive issues** before a hostile reader found
+something real in every one of them. Treat it as a claim awaiting a reader, not a result.
 
-## 1. Check the ground
+## 1. Read the criteria first
 
-- Full suite. **567 is the floor.**
-- Golden transcript **unchanged**. If it moves, stop and find out why first.
-- `python .tmp/break60.py` — all eight breaks still caught, no survivors.
+`gh issue view 60` — **before** the cycle logs and **before** the diff. The logs are
+persuasive precisely because their author wrote both the code and the verdict.
 
-## 2. Tables (AC 1)
+Take each criterion as written, in the user's words, and ask what a session would have to
+do to violate it. Then try to make it do that.
 
-The one place AC 1 and AC 7 genuinely pull against each other, and it is soluble.
+## 2. Attack, do not confirm
 
-**Hold table rows, and only table rows.** A line that looks like a table row is not
-committed; it is kept. When a line arrives that is not one — or the reply ends — the
-whole table is rendered at once and committed, then the line that ended it is handled
-normally. Nothing already shown ever moves, because the held rows were never shown.
+The method that has earned its place, in order:
 
-This is the *only* construct that gets held. It does not become a general buffering
-mechanism; AC 8 forbids that for fences and AC 10 forbids it for everything else.
+- **A test that cannot fail proves nothing.** Five tests in this file have already been
+  caught being vacuous — three in cycle 2, two in cycle 3 — and every one of them passed
+  against a deliberately broken renderer. They shared a shape: they asserted that text was
+  *present in the byte stream*, where the plain echo puts it regardless. **Look for more of
+  that shape.** `.tmp/break60.py` has 18 breaks; the question is which criterion has no
+  break at all.
+- **Hostile inputs, not re-readings.** The four defects this method has found across #40 to
+  #43 all needed an input nobody had tried, not a closer look at the code. Candidates the
+  suite does not currently feed: a fence opened inside a table; a table whose rows arrive
+  one character at a time; a reply that is a single `|`; a heading immediately followed by
+  a fence with no blank line; text with a lone `\r` in it; a line longer than the console
+  width; a reply of 200 blank lines.
+- **Check the criteria that were never given a test of their own.** AC 17, AC 18, AC 19 and
+  AC 29 are all resting on "the golden transcript did not move". Ask whether the transcript
+  actually *covers* them with rendering on — it is captured with output redirected, which
+  is the **plain** path. If it is, say why that is enough. If it is not, that is a finding.
 
-Two things to get right, and a test for each:
-- a reply that **ends** mid-table still shows those rows — `finish()` flushes them
-- a "table" that is one stray `| pipe |` line is shown, not swallowed
+## 3. The things most likely to be wrong
 
-The held rows are echoed as they arrive, like any other incomplete line? **Decide this
-and say why.** Echoing then redrawing a multi-line block would need cursor-up, which is
-forbidden — so the honest answer is likely that table rows are the one thing the user
-waits a line or two for. Say so in the log, and measure how long the wait actually is.
+Named so they are checked rather than skipped, not because they are known to be broken:
 
-## 3. The switch (AC 25, AC 26, AC 27)
+- **AC 5 and the table.** Held rows are the one place content is buffered. What happens if
+  the reply ends mid-row, or a fence opens while rows are held, or `_as_table` raises?
+- **AC 26 and `NO_COLOR`.** Rich is honouring it inside `_as_markdown`. Is there any other
+  path that emits colour — a table's own styling, for instance?
+- **AC 7 during a table.** Rows are erased with `\r`. Erasing is not moving, but check that
+  a **multi-line** table cannot erase a line above it.
+- **AC 14 and AC 15.** The plain path is now reached two ways — not a terminal, and the
+  switch. Are they identical, or merely both plain?
 
-There is none. Nothing is started here.
+## 4. If it finds something
 
-- A flag, an environment variable, and a default — **flag beats environment beats
-  default**, the same precedence every other setting in `config.py` uses. Follow what is
-  there; do not invent a second mechanism.
-- **`NO_COLOR`** (AC 26) is a separate, published convention: if it is set to anything at
-  all, colour is off. Honour it. Decide and record whether `NO_COLOR` kills *colour* or
-  kills *rendering* — they are not the same thing, and a heading can be bold without
-  being coloured.
-- **`--help`** (AC 27) describes the switch, in the voice the other options use.
-- Rendering off must give **today's output exactly** — the same path AC 14 already takes.
-  That makes it testable against the same bytes.
+Fix it, with a test that fails first. Then run the full suite, the hermeticity command and
+the break harness, and write the next action. **Do not fix quietly** — a defect found by
+this pass goes in the log by name, with what it would have cost a user.
 
-## 4. Scrolling, wrapping, resize (AC 11, AC 12, AC 13)
+If it genuinely finds nothing, say so plainly and take exit 1: all 29 met, suite green,
+transcript unchanged, before-and-after recorded. Then follow the queue's handing-over
+procedure — and this is the **last row**, so that means saying the queue is empty,
+updating `../../handoff.md`, and leaving the cron alone.
 
-Cycle 2 called these "an argument, not a measurement" and it was right. They follow from
-committing plain lines and never redrawing — so **assert the property that makes them
-true**, rather than trying to simulate a terminal:
+## 5. A fresh reader is stronger
 
-- **AC 13** is the sharp one. A resize cannot corrupt what is on screen because nothing
-  on screen is ever rewritten. Test it by changing the width *mid-stream* and asserting
-  no committed line is touched and no cursor-up appears.
-- **AC 12** — the rendered width follows the console width, and no line is padded out to
-  it. The padding bug is already fixed; pin it at more than one width.
-- **AC 11** — scrollback is whatever the terminal does with ordinary writes. The testable
-  half is that a reply taller than the screen emits no truncation and no ellipsis, which
-  is exactly what `rich.Live` would have done.
-
-## 5. Then
-
-Full suite, hermeticity, transcript. **Extend `.tmp/break60.py`** with a break for each
-new behaviour — a switch that ignores the environment, a table that never flushes,
-`NO_COLOR` unread — and record survivors. A test written for a criterion and never seen
-to fail is not evidence.
-
-**Commit each piece as it goes green.** Cycle 2 lost the whole renderer to a stray
-`git checkout --` because it sat uncommitted through a long break-and-watch; it was
-recovered from a `.pyc`, and that is not a recovery to rely on twice.
+Where one is available, use one — a reader without the author's context is the thing that
+makes this pass work at all. Where one is not, **say so in the log** rather than claiming a
+cold read that was not cold.
 
 ## Record
 
-Status for all 29, with what changed since cycle 2's table. The table decision and the
-measured wait. What `NO_COLOR` was taken to mean, and why. The new breaks and what caught
-them.
+Every criterion, with the verdict and what was tried against it. Anything found, by name.
+Whether the read was genuinely cold. If nothing was found, say what was attacked and came
+back clean — a cold read that reports "all good" without saying what it tried is worth
+nothing.
 
-**Write no questions into anything.** Decide, record the decision and the reasoning,
-carry on.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry
+on.
