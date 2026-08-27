@@ -365,6 +365,32 @@ def read_line() -> str | None:
         return None
 
 
+def start_turn() -> None:
+    """A blank line between what the user typed and what comes back.
+
+    Without it the reply begins on the line directly under the prompt, and a
+    conversation of any length reads as one undivided wall - the user's words
+    and the model's are the same colour, the same width and hard against each
+    other. The gap goes here rather than before the reply text so that
+    everything axiom says about this turn - a compaction notice, a tool call,
+    an error - falls on the far side of it, inside the block that belongs to
+    the turn that caused it.
+    """
+    print()
+
+
+def end_turn() -> None:
+    """A blank line between the end of a turn and the next prompt.
+
+    The other half of the same problem: without it the next `> ` sits directly
+    under the last line of the answer, so the eye cannot find where one
+    exchange stopped and the next began. One blank line, once, at the point
+    the turn is genuinely over - not after each tool round, which would break
+    a single turn into pieces that look like separate ones.
+    """
+    print()
+
+
 def show_piece(text: str) -> None:
     print(text, end="", flush=True)
 

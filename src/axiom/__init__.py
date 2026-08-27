@@ -423,6 +423,10 @@ def _chat(
                 running_usage = None
             continue
 
+        # Past every command and every empty line, so a turn that never
+        # happens leaves no stray gap behind (AC 7, AC 8).
+        terminal.start_turn()
+
         messages, kept_pairs, forgotten = compaction.maybe_compact(
             model_backend, run.model, messages, running_usage, run.context
         )
@@ -473,6 +477,7 @@ def _chat(
                 # model and the way out rather than only the wall (#49 AC 19).
                 terminal.report_too_large(over, cause, run.model)
                 del messages[before:]
+                terminal.end_turn()
                 continue
 
         if over is not None:
@@ -524,6 +529,7 @@ def _chat(
                 ),
             )
             del messages[before:]
+            terminal.end_turn()
             continue
         sent_estimate = compaction.estimated_tokens(to_send(messages))
         # #41 AC 9, scoped to this turn and rebuilt with it. Keyed on the exact
@@ -625,6 +631,7 @@ def _chat(
             # results already gathered during it.
             del messages[before:]
             terminal.report_failure(failure, reply, settings.host)
+            terminal.end_turn()
             continue
 
         terminal.end_reply()
@@ -636,3 +643,4 @@ def _chat(
         messages.append({"role": "assistant", "content": reply})
         if last_usage is not None:
             running_usage = last_usage
+        terminal.end_turn()
