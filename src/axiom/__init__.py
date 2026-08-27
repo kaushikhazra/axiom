@@ -329,11 +329,24 @@ def _switched_to(
 
 
 def _remember(chosen: str, host: str) -> None:
-    """Save the pick, and say so only when there is something worth saying."""
-    fresh = not models.DEFAULT_CHOICE_FILE.parent.exists()
+    """Save the pick, and say so the first time a file is written here.
+
+    The condition is the **file**, not the folder it goes in. #48 AC 30 asked
+    about the folder and this asked about the folder to match - which meant any
+    project that configures MCP, and so already has `.axiom/mcp.json`, got
+    `model.json` written into it silently on that run and every run after. The
+    criterion existed to stop something appearing in a user's project
+    unannounced, and it let exactly that through one level down.
+
+    Existence decides, deliberately, rather than anything remembered. A flag
+    saying "already said" is true within a run and forgotten between them, so
+    the next run would announce again - and deleting the file would not bring
+    the announcement back, which is the behaviour a user would expect.
+    """
+    fresh = not models.DEFAULT_CHOICE_FILE.exists()
     problem = models.write_choice(chosen, host)
     terminal.note_choice_saved(
-        problem, str(models.DEFAULT_CHOICE_FILE.parent) if fresh and not problem else ""
+        problem, str(models.DEFAULT_CHOICE_FILE) if fresh and not problem else ""
     )
 
 
