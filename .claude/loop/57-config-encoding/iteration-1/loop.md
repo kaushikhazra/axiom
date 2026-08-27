@@ -14,7 +14,7 @@ Every 15 minutes, ONE cycle:
   - Action:  work on C:/Projects/axiom/src/ and tests/, as action.md asks
   - Observe: check it against the goal, using observe.md
   - Log:     write logs/cycle-N.md
-  - If goal met:     merge, delete this cron, hand over to row 12 (#55)
+  - If goal met:     merge, then hand over to row 12 (#55) - the cron is not touched
   - If goal not met: write the next action.md, then exit this run
 
 Fail-safe: 2026-08-28 04:21 IST - four hours of wall clock from the first cycle.
@@ -75,10 +75,13 @@ Three ways out. **Row 12 (#55) is queued behind this one**, so every exit ends b
 
 Never merge a red suite. Never merge a behaviour change the transcript has not cleared.
 
-**Then, in the same run:** delete this cron, mark #57's row done in `queue.md` with the PR
-number, cycle count and wall-clock time, scaffold
-`.claude/loop/55-announce-the-file/iteration-1/` per the queue's handing-over procedure, create
-its cron, and say what its first cycle will do.
+**Then, in the same run:** mark #57's row done in `queue.md` with the PR number, cycle count and
+wall-clock time, scaffold `.claude/loop/55-announce-the-file/iteration-1/` per the queue's
+handing-over procedure, and mark row 12 `running`.
+
+**Do not touch the cron.** There is one for the whole queue and it reads `queue.md` for whichever
+row says `running` - so marking row 12 running is the entire handover. Deleting it here would end
+the chain with four rows still queued.
 
 **First run: 2026-08-28 00:21 IST (cron fires at :06, :21, :36, :51). Fail-safe deadline:
 2026-08-28 04:21 IST.**

@@ -111,22 +111,25 @@ On reaching any exit in `loop.md`:
 
 1. Finish that loop's own exit first - merge or don't, per its rules. Never start the next
    loop on top of unmerged work.
-2. Delete that loop's cron. Use `CronList` to find its id if it is not to hand.
-3. Mark its row **done** here, with the PR number, the cycle count, and the wall-clock time
+2. Mark its row **done** here, with the PR number, the cycle count, and the wall-clock time
    it took. If it hit its fail-safe, say so and link the follow-up issue it opened.
-4. Take the next `queued` row. If there is none, stop and say the queue is empty.
-5. Scaffold `.claude/loop/{slug}/iteration-1/` by copying
+3. Take the next `queued` row. If there is none, stop and say the queue is empty.
+4. Scaffold `.claude/loop/{slug}/iteration-1/` by copying
    `C:/Projects/APEX/plugins/ai-engineering/skills/auto-iterate/template`, then delete the
    `artifact/` directory it brings - the code is not the loop's artifact folder.
-6. Write that iteration's `goal.md`, `observe.md`, `assumption.md`, `action.md` and
+5. Write that iteration's `goal.md`, `observe.md`, `assumption.md`, `action.md` and
    `loop.md`, reading the issue with `gh issue view` for the criteria. Carry forward
    anything in **Standing** below that applies. Record the fail-safe as a **clock time** -
    four hours from now, written out - not as a number of cycles.
-7. Create the branch `feature/{slug}` from `master`, and commit the scaffold.
-8. Mark the new row **running** here, with the time it started and its fail-safe clock time.
-9. Create the cron, 15-minute cadence on an off-minute:
-   `Read C:/Projects/axiom/.claude/loop/{slug}/iteration-1/loop.md and run one iteration.`
-10. Say in the handover which loop just started and what its first cycle will do.
+6. Create the branch `feature/{slug}` from `master`, and commit the scaffold.
+7. Mark the new row **running** here, with the time it started and its fail-safe clock time.
+8. Say in the handover which loop just started and what its first cycle will do.
+
+**There is one cron for the whole queue, not one per row.** It reads *this file* for whichever
+row says `running`, so a handover needs no cron work at all - marking the next row `running` in
+step 7 is what redirects it. **Do not delete it between rows.** Deleting it on a handover would
+end the chain silently with every remaining row still queued, which is the exact failure the
+one-cron design removes.
 
 ## Standing
 
