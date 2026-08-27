@@ -14,12 +14,43 @@ cycles resolving each other's conflicts.
 | 6 | [#41](https://github.com/kaushikhazra/axiom/issues/41) limits and working directory | `41-limits-and-place` | **done** - merged in PR #45, 4 cycles, all 12 criteria (AC 9 found decorative by the cycle-4 cold read after two cycles called it met) |
 | 7 | [#42](https://github.com/kaushikhazra/axiom/issues/42) oversized-turn recovery | `42-oversized-turn` | **done** - merged in PR #46, 4 cycles, all 8 criteria (the cycle-3 cold read found the fix compacting away the user's own message, and AC 4 still violated) |
 | 8 | [#43](https://github.com/kaushikhazra/axiom/issues/43) MCP servers | `43-mcp-servers` | **done** - merged in PR #47, 4 cycles, all 30 criteria (the cycle-4 cold read found AC 6's routing broken for a server whose name contains the separator, and AC 22 marked met with no test at all) |
+| 9 | [#48](https://github.com/kaushikhazra/axiom/issues/48) model the server actually has | `48-model-choice` | **running** - started 2026-08-27 11:41 IST, fail-safe 14:41 IST, 38 criteria |
+| 10 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session model switch | `49-model-switch` | **queued** - 34 criteria |
 
-**The queue is empty.** Every row is done. A new loop needs a new row here first.
+**Row 9 is running.** Rows 1 to 8 are done. Row 10 starts when row 9 exits, by whichever of
+its three exits it reaches.
 
-**Next up is manual testing, not another loop** - see [`../handoff.md`](../handoff.md).
-Nobody has actually used axiom yet: every criterion was settled by tests, stubs and
-single-question model probes, and no real MCP server has ever been connected.
+**#48 before #49, and the order is structural rather than a preference.** #49 AC 2 requires
+the switch list to match the startup list - same contents, same order, same numbering - and
+#49 AC 20 requires a switch to be remembered "the same way a startup choice is". Both of
+those are #48's to build. Running #49 first would mean inventing the list and the
+remembered-choice file inside the switch story, then having #48 rewrite them.
+
+**Manual testing has still never happened** - see [`../handoff.md`](../handoff.md), which is
+otherwise still accurate. Nobody has sat down and used axiom; no real MCP server has ever
+been connected. #48 came out of exactly the kind of thing manual use surfaces - a hardcoded
+`qwen2.5:7b` default that a different Ollama host may simply not have - so the handoff's
+"what to try" list is worth reading before or alongside these two, not instead of them.
+
+**Both rows change the startup line, so both regenerate `tests/baseline/transcript.txt`.**
+That is a deliberate regeneration under **Standing** below, not a failure to clear: #48
+replaces the model name's provenance, and #49 adds a line whenever a switch happens. Each
+loop says in its log which lines changed and why.
+
+**Listing models belongs behind `ModelBackend`, like every other thing Ollama is asked.**
+`backend.py` is the only module under `src/` that imports a vendor client, and both rows
+need a new question - what is installed on this host. It goes on the protocol next to
+`model_info` and `supports_tools`, so the test stubs can answer it and **the suite stays
+green with no Ollama running**. A loop that reaches for `ollama.Client` from `__init__.py`
+to get the list has broken #33 and will make every criterion here untestable. This is the
+shortcut both rows will be tempted by, because the list is wanted before the backend is
+otherwise built.
+
+**The remembered choice is a new file in the user's directory, and it is not
+`.axiom/mcp.json`.** `.gitignore` has no `.axiom/` entry today, and it should not gain a
+blanket one - `mcp.json` is designed to be committed, which is what the `${NAME}`
+substitution is for. Ignore the remembered-choice file specifically, and leave `mcp.json`
+alone.
 
 Four issues ran back to back on 2026-08-26 - #40, #41, #42, #43 - and **the cold read found a
 real defect in every one of them**, each time after the implementing cycle had written
@@ -44,30 +75,38 @@ On reaching any exit in `loop.md`:
 
 1. Finish that loop's own exit first - merge or don't, per its rules. Never start the next
    loop on top of unmerged work.
-2. Delete that loop's cron. Use `CronList` to find its id if it is not to hand.
-3. Mark its row **done** here, with the PR number and cycle count. If it hit its fail-safe,
-   say so and link the follow-up issue it opened.
-4. Take the next `queued` row. If there is none, stop and say the queue is empty.
-5. Scaffold `.claude/loop/{slug}/iteration-1/` by copying
+2. Mark its row **done** here, with the PR number, the cycle count, and the wall-clock time
+   it took. If it hit its fail-safe, say so and link the follow-up issue it opened.
+3. Take the next `queued` row. If there is none, stop and say the queue is empty.
+4. Scaffold `.claude/loop/{slug}/iteration-1/` by copying
    `C:/Projects/APEX/plugins/ai-engineering/skills/auto-iterate/template`, then delete the
    `artifact/` directory it brings - the code is not the loop's artifact folder.
-6. Write that iteration's `goal.md`, `observe.md`, `assumption.md`, `action.md` and
+5. Write that iteration's `goal.md`, `observe.md`, `assumption.md`, `action.md` and
    `loop.md`, reading the issue with `gh issue view` for the criteria. Carry forward
-   anything in **Standing** below that applies.
-7. Create the branch `feature/{slug}` from `master`, and commit the scaffold.
-8. Create the cron, 15-minute cadence on an off-minute:
-   `Read C:/Projects/axiom/.claude/loop/{slug}/iteration-1/loop.md and run one iteration.`
-9. Mark the new row **running** here and say, in the handover, which loop just started and
-   what its first cycle will do.
+   anything in **Standing** below that applies. Record the fail-safe as a **clock time** -
+   three hours from now, written out - not as a number of cycles.
+6. Create the branch `feature/{slug}` from `master`, and commit the scaffold.
+7. Mark the new row **running** here, with the time it started.
+8. Begin its first cycle immediately. Nothing is scheduled and nothing waits - the next
+   cycle of the running loop, and the first cycle of the next loop, both start as soon as
+   the thing before them finishes.
 
 ## Standing
 
 These apply to every loop in this queue and do not need rediscovering.
 
-- **15-minute cycles, 12-hour fail-safe.** One cycle per firing. A hung run costs one cycle.
+- **Cycles run back to back. Three-hour fail-safe per story.** There is no cron and no
+  cadence: a cycle starts the moment the one before it finishes, and the next loop starts
+  the moment the one before it exits. The fail-safe is **wall-clock time on the row** -
+  three hours from the first cycle of that story, however many cycles fit - and each
+  iteration's `loop.md` writes it out as a clock time rather than a count. This is the one
+  place back-to-back running is more dangerous than a schedule: under cron a hung run cost
+  one firing and the next fired anyway, whereas here a hung run holds the whole chain, which
+  is exactly why the bound is a clock and not a cycle count. A cycle that finds the clock
+  spent stops the row at its fail-safe exit and hands over to the next one.
 - **A loop never waits for an answer.** The queue runs unattended, one loop after another,
-  and nobody is watching between firings. A cycle that stops to ask a question does not
-  pause - it burns every remaining cycle until the fail-safe, and takes the loops queued
+  and nobody is watching between cycles. A cycle that stops to ask a question does not
+  pause - it holds the chain against a clock that keeps running, and takes the loops queued
   behind it down with it. So a decision that would otherwise need Kaushik is **made by the
   loop**: pick the option that is reversible and least surprising, record it in the cycle
   log as a decision with its reasoning under a heading that says so, and carry it into the
@@ -130,6 +169,9 @@ These apply to every loop in this queue and do not need rediscovering.
 - **The tool-testing safety rules in `CLAUDE.md` bind #34 and #35.** Live models get
   non-destructive requests only; destructive criteria are settled with a stub inside
   `tmp_path`; live-model tool tests run in `C:/Projects/.tmp/axiom-tool-sandbox`.
-- **The cron is session-only.** It dies with the Claude session, and so does the chain. The
-  files and commits survive; restarting means re-creating the cron for whichever loop the
-  queue says is `running`.
+- **The chain is session-only, and now more so than under cron.** Back-to-back cycles run
+  inside the session, so when it ends the chain ends with it - there is no scheduler left
+  behind to fire again. The files and commits survive. Restarting means reading this queue
+  for whichever row says `running`, reading that iteration's `loop.md` for the fail-safe
+  clock time already written there, and carrying on from the last cycle log. Do not restart
+  the fail-safe clock on resume; it is wall-clock time on the story, not on the session.
