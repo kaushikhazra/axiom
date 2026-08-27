@@ -83,6 +83,8 @@ class StubBackend:
         # and `supports_tools`, this one does not swallow - "cannot reach the
         # host" and "the host has nothing" are different things to be told.
         self.listing = listing
+        # Every model name this backend was asked anything about, in order.
+        self.asked_about: list[str] = []
         self.streamed: list[list[dict[str, str]]] = []
         self.completed: list[list[dict[str, str]]] = []
         self.options: list = []
@@ -94,13 +96,20 @@ class StubBackend:
             raise self.listing
         return list(self.models)
 
-    def model_info(self, model):  # noqa: ANN001, ARG002
+    def model_info(self, model):  # noqa: ANN001
+        # Recorded, not ignored. AC 29 is that the context and tool count
+        # reported at startup belong to the model actually in use - and a stub
+        # that discards the name it was asked about cannot tell a correct
+        # implementation from one that asks about the wrong model entirely.
+        self.asked_about.append(model)
         return self.info
 
-    def supports_tools(self, model):  # noqa: ANN001, ARG002
+    def supports_tools(self, model):  # noqa: ANN001
+        self.asked_about.append(model)
         return self.tools_supported
 
     def stream(self, model, messages, options=None, tools=None):  # noqa: ANN001, ARG002
+        self.asked_about.append(model)
         self.streamed.append([dict(m) for m in messages])
         self.options.append(options)
         self.tools_sent.append(tools)

@@ -257,9 +257,16 @@ def resolve(argv: list[str] | None = None) -> Settings:
     """Settings for this run: command line, else environment, else default."""
     args = parse_args(argv)
     override = os.environ.get("AXIOM_DEBUG_MAX_CONTEXT")
+    # A blank model is nobody naming a model. `AXIOM_MODEL=` is how a shell
+    # unsets it in practice, and `--model "  "` is a slip - neither is a
+    # request for a model whose name is empty. Without this the empty string
+    # is carried as a name: it happens to behave correctly because "" is
+    # falsy, but whitespace is truthy and produced a message with a hole in
+    # it - "axiom:     is not installed on http://localhost:11434".
+    named = (args.model or "").strip() or None
     return Settings(
         host=args.host,
-        model=args.model,
+        model=named,
         debug_max_context=int(override) if override is not None else None,
         working_directory=args.working_directory,
         command_timeout=args.command_timeout,

@@ -75,7 +75,7 @@ def _settle_model(
         sys.exit(CANNOT_START)
 
     if models.unreadable():
-        terminal.note_choice_forgotten("your saved choice", settings.host)
+        terminal.note_choice_unreadable(str(models.DEFAULT_CHOICE_FILE))
 
     decision = models.choose(settings.model, available, settings.host, interactive)
     if decision.missing:
@@ -91,14 +91,14 @@ def _settle_model(
     # case, the non-terminal fallback - and none of them writes.
     terminal.show_models(decision.installed, settings.host, decision.default)
     while True:
-        answer = terminal.ask_model(decision.default)
+        answer = terminal.ask_model()
         if answer is None:
             return None
         chosen = models.picked(answer, decision.installed, decision.default)
         if chosen is not None:
             _remember(chosen, settings.host)
             return chosen
-        terminal.refuse_model(answer, len(decision.installed), decision.default)
+        terminal.refuse_model(answer, len(decision.installed))
 
 
 def _remember(chosen: str, host: str) -> None:
@@ -156,9 +156,7 @@ def _chat(
         page_characters=settings.page_characters,
     )
 
-    effective_context = context.effective_context(
-        model_backend.model_info(model)
-    )
+    effective_context = context.effective_context(model_backend.model_info(model))
     if settings.debug_max_context is not None:
         effective_context = settings.debug_max_context
 

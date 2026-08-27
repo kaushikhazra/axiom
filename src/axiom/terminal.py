@@ -49,38 +49,35 @@ def show_models(models: tuple[str, ...], host: str, default: str | None) -> None
         print(f"  {number:>{width}}. {model}{marker}")
 
 
-def ask_model(default: str | None) -> str | None:
+def ask_model() -> str | None:
     """The user's answer to the list, or None if they are leaving.
 
     Ctrl-C and Ctrl-D both mean leave, matching an idle prompt. There is no
     session to return to yet, so neither can mean "never mind" the way Ctrl-C
     does once a conversation is running.
+
+    Takes no default, because there is always one and the hint never varies:
+    a run reaches this question only with two or more models, and something is
+    always marked - the remembered choice when the host still has it, the
+    first entry otherwise.
     """
-    hint = "enter for the default" if default else "a number"
     try:
-        return input(f"{VOICE} which model? ({hint}) ")
+        return input(f"{VOICE} which model? (enter for the default) ")
     except (EOFError, KeyboardInterrupt):
         print()
         return None
 
 
-def refuse_model(answer: str, count: int, default: str | None) -> None:
+def refuse_model(answer: str, count: int) -> None:
     """Why that answer did not name a model, said so the next try can work.
 
-    Three refusals, because they are three different mistakes. A number out of
-    range gets the range; a non-number gets told numbers are what this wants;
-    an empty line with nothing marked gets told there is no default to take -
-    which only happens when the remembered model has gone, and is the one case
-    where a user could reasonably expect enter to work and be right to be
-    surprised.
+    Two refusals, because there are two ways to get it wrong once an empty
+    line always works: a number out of range gets the range, and anything that
+    is not a number gets told that numbers are what this wants. Both name the
+    range, so the next attempt has what it needs without scrolling back.
     """
     given = answer.strip()
-    if not given and not default:
-        print(
-            f"{VOICE} there is no default to take - type a number from 1 to {count}",
-            file=sys.stderr,
-        )
-    elif given.isdigit():
+    if given.isdigit():
         print(
             f"{VOICE} there is no model {given} - type a number from 1 to {count}",
             file=sys.stderr,
@@ -107,6 +104,24 @@ def note_choice_forgotten(model: str, host: str) -> None:
     """The remembered choice has been removed from the host since it was made."""
     print(
         f"{VOICE} {model} was your last choice here but {host} no longer has it",
+        file=sys.stderr,
+    )
+
+
+def note_choice_unreadable(path: str) -> None:
+    """The remembered choice exists but cannot be used.
+
+    Its own sentence, and not `note_choice_forgotten`'s. The two are different
+    facts with different fixes: a model the host dropped is the host's news and
+    nothing is wrong locally, while this is a file the user can open and repair.
+    Naming the path is the whole value - without it there is nothing to act on.
+
+    Said rather than swallowed because the alternative is a user who edits the
+    file, sees no effect, and has no way to learn why.
+    """
+    print(
+        f"{VOICE} {path} could not be read - carrying on as though nothing "
+        f"had been chosen here",
         file=sys.stderr,
     )
 

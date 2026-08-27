@@ -166,9 +166,18 @@ def test_the_chosen_model_is_what_the_session_uses(capsys, monkeypatch, choice):
 def test_nothing_starts_before_a_model_is_settled(
     capsys, monkeypatch, choice, tmp_path
 ):
-    """AC 1. No server started and no tool declared while the question is open."""
+    """AC 1. No server is launched while the question is still open.
+
+    Driven with a server that really is attempted, so there is an observable
+    event to order against. Asserting only that the startup line comes later
+    would pass for an implementation that started every server first and
+    merely printed in a tidy order.
+    """
     servers = tmp_path / "mcp.json"
-    servers.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+    servers.write_text(
+        json.dumps({"mcpServers": {"probe": {"command": "definitely-not-a-program"}}}),
+        encoding="utf-8",
+    )
     out = run(
         capsys,
         monkeypatch,
@@ -177,8 +186,52 @@ def test_nothing_starts_before_a_model_is_settled(
         argv=["--mcp-file", str(servers)],
     )
 
-    question = out.out.index("which model?")
-    assert "at " + HOST not in out.out[:question]
+    # The server is really attempted, so its absence before the question means
+    # it had genuinely not been tried yet - not that it was never tried at all.
+    assert "probe" in out.err
+    asked = out.out.index("which model?")
+    assert "starting 1 MCP server" not in out.out[:asked]
+    assert "starting 1 MCP server" in out.out[asked:]
+
+
+def test_the_context_and_tools_belong_to_the_chosen_model(capsys, monkeypatch, choice):
+    """AC 29. The backend must be interrogated about the model in use.
+
+    The failure this catches is asking `model_info` and `supports_tools` about
+    whatever the user named - or about some default - while announcing the one
+    that was picked. Both readings print an identical startup line, so only the
+    name the backend was handed can tell them apart.
+    """
+    stub = StubBackend(models=AS_THE_HOST_GIVES_THEM)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    feed(monkeypatch, ["4", "hello", "/exit"])
+    main([], using=stub)
+
+    assert stub.asked_about
+    assert set(stub.asked_about) == {SORTED[3]}
+
+
+def test_a_named_model_is_the_one_the_backend_is_asked_about(
+    capsys, monkeypatch, choice
+):
+    """AC 29, by the other route in."""
+    stub = StubBackend(models=AS_THE_HOST_GIVES_THEM)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    feed(monkeypatch, ["hello", "/exit"])
+    main(["--model", "ornith:9b"], using=stub)
+
+    assert set(stub.asked_about) == {"ornith:9b"}
+
+
+def test_a_missing_named_model_is_never_asked_about(capsys, monkeypatch, choice):
+    """AC 20, AC 29. The fallback must not leave the old name in play."""
+    stub = StubBackend(models=AS_THE_HOST_GIVES_THEM)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    feed(monkeypatch, ["2", "hello", "/exit"])
+    main(["--model", "absent:70b"], using=stub)
+
+    assert "absent:70b" not in stub.asked_about
+    assert set(stub.asked_about) == {SORTED[1]}
 
 
 # --- Not being asked ----------------------------------------------------
@@ -285,6 +338,34 @@ def test_the_choice_lives_beside_the_mcp_config():
     assert not Path(".axiom", "model.json").is_absolute()
     assert Path(".axiom", "model.json") != config.DEFAULT_MCP_FILE
     assert Path(".axiom", "model.json").parent == config.DEFAULT_MCP_FILE.parent
+
+
+def test_a_different_directory_has_its_own_remembered_choice(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 13, as behaviour rather than as a path shape.
+
+    The path-shape test above says the constant is relative. This says the
+    consequence the criterion actually claims: two directories, two choices,
+    neither visible from the other.
+    """
+    here, there = tmp_path / "here", tmp_path / "there"
+    here.mkdir()
+    there.mkdir()
+
+    monkeypatch.chdir(here)
+    monkeypatch.setattr(models, "DEFAULT_CHOICE_FILE", Path(".axiom") / "model.json")
+    run(capsys, monkeypatch, typed=["3"], models=AS_THE_HOST_GIVES_THEM)
+
+    monkeypatch.chdir(there)
+    out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
+
+    # Nothing carried over: the second directory starts with no choice at all.
+    assert f"{SORTED[0]}  (default)" in out.out
+    assert json.loads((here / ".axiom" / "model.json").read_text()) == {HOST: SORTED[2]}
+    assert json.loads((there / ".axiom" / "model.json").read_text()) == {
+        HOST: SORTED[0]
+    }
 
 
 def test_the_remembered_choice_is_gitignored_but_the_mcp_config_is_not():
@@ -593,7 +674,15 @@ def test_a_broken_choice_file_is_said_and_the_session_carries_on(
 
     out = run(capsys, monkeypatch, typed=["2"], models=AS_THE_HOST_GIVES_THEM)
 
-    assert "saved choice" in out.err
+    # Names the file, because that is the only thing the user can act on - and
+    # says nothing about the host, which has done nothing wrong. An earlier
+    # version of this reused the "your last choice has gone" wording and
+    # produced "your saved choice was your last choice here but <host> no
+    # longer has it", which blamed the host for a corrupt local file. The test
+    # then asserted only that "saved choice" appeared, and passed on it.
+    assert str(choice) in out.err
+    assert "could not be read" in out.err
+    assert "no longer has it" not in out.err
     assert f"axiom: {SORTED[1]} at {HOST}" in out.out
 
 

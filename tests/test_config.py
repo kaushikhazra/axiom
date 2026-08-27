@@ -3,6 +3,8 @@
 import re
 from pathlib import Path
 
+import pytest
+
 from axiom import config
 
 
@@ -17,6 +19,24 @@ def test_defaults_when_nothing_is_set(monkeypatch):
     # real state, and it is what sends a run to the host's list.
     assert settings.model is None
     assert settings.debug_max_context is None
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t"])
+def test_a_blank_model_is_nobody_naming_a_model(blank):
+    """AC 26. `AXIOM_MODEL=` is how a shell unsets it; a slip gives whitespace.
+
+    Neither names a model called "". Carrying the empty string through as a
+    name happened to work - "" is falsy - but whitespace is truthy and reached
+    the screen as `axiom:     is not installed on http://localhost:11434`.
+    """
+    assert config.resolve(["--model", blank]).model is None
+
+
+def test_a_blank_environment_model_is_nobody_naming_a_model(monkeypatch):
+    """AC 26, by the route a shell actually takes."""
+    monkeypatch.setenv("AXIOM_MODEL", "")
+
+    assert config.resolve([]).model is None
 
 
 def test_axiom_carries_no_model_name_of_its_own():
