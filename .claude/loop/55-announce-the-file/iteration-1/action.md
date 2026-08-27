@@ -1,60 +1,65 @@
 # Action
 
-**Cycle 1 records the baseline, reproduces the hole, fixes it, and covers the criteria.** The
-fix is one line. The work is proving the eleven, and most of them are about something *not*
-being said - which is the easiest thing to assert by accident.
+**Cold-read all 11 criteria, then take the exit.** Cycle 1 wrote the fix and the tests and
+declined to judge them.
 
-## 1. Baseline
+## 1. Read the criteria as written
 
-- `env AXIOM_HOST=http://127.0.0.1:1 AXIOM_MODEL=nonsense:99b AXIOM_DEBUG_MAX_CONTEXT=7 uv run pytest -q`
-  Expect **473 passed**. Record it.
-- Copy `tests/baseline/transcript.txt` to `.tmp/transcript-baseline-55.txt`.
-- `gh issue view 55`, record all 11 criteria `not-started`.
+`gh issue view 55` **first** - before the diff, before `logs/cycle-1.md`. That log argues for
+its own conclusions and its author wrote both the code and the case for it.
 
-## 2. Reproduce the hole first
+Then `git diff master...HEAD -- src/ tests/`.
 
-The failing test, before touching `src/`: a directory that **already contains
-`.axiom/mcp.json`** and no `model.json`. Pick a model from the list. Today nothing is announced
-and the file is written anyway. **Watch it fail.**
+## 2. Attack the five cycle 1 named, and any it did not
 
-An empty directory is not this test. The old behaviour passes there, which is precisely why the
-hole survived a cold read.
+- **AC 10's four negatives.** The paired positive rules out "never announces at all". It does
+  **not** rule out a route that *writes without announcing*. Is there one? Walk every call site
+  of `models.write_choice` and confirm each either goes through `_remember` or is deliberately
+  silent. A write that skips `_remember` would satisfy all four negatives and violate AC 1.
+- **AC 7 - existence decides.** Three runs cover absent, present, deleted. Two states are
+  untested: the file present but **empty**, and the path present but a **directory**. What does
+  `_remember` do with each, and is that right? An empty file is not a remembered choice.
+- **AC 11 - a failed save.** Cycle 1 patches `Path.mkdir`. That is the *directory* failing.
+  Patch the **write** instead - `Path.write_text` - so the folder is created and the file is
+  not. Does it still avoid claiming a file was written?
+- **AC 9 - the two routes.** The comparison strips everything before `axiom: remembering`.
+  Confirm that strip is not hiding a difference - print both captured lines and read them.
+- **AC 2 - the path named.** It asserts `model.json` present and `mcp.json` absent. Would it
+  pass if the path named were something else entirely that happened to contain `model.json`?
 
-## 3. Fix
+## 3. The standing question
 
-`_remember`: `fresh = not models.DEFAULT_CHOICE_FILE.exists()`, and name the file rather than
-its parent. Nothing else changes.
+For each of the fourteen: **could this pass if the feature did nothing?** Cycle 1 answered in
+aggregate - the break turns 5 red - which means **nine survive**. Name all nine and give each a
+verdict: fine (a *still*-or-guard assertion that should hold either way) or vacuous.
 
-## 4. Cover the eleven, negatives paired with positives
+This is where #57's cold read found its defect, and it is the third time in four issues. Do not
+skip it.
 
-- **AC 1, AC 3, AC 4** - announced in a directory with the folder already there, and in one
-  without.
-- **AC 2** - the path named is the file. Assert `model.json` appears in it.
-- **AC 5, AC 6, AC 7** - two separate `main()` calls. The second is silent, and it is silent
-  because the file is there rather than because anything was remembered. A third run after
-  deleting the file announces again - that is what proves existence decides.
-- **AC 8, AC 9** - both routes, same words: a startup pick, and a `/model` switch.
-- **AC 10** - four negatives, one each for a named model, an environment variable, the
-  single-model case and the non-terminal fallback. **Each beside a positive**, or "said
-  nothing" passes for an implementation that never speaks.
-- **AC 11** - a save that fails says it will not be remembered and does **not** claim a file was
-  written. Both assertions.
+## 4. Re-run everything
 
-## 5. The transcript
+- Full suite and the hermeticity command. **487 is the floor.**
+- `diff .tmp/transcript-baseline-55.txt tests/baseline/transcript.txt` - expect **no change**,
+  and if there is one, something is wrong rather than something is new.
+- No stray `.axiom/` in the repo.
 
-It may move - the wording and the trigger both change. **Fix every stub first**, then regenerate
-deliberately, then read the whole diff and check `grep -c "^<"`. Account for every changed line.
+## 5. Then take the exit
 
-## 6. Then
+**All eleven hold:** `loop.md` exit 1. Commit, push, PR referencing #55, merge, delete the
+branch. Then in the same run: mark row 12 **done** in `queue.md` with the PR number, cycle count
+and wall-clock time, scaffold `.claude/loop/56-same-facts/iteration-1/` per the queue's
+handing-over procedure, mark row 13 **running**, and say what its first cycle will do.
 
-Full suite and the hermeticity command. Break the fix - revert to `.parent.exists()` - and
-record how many go red. Write cycle 2's action: a cold read of all 11 from GitHub, before the
-diff and before this log.
+**Do not touch the cron.** One cron drives the whole queue and reads `queue.md` for whichever
+row is `running`. Marking row 13 running *is* the handover.
+
+**Any criterion does not hold:** do not merge. Fix it, record what the cold read caught, and
+write cycle 3's action.
 
 ## Record
 
-Status for all 11. The failing-test-first evidence. The break count. Every transcript line that
-changed and why.
+Status for all 11, judged against the criteria text rather than cycle 1's table. The nine
+survivors, each with a verdict. Where a verdict differs from cycle 1's, say which reading was
+wrong and why.
 
-**Write no questions into anything.** Decide, record the decision and the reasoning under a
-heading that says so, carry on. The exception is safety, not uncertainty.
+**Write no questions into anything.** Decide, record the decision and the reasoning, carry on.
