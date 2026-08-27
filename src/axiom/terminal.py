@@ -629,7 +629,14 @@ def _as_table(rows: list[str]) -> list[str]:
             soft_wrap=False,  # a table draws its own edges; do not let them wrap
         ).print(Markdown("\n".join(rows)), end="")
         drawn = [_unpadded(line) for line in buffer.getvalue().split("\n")]
-        while drawn and not drawn[-1].strip():
+        # Rich draws a top and bottom border row for a table, and the box style
+        # it uses for markdown puts nothing in them - so they arrive as lines
+        # that are empty apart from their escape sequences, and a blank line
+        # either side of every table. `strip()` does not see them as empty
+        # because an escape sequence is not whitespace.
+        while drawn and not _visible(drawn[0]):
+            drawn.pop(0)
+        while drawn and not _visible(drawn[-1]):
             drawn.pop()
         return drawn or rows
     except Exception:
@@ -681,10 +688,16 @@ def _as_markdown(line: str) -> str:
 # module writes, wraps to a blank line on most terminals (AC 12). `rstrip` alone
 # does not reach them: the padding sits *before* the closing reset sequence.
 _PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)")
+_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _unpadded(shown: str) -> str:
     return _PADDING.sub("", shown)
+
+
+def _visible(line: str) -> bool:
+    """Whether a line puts anything on the screen, escapes aside."""
+    return bool(_ESCAPE.sub("", line).strip())
 
 
 def _width() -> int:

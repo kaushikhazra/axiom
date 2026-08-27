@@ -14,8 +14,9 @@ import re
 
 import pytest
 
-from axiom import config, terminal
+from axiom import config, main, terminal
 from axiom.terminal import Rendered
+from conftest import StubBackend, feed, history
 
 
 REPLY = (
@@ -321,6 +322,20 @@ def test_a_table_is_drawn_as_a_table():
         assert any(word in line for line in shown), f"{word} was lost"
 
 
+def test_a_table_gains_no_blank_lines_of_its_own():
+    """Rich's box style for markdown draws an empty top and bottom border.
+
+    They arrive as lines that are empty apart from their escape sequences, so
+    a table came out with a blank line either side of it. `strip()` does not
+    see them as empty, because an escape sequence is not whitespace - found by
+    reading a real reply, not by a test.
+    """
+    emitted = stream(TABLE)
+    blanks = [line for line in emitted.split("\n") if not stripped(line).strip()]
+
+    assert len(blanks) == 3, f"expected the reply's own two blanks, got {len(blanks)}"
+
+
 def test_holding_a_table_still_moves_no_committed_line():
     """AC 7 against AC 1. Held rows were never shown, so nothing moves."""
     assert re.findall(r"\x1b\[\d*A", stream(TABLE * 3)) == []
@@ -471,6 +486,69 @@ def test_no_color_set_to_nothing_still_counts(monkeypatch):
     monkeypatch.setenv("NO_COLOR", "")
 
     assert "\x1b[36m" not in stream("```python\nx = 1\n```\n")
+
+
+# --- What the model and the history see ------------------------------------
+
+
+def at_a_terminal(monkeypatch):
+    """Run the chat loop with rendering on, as a person would see it."""
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr(terminal, "_reply", None)
+    monkeypatch.setattr(terminal, "_rendering", True)
+
+
+def test_history_holds_the_reply_as_written_not_as_rendered(monkeypatch):
+    """AC 16.
+
+    Cycle 2 called this met because "the renderer sits below `show_piece`".
+    That is an argument about where the code is, and the criterion is about
+    what the model is sent - so here it is measured. A reply full of markdown
+    goes back to the model with its markup intact and no escape sequence in it.
+    """
+    written = "# Heading\n\nsome **bold** words and a `snippet`.\n"
+    backend = StubBackend(models=["a:1b"], turns=[[written], ["and again"]])
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["first", "second", "/exit"])
+
+    main([], using=backend)
+
+    carried = history(backend.streamed[-1])
+    assistant = [m for m in carried if m.get("role") == "assistant"]
+    assert any(m.get("content") == written for m in assistant), "history was rendered"
+    assert not any("\x1b[" in (m.get("content") or "") for m in carried)
+
+
+def test_a_reply_that_turns_out_to_be_a_call_never_reaches_the_renderer(
+    monkeypatch, capsys
+):
+    """AC 20, with rendering on.
+
+    The hold-back sits above `show_piece`, so a withheld reply is never fed to
+    the renderer at all. Measured rather than argued: the text of the call must
+    not appear on screen, styled or otherwise.
+    """
+    announced = '{"name": "read_file", "arguments": {"path": "x"}}'
+    backend = StubBackend(models=["a:1b"], turns=[[announced], ["the answer"]])
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["do it", "/exit"])
+
+    main([], using=backend)
+
+    printed = capsys.readouterr().out
+    assert announced not in printed, "the call was shown as though it were an answer"
+    assert '{"name"' not in printed
+    assert "read_file(path=x)" in printed, "the call was not made"
+    assert "the answer" in printed, "the reply after the call never arrived"
+
+
+def test_characters_the_console_cannot_spell_survive_rendering():
+    """AC 24. Rendering must not become a second place a reply can die."""
+    emitted = stream("a snowman ☃ and an emoji 🎉 in **bold**\n")
+
+    assert "☃" in stripped(emitted)
+    assert "🎉" in stripped(emitted)
 
 
 # --- Scrolling, wrapping, resize -------------------------------------------
