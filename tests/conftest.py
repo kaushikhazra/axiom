@@ -92,6 +92,8 @@ class StubBackend:
         self.listing = listing
         # Every model name this backend was asked anything about, in order.
         self.asked_about: list[str] = []
+        # Every call to `tool_capable`, with what it was asked about.
+        self.capability_asks: list[list[str]] = []
         self.streamed: list[list[dict[str, str]]] = []
         self.completed: list[list[dict[str, str]]] = []
         self.options: list = []
@@ -102,6 +104,15 @@ class StubBackend:
         if self.listing is not None:
             raise self.listing
         return list(self.models)
+
+    def tool_capable(self, models):  # noqa: ANN001
+        # Recorded, because #52 AC 10 is that a run which never shows a list
+        # and never falls back does not pay for this at all - and the only way
+        # to see that it was not paid is to see it was not called.
+        self.capability_asks.append(list(models))
+        if self.capable is not None:
+            return {m for m in models if self.capable.get(m, self.tools_supported)}
+        return set(models) if self.tools_supported else set()
 
     def model_info(self, model):  # noqa: ANN001
         # Recorded, not ignored. AC 29 is that the context and tool count

@@ -11,6 +11,7 @@ chat loop turns that into words.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,16 +56,29 @@ class Decision:
     reason: str = ""
 
 
-def sorted_models(names: list[str]) -> tuple[str, ...]:
+def sorted_models(names: list[str], capable: set[str] | None = None) -> tuple[str, ...]:
     """The host's models in an order that does not move under the user.
 
     Ollama returns them newest-modified first, so pulling anything renumbers
     the list and a user picking "2" from memory gets a different model than
-    they did yesterday. Sorting by name is what makes a number mean something
-    across runs (AC 6). Case-insensitive, so `Qwen` and `qwen` do not split
-    the ordering, with the name itself breaking ties so the sort is total.
+    they did yesterday. Sorting is what makes a number mean something across
+    runs (#48 AC 6). Case-insensitive, so `Qwen` and `qwen` do not split the
+    ordering, with the name itself breaking ties so the sort is total.
+
+    `capable` puts the models that can call tools first (#52 AC 1). Both keys
+    are properties of the model rather than of the moment, so the order is
+    still stable: the same host with the same models numbers them the same way
+    tomorrow. With every model capable, or none, this is exactly name order -
+    the second key does nothing when the first cannot separate anything.
+
+    None means the question was not asked, which is not the same as "none of
+    them can". The caller only pays for the answer when it is going to use it,
+    so name order is what an unasked list gets.
     """
-    return tuple(sorted(names, key=lambda name: (name.lower(), name)))
+    ranked = capable or set()
+    return tuple(
+        sorted(names, key=lambda name: (name not in ranked, name.lower(), name))
+    )
 
 
 def read_choice(host: str, path: Path | None = None) -> str | None:
@@ -139,6 +153,7 @@ def choose(
     host: str,
     interactive: bool,
     path: Path | None = None,
+    capable: "Callable[[], set[str]] | None" = None,
 ) -> Decision:
     """Settle the run's model, or say what has to be asked.
 
@@ -157,30 +172,58 @@ def choose(
 
     `installed` is assumed non-empty - an empty host is a fatal condition the
     caller reports and exits on (AC 32), not a decision to be made here.
+
+    `capable` is a callable rather than a set, and is invoked **only past the
+    point where the order decides something** (#52 AC 10). Establishing tool
+    support costs one request per model, and a run that names a model that
+    exists never shows a list and never falls back - so it must not pay.
     """
-    available = sorted_models(installed)
+    by_name = sorted_models(installed)
     missing = None
     if named is not None:
-        if named in available:
-            return Decision(named, available, reason="named")
+        if named in by_name:
+            # Nothing is ordered for this: the list is not shown, and the
+            # user named the model themselves (#52 AC 7).
+            return Decision(named, by_name, reason="named")
         missing = named
 
     remembered = read_choice(host, path)
-    forgotten = remembered if remembered and remembered not in available else None
-    preferred = remembered if remembered in available else None
+    forgotten = remembered if remembered and remembered not in by_name else None
+    preferred = remembered if remembered in by_name else None
 
-    if len(available) == 1:
+    if len(by_name) == 1:
+        # One model is one model in any order, and it is chosen without a
+        # question - so nothing is gained by asking what it can do.
         return Decision(
-            available[0], available, missing=missing, forgotten=forgotten, reason="only"
+            by_name[0], by_name, missing=missing, forgotten=forgotten, reason="only"
         )
 
-    if not interactive:
+    if preferred is not None and not interactive:
+        # The user's own last choice, taken without a list. Not overridden
+        # because something else can call tools (#52 AC 7).
         return Decision(
-            preferred or available[0],
+            preferred,
+            by_name,
+            missing=missing,
+            forgotten=forgotten,
+            reason="remembered",
+        )
+
+    # From here the order decides something the user did not: which entry is
+    # marked, or which one a run with no terminal settles on. This is the only
+    # path that pays for tool support.
+    available = sorted_models(installed, capable() if capable else None)
+
+    if not interactive:
+        # `preferred` is None here - the branch above took it - so this is the
+        # first entry, which is now a tool-capable model where the host has one
+        # (#52 AC 6).
+        return Decision(
+            available[0],
             available,
             missing=missing,
             forgotten=forgotten,
-            reason="remembered" if preferred else "first",
+            reason="first",
         )
 
     return Decision(

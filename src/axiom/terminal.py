@@ -33,7 +33,11 @@ VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model'
 
 
 def show_models(
-    models: tuple[str, ...], host: str, marked: str | None, current: bool = False
+    models: tuple[str, ...],
+    host: str,
+    marked: str | None,
+    current: bool = False,
+    capable: set[str] | None = None,
 ) -> None:
     """The installed models, numbered, with one marked.
 
@@ -53,8 +57,19 @@ def show_models(
     print(f"{VOICE} models on {host}")
     width = len(str(len(models)))
     label = "  (current)" if current else "  (default)"
+    # Annotated only where it explains something (#52 AC 8): a host whose
+    # models can *all* call tools, or none of which can, has an order that is
+    # plain name order, and a note on every row would explain nothing while
+    # making every row longer. Mixed hosts are the case the ordering exists
+    # for, and the only case where a reader needs to be told why.
+    mixed = capable is not None and 0 < len(capable) < len(models)
     for number, model in enumerate(models, start=1):
-        print(f"  {number:>{width}}. {model}{label if model == marked else ''}")
+        tools = "  tools" if mixed and model in capable else ""
+        print(f"  {number:>{width}}. {model}{tools}{label if model == marked else ''}")
+    if capable is not None and not capable:
+        # AC 9. Said once rather than per row - it is a fact about the host,
+        # not about any one model, and without it the order looks arbitrary.
+        print(f"{VOICE} none of these can call tools")
 
 
 def ask_model(hint: str = "enter for the default") -> str:
