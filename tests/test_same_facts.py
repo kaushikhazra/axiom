@@ -203,12 +203,19 @@ def test_a_context_that_could_not_be_established_reads_the_same(capsys, monkeypa
 
 
 def test_the_window_still_follows_the_model(capsys, monkeypatch):
-    """AC 3. Agreement must not be bought by reporting a stale number."""
+    """AC 3. Agreement must not be bought by reporting a stale number.
+
+    The expected numbers are derived from the fixture rather than written out,
+    so a fixture change cannot quietly turn this into a restatement of itself.
+    """
     _, out = run(capsys, monkeypatch, [])
     started, switched = both(out.out)
 
-    assert started["room"] == "32768 tokens"
-    assert switched["room"] == "4096 tokens", "the switch reported the old window"
+    assert started["room"] == f"{WINDOWS['big:70b']['a.context_length']} tokens"
+    assert switched["room"] == f"{WINDOWS['small:1b']['a.context_length']} tokens", (
+        "the switch reported the old window"
+    )
+    assert started["room"] != switched["room"]
 
 
 # --- What stays off it --------------------------------------------------

@@ -194,8 +194,8 @@ def note_switched(
     model: str,
     context: int | None,
     tools: int | None,
-    overridden: bool = False,
-    web: bool = False,
+    overridden: bool,
+    web: bool,
 ) -> None:
     """What changed, said the moment it changes.
 
@@ -212,6 +212,13 @@ def note_switched(
 
     The host is the one thing deliberately left out. A switch cannot change it
     and the startup line already named it (#56 AC 11).
+
+    `overridden` and `web` have **no defaults**, deliberately. A default would
+    let a caller omit a fact and still produce a plausible-looking line - which
+    is exactly the defect this function had. Worse, `False` is the *right*
+    answer often enough to hide it: the cold read found three tests passing
+    against a deliberately broken caller purely because the default happened to
+    match. Required arguments turn that silence into a `TypeError`.
     """
     print(
         f"{VOICE} now {model} "
