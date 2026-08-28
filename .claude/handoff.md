@@ -214,9 +214,7 @@ before writing the next issue:
 Write findings up as issues in the format `CLAUDE.md` describes. #60 is the most recent worked
 example, and #26 the fullest.
 
-**A cron is still installed and the queue is empty.** It fires, reads `queue.md`, finds no row
-marked `running`, and stops - one wasted firing, nothing else. It was left alone deliberately:
-the queue's own rule is that a loop never deletes the scheduler, because doing so on a bad
-handover ends the chain silently with rows still queued. **Stopping it is Kaushik's call.**
-A cycle that fires into an empty queue should say so and exit, not scaffold a row nobody asked
-for.
+**Nothing is scheduled.** The cron that drove the queue has been deleted, at the last handover
+and only there - the queue's rule against deleting it exists to stop a mid-queue handover
+ending the chain silently, and with no rows left there is no chain to end. To start it again,
+`queue.md` records the schedule and the exact prompt.
