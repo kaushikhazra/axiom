@@ -106,6 +106,21 @@ def test_a_line_that_lands_on_the_wrap_boundary_is_not_shown_twice(length, monke
     assert "".join(on_screen) == body
 
 
+@pytest.mark.parametrize("width", [20, 40, 81])
+def test_no_length_at_any_width_is_shown_twice(width, monkeypatch):
+    """AC 7, swept rather than sampled.
+
+    Every length from one character to three rows' worth. The boundary bugs in
+    this row were all off-by-one at a particular length, and each was found by
+    trying that length rather than by reasoning about the arithmetic - so the
+    lengths are no longer chosen. 20 is the narrowest window `_width` will
+    report; 81 is deliberately not a round number.
+    """
+    for length in range(1, width * 3 + 2):
+        body = "x" * length
+        assert "".join(shown(body + "\n", width=width, monkeypatch=monkeypatch)) == body
+
+
 def test_a_narrowed_window_does_not_erase_a_line_already_committed(monkeypatch):
     """AC 13, in the direction that costs something.
 
