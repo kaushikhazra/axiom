@@ -24,8 +24,8 @@ cycles resolving each other's conflicts.
 | 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **done** - merged in PR #69, 6 cycles, 2h40m, all 29 criteria. **Seven real defects across two cold reads**, six of them found by feeding hostile input to a modelled terminal rather than by reading code. AC 7 was not met at all - every paragraph longer than the window was drawn on screen twice, while the recorded evidence for it stayed true |
 
 **The queue is empty.** Sixteen rows, all done. Nothing is running and there is no next row
-to hand to. The cron is still installed and has nothing to find - see **Handing over** below;
-it was deliberately not deleted, and stopping it is Kaushik's call.
+to hand to, and **the cron has been deleted** - see **Handing over** below for why that is the
+right move at the last handover and the wrong one at every other.
 
 **#60 is where the method paid for itself most plainly, and the numbers are worth keeping**:
 seven real defects, **six vacuous tests**, and **five no-op breaks**. Every vacuous test
@@ -149,12 +149,22 @@ step 7 is what redirects it. **Do not delete it between rows.** Deleting it on a
 end the chain silently with every remaining row still queued, which is the exact failure the
 one-cron design removes.
 
-**The queue is now empty, and the cron was still not deleted.** It fires, reads this file,
-finds no row marked `running`, and stops - which costs one firing and nothing else. It was
-left alone on purpose: the rule above is what keeps the chain alive across fifteen handovers,
-and a loop deleting the queue's own scheduler on the way out is the one action that cannot be
-undone by the next run. Stopping it is Kaushik's call. A cycle that fires into an empty queue
-should say so and exit, not scaffold a row nobody asked for.
+**At the last handover, and only there, the cron is deleted.** The rule above exists for one
+reason: deleting the scheduler mid-queue ends the chain silently with rows still waiting. With
+no rows left there is no chain to end, and a cron that keeps firing wakes a full session every
+fifteen minutes to read this file and find nothing.
+
+The closing cycle got this wrong first and recorded the opposite - *"stopping it is Kaushik's
+call"* - then the cron fired into the empty queue and demonstrated the cost. **The cost was
+the argument.** A rule with a stated reason stops applying when the reason is spent; carrying
+it past that point is following the words instead of the rule, which is how a safeguard turns
+into a tax. The instruction in the cron's own prompt - *"including deleting this cron"* - had
+been unopposed since the moment row 16 was marked done.
+
+To start the queue again: add a row, mark it `running`, and create a cron on
+`6,21,36,51 * * * *` whose prompt is *"Read `C:/Projects/axiom/.claude/loop/queue.md` to find
+the row marked running, then read that iteration's `loop.md` and run one iteration. Follow the
+queue's handing-over procedure on any exit."* One cron for the whole queue, not one per row.
 
 ## Standing
 
