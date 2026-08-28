@@ -1,15 +1,16 @@
 # Handoff — manual testing
 
-Rewritten 2026-08-27 at the end of the session that ran rows 9 and 10. The previous version
-(2026-08-26) is still true in outline, but **#48 and #49 both changed what starting axiom looks
-like**, so its "start here" section was wrong and is replaced below.
+Rewritten 2026-08-28 at the end of the session that ran rows 11 to 16. **Seven more rows have
+merged since the last version**, and one of them - #60 - changed what every reply looks like,
+so the "start here" and "what to try" sections below are updated for it.
 
-**The next session picks up here: manual testing.**
+**The next session picks up here: manual testing.** It was the next thing before these seven
+rows too, and it still is.
 
 ## Where things stand
 
-`master` after PR #53. **440 tests, green and hermetic.** No open issues, no cron running,
-`.claude/loop/queue.md` says the queue is empty.
+`master` after PR #69. **617 tests, green and hermetic.** The queue is empty - sixteen rows,
+all done. **A cron is still installed** and has nothing to find; see the end of this file.
 
 | issue | PR | cycles | what it changed |
 |---|---|---|---|
@@ -20,6 +21,22 @@ like**, so its "start here" section was wrong and is replaced below.
 | [#48](https://github.com/kaushikhazra/axiom/issues/48) the model the host has | [#50](https://github.com/kaushikhazra/axiom/pull/50) | 3 | **no default model any more** |
 | [#49](https://github.com/kaushikhazra/axiom/issues/49) mid-session switch | [#51](https://github.com/kaushikhazra/axiom/pull/51) | 3 | **`/model`** |
 | [#52](https://github.com/kaushikhazra/axiom/issues/52) tool-capable first | [#53](https://github.com/kaushikhazra/axiom/pull/53) | 1 | **list order** |
+| [#57](https://github.com/kaushikhazra/axiom/issues/57) config encoding | [#63](https://github.com/kaushikhazra/axiom/pull/63) | 2 | **a hand-written `mcp.json` is readable again** |
+| [#55](https://github.com/kaushikhazra/axiom/issues/55) announce the file | [#64](https://github.com/kaushikhazra/axiom/pull/64) | 2 | |
+| [#56](https://github.com/kaushikhazra/axiom/issues/56) same facts after a switch | [#65](https://github.com/kaushikhazra/axiom/pull/65) | 2 | |
+| [#61](https://github.com/kaushikhazra/axiom/issues/61) what the tools cost | [#66](https://github.com/kaushikhazra/axiom/pull/66) | 2 | **the startup line says the token cost** |
+| [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | [#67](https://github.com/kaushikhazra/axiom/pull/67) | 3 | **exit 2** - 6 of 12 criteria, follow-up [#68](https://github.com/kaushikhazra/axiom/issues/68) |
+| [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | [#69](https://github.com/kaushikhazra/axiom/pull/69) | 6 | **every reply is now rendered markdown** |
+
+**All six of #57, #55, #56, #61, #62 and #60 came out of one evening of manual testing** on
+2026-08-27. That is the argument for doing more of it: the suite was 440 green and hermetic,
+six loops had each survived a hostile cold read, and an evening of actually using the thing
+found six more. Four were shapes no test could have produced.
+
+**[#68](https://github.com/kaushikhazra/axiom/issues/68) is open** and is the only unfinished
+loop work. #62 exited at its fail-safe with 6 of 12 criteria: the two changes it made work on
+*opposite models* - showing the summariser the kept turns helps `qwen2.5:7b` and not
+`gemma4:e2b`, and allowing an empty answer helps `gemma4:e2b` and not `qwen2.5:7b`.
 
 ## What changed about starting it
 
@@ -45,10 +62,30 @@ deliberately.
 
 Ctrl-C at that list cancels; Ctrl-D ends the session.
 
+## What changed about reading a reply
+
+**Replies are rendered markdown now** (#60). Headings, bold, italic, lists, quotes, inline
+code, links and tables are formatted as they stream, and fenced blocks are syntax-highlighted
+when the fence names a language. Nothing is redrawn: a line is written once, when it is
+complete.
+
+```
+$ axiom --no-render          # today's plain output, markup and all
+$ AXIOM_RENDER=off axiom     # the same, for the session
+$ NO_COLOR=1 axiom           # colour off, formatting kept
+$ axiom > out.txt            # unchanged - piped output is plain, byte for byte
+```
+
+**A table is the one thing that waits.** Its rows are visible as they type, but the drawn
+table only appears once the last row has arrived - measured at **4.3 to 4.5 seconds** against
+`qwen2.5:7b`. That is inherent: column widths are not known until the table ends. Watch
+whether it reads as work happening or as a hang.
+
 ## Why manual testing is still the next thing
 
-**Nobody has actually used axiom.** Six issues have shipped since anyone tried to have a real
-conversation with it. Everything is settled by tests, stubs, and short live probes.
+**Nobody has had a long real conversation with axiom.** Thirteen issues have shipped, and the
+one evening someone did use it produced six of them. Everything else is settled by tests,
+stubs, and short live probes.
 
 Still never exercised:
 
@@ -109,7 +146,15 @@ server slower than 30s to start; tool names that confuse a 7B model; and now als
 happens when you switch models with servers attached** - they should not restart.
 
 **A long conversation.** Talk until compaction fires. Watch what `the summary is full -
-forgetting N` drops, and whether the model notices.
+forgetting N` drops, and whether the model notices. **[#68](https://github.com/kaushikhazra/axiom/issues/68)
+is open on exactly this** - what a bounded summary keeps is settled on one model and not the
+other, and a real session is what would settle it.
+
+**Reading a rendered reply, at length.** #60 is why this session existed and the least
+manually tested thing here. Ask for something long with headings, a table and a code block.
+Watch: does anything appear **twice** when the window is narrow - that was the row's worst
+defect and it is the one to check first; does resizing mid-reply corrupt anything; does the
+table's four-second pause read as a hang; and is the highlighting a help or a distraction.
 
 ## Known, recorded honestly, not bugs to re-report
 
@@ -133,22 +178,45 @@ forgetting N` drops, and whether the model notices.
 7. **`.axiom/model.json` appears in whatever directory you run from.** Gitignored here; in
    someone else's project it is a new folder they did not ask for. axiom says so the first time.
 
+8. **Two things belong to a system prompt story that has not been written.** A model
+   **fabricated tool results** - it invented the contents of a file the tool never read - and
+   compaction **corrupted** a detail rather than dropping it ("ventured" became "Vented").
+   Kaushik's ruling stands that axiom must not try to detect or challenge an unsupported
+   answer: that builds smarts that cannot be kept consistent. The lever is the system prompt,
+   and the story is unwritten.
+9. **A link's address is in the byte stream, not necessarily on the screen.** #60 emits an
+   OSC-8 hyperlink so the address survives; a terminal without OSC-8 support shows the link
+   text alone. Windows Terminal supports it. If a link ever looks like plain words with no way
+   to reach the address, this is why.
+
 ## If manual testing turns up work
 
 The queue is the mechanism and it is empty. A new row in `.claude/loop/queue.md` starts it
-again; its **Standing** section carries what six loops learned. Two worth knowing before
-writing the next issue:
+again; its **Standing** section carries what thirteen loops learned. Three worth knowing
+before writing the next issue:
 
 > **The cycle that writes the code never declares it done.** Read the criteria from GitHub
-> before the diff and before the previous log, and attack each rather than confirming it. Six
-> for six.
+> before the diff and before the previous log, and attack each rather than confirming it.
+> **Twelve for twelve** - it has found something real in every issue it has been applied to.
 
 > **A criterion can be read too loosely by the cycle implementing it**, and the test then gets
 > written from the implementation rather than from the issue. #48 AC 33, #49 AC 25 and AC 27
-> were all that shape - nothing in the diff looked wrong.
+> were all that shape, and so was **#60 AC 2** - "with syntax highlighting when the fence names
+> a language" was answered by the other half of the same sentence, twice, with a recorded
+> reason persuasive enough to stop anyone checking it. Nothing in the diff looked wrong.
 
-Write findings up as issues in the format `CLAUDE.md` describes. #48 and #49 are the most
-recent worked examples.
+> **Ask what a test would do if the feature did nothing**, then break the feature and watch it
+> go red. #60 turned up **six tests that passed for a reason other than the one they claimed**
+> and **five breaks that broke nothing**. Both are invisible to a green suite. The break
+> harness now fails loudly on a no-op break; a test suite has no equivalent guard, and finding
+> the next vacuous test is still a matter of trying.
 
-**Nothing is scheduled.** Rows 9 and 10 ran back to back inside one session, with no cron at
-all - the chain ends when the session does.
+Write findings up as issues in the format `CLAUDE.md` describes. #60 is the most recent worked
+example, and #26 the fullest.
+
+**A cron is still installed and the queue is empty.** It fires, reads `queue.md`, finds no row
+marked `running`, and stops - one wasted firing, nothing else. It was left alone deliberately:
+the queue's own rule is that a loop never deletes the scheduler, because doing so on a bad
+handover ends the chain silently with rows still queued. **Stopping it is Kaushik's call.**
+A cycle that fires into an empty queue should say so and exit, not scaffold a row nobody asked
+for.
