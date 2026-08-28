@@ -1006,3 +1006,71 @@ def test_a_paragraph_between_two_lists_starts_the_depths_again():
     # Or flattening everything satisfies it: if no list ever has a second level,
     # "the second list did not inherit one" is true and means nothing.
     assert drawn[1] != drawn[0], "there was no depth to inherit"
+
+
+# --- Nesting against the plain path (#73) --------------------------------
+
+
+DEEP = "- one\n  - two\n    - three\n  - back to two\n- back to one\n"
+
+
+def shape(rows: list[str]) -> list[int]:
+    """The sequence of levels, as levels rather than as columns.
+
+    Normalised so the comparison is about *structure* and not about how wide an
+    indent happens to be. Two renderings agree if they nest the same way, even
+    if one uses two columns a level and the other uses four.
+    """
+    columns = sorted({len(row) - len(row.lstrip(" ")) for row in rows})
+    return [columns.index(len(row) - len(row.lstrip(" "))) for row in rows]
+
+
+def test_the_indent_structure_matches_the_markdown_the_model_wrote():
+    """#73 AC 13.
+
+    The only one of this issue's remaining criteria that can find a *wrong*
+    answer rather than a missing one. Every other check confirms nothing was
+    lost; this one confirms the depth stack agrees with the source.
+    """
+    source = [line for line in DEEP.split("\n") if line.strip()]
+    drawn = [row for row in displayed(stream(DEEP)) if row.strip()]
+
+    assert shape(drawn) == shape(source), f"{shape(drawn)} against {shape(source)}"
+    assert shape(source) == [0, 1, 2, 1, 0], "the fixture stopped being nested"
+
+
+def test_rendering_off_gives_the_markdown_byte_for_byte(capsys):
+    """#73 AC 11. The plain path never reaches the renderer at all."""
+    terminal.use_rendering(False)
+    try:
+        for start in range(0, len(DEEP), 4):
+            terminal.show_piece(DEEP[start : start + 4])
+    finally:
+        terminal.use_rendering(True)
+
+    assert capsys.readouterr().out == DEEP
+
+
+def test_a_redirected_run_gives_the_markdown_byte_for_byte(capsys):
+    """#73 AC 12. Not a terminal, so the plain path, rendering setting aside."""
+    for start in range(0, len(DEEP), 4):
+        terminal.show_piece(DEEP[start : start + 4])
+
+    assert capsys.readouterr().out == DEEP
+
+
+@pytest.mark.parametrize("width", [20, 40])
+def test_a_list_nested_deeper_than_the_window_keeps_every_item(width, monkeypatch):
+    """#73 AC 9.
+
+    Eight levels against a twenty-column window. The rows are wider than the
+    window and the terminal wraps them, which is what should happen - a nested
+    item's text goes through the paragraph path, so nothing crops it.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+    source = "".join(f"{'  ' * depth}- item at depth {depth}\n" for depth in range(8))
+
+    on_screen = " ".join(displayed(stream(source)))
+
+    for depth in range(8):
+        assert f"item at depth {depth}" in on_screen, f"depth {depth} was lost"
