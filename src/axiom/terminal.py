@@ -6,8 +6,10 @@ one module from both talking to a backend and writing to a terminal.
 """
 
 import os
+import queue
 import re
 import sys
+import threading
 
 from .backend import ConnectionLost
 
@@ -425,14 +427,87 @@ def note_servers(
         print(f"{VOICE} {problem}", file=sys.stderr)
 
 
-def read_line() -> str | None:
-    """The next line the user types, or None if they are leaving."""
-    try:
-        return input(PROMPT).strip()
-    except (EOFError, KeyboardInterrupt):
-        # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
+WAITING = object()
+"""Nothing was typed before the timeout ran out. Not a line, and not leaving."""
+
+
+class Typed:
+    """The user's lines, read on a thread so the loop can watch a clock too.
+
+    `input()` blocks until a newline arrives, and that is where a session spends
+    nearly all of its life. A schedule cannot fire from inside it: a user idle at
+    the prompt at 08:59 would get their 09:00 job whenever they next pressed
+    enter, which might be tomorrow (#74 AC 9).
+
+    Reading on a thread and handing lines over a queue lets the main loop wait
+    with a timeout and look at the clock each time one runs out. **Turn execution
+    stays on the main thread** - this thread only ever reads - so a job still
+    cannot begin while a turn is in progress, and two jobs still cannot overlap.
+    AC 10 and AC 11 keep holding for the same reason they did before: there is
+    one place that runs a turn, and it runs one at a time.
+    """
+
+    def __init__(self, read=None) -> None:
+        self._read = read or (lambda: input(PROMPT))
+        self._lines: "queue.Queue[str | None]" = queue.Queue()
+        self._thread: "threading.Thread | None" = None
+
+    def _pump(self) -> None:
+        while True:
+            try:
+                line = self._read()
+            except (EOFError, KeyboardInterrupt):
+                # Ctrl-C and Ctrl-D at an idle prompt both mean leave. The
+                # contract `read_line` has always had, carried across the queue.
+                self._lines.put(None)
+                return
+            self._lines.put(line.strip())
+
+    def next(self, timeout: float) -> "str | None | object":
+        """A line, `None` for leaving, or `WAITING` if the timeout ran out.
+
+        The thread starts on the first call rather than in `__init__`, so
+        constructing one of these costs nothing and a session that never
+        schedules anything never starts a thread at all.
+        """
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._pump, daemon=True)
+            self._thread.start()
+        try:
+            return self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return WAITING
+
+
+_typed: "Typed | None" = None
+
+
+def read_line(timeout: float | None = None) -> "str | None | object":
+    """The next line the user types, or None if they are leaving.
+
+    With no timeout this is exactly what it has always been - a blocking read on
+    the calling thread. Every existing caller and every existing test takes this
+    path, and none of them can tell that the other one exists.
+
+    With a timeout it returns `WAITING` when nothing was typed in that time, so
+    the caller can look at the clock and come back. That is the only way a
+    scheduled prompt can run while the user sits at an idle prompt rather than
+    after they next press enter.
+    """
+    if timeout is None:
+        try:
+            return input(PROMPT).strip()
+        except (EOFError, KeyboardInterrupt):
+            # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
+            print()
+            return None
+    global _typed
+    if _typed is None:
+        _typed = Typed()
+    got = _typed.next(timeout)
+    if got is None:
         print()
-        return None
+    return got
 
 
 def start_turn() -> None:
