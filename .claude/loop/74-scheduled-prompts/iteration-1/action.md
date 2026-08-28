@@ -1,30 +1,30 @@
 # Action
 
-Twelve of thirty-three. The dispatch is live and inert: nothing can create a job, because
-there are no tools. That is the next thing, and one piece of housekeeping comes before it.
+Twenty-five of thirty-three. The remaining eight split into three groups, and one of them is
+the hard one this loop has been deferring since cycle 1.
 
-1. **Make `terminal._typed` injectable.** It is a module-level singleton, so an end-to-end
-   test through `main` with a schedule would leak a reader thread between tests. Cycle 3's
-   tests sidestep it by patching `read_line`, which is honest for a unit test and not enough
-   for the tool tests coming next. Fix it before writing them, not after.
-2. **Add the three tools**, following `REGISTRY` in `src/axiom/tools.py` exactly: schedule a
-   prompt, list what is scheduled, cancel one by identifier. `Limits` is not where the store
-   goes - it is frozen and holds settings that belong to the user. Mirror the pattern with a
-   `needs_schedule` flag and a second injected argument on `run()`, as cycle 1 established.
-3. **Say what was scheduled** (AC 3, AC 4, AC 5): what, when it next runs, and its identifier.
-   And the two things the user is told once - that schedules last only as long as the session
-   (AC 7) and that a repeating job stops after seven days (AC 8).
-4. **Listing and cancelling** (AC 14 to AC 18), including the empty listing saying so rather
-   than printing nothing, and cancelling an identifier that is not there.
-5. **Break every one.** Three of eleven of loop 73's own tests were vacuous a cycle after
-   being written. Assume the same rate here.
-6. `uv run pytest` - 665 on this branch, green, and the wall-clock must not climb.
+1. **AC 27, and it is time.** A one-shot whose time has already passed must be refused.
+   croniter cannot help: `0 9 28 8 *` asked at 18:47 on 28 August resolves to **2027**, so
+   "already gone" and "a year out" are the same answer. The store has to reason about the
+   *pinned fields* against now - a one-shot pins minute, hour, day-of-month and month, so if
+   the resolved time is more than a year minus a day away, the user named a moment that has
+   passed. **Measure that boundary before coding it**, at a leap day and at 31 December, or
+   it will be right for August and wrong twice a year.
+2. **AC 19, AC 20 and AC 24 through a whole session**, not through the store. A repeating job
+   runs on every match; a one-shot runs once and is gone; a `/model` switch leaves jobs alone,
+   neither cancelled nor duplicated. `terminal.use_input` exists now, so an end-to-end test
+   through `main` is possible - that was cycle 3's blocker and it is cleared.
+3. **AC 1, AC 30, AC 31, AC 32, AC 33** - a run with nothing scheduled says nothing about
+   schedules; a job whose run fails says so, leaves the session usable, and still runs next
+   time; a failing job never ends the session; a job that produces no reply is not a failure;
+   exiting with jobs scheduled exits immediately with the same status code as exiting with
+   none.
+4. **Re-establish green between every revert and the next break.** This cycle lost a break's
+   result to a stripped import: the formatter removed `timedelta` while a break made it
+   unused, and the next break's reddening was two-thirds stale failures. Do not trust the
+   previous run's baseline.
+5. `uv run pytest` - 683 on this branch, green.
 
-Leave the seven-day expiry (AC 21) and AC 27 for a later cycle. AC 27 is still the one known
-to be harder than it looks: croniter cannot express "in the past", so a one-shot at 09:00
-asked for at 18:47 resolves to next year rather than being refused, and telling those apart
-needs the pinned fields rather than the resolved time.
-
-First thing to tackle: **the singleton.** It is small, it is in the way of everything after
-it, and leaving it until the tool tests exist means discovering it as flakiness rather than
-as a decision.
+First thing to tackle: **AC 27's boundary, measured at a leap day and at the end of a year
+before any code is written.** It is the one remaining criterion whose implementation could be
+plausibly wrong and still look right, because August is the month it will be tested in.

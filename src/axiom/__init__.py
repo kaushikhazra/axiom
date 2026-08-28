@@ -747,7 +747,7 @@ def _chat(
                         # loop knows the difference.
                         result = attached.run(call.name, arguments)
                     else:
-                        result = tools.run(call.name, call.arguments, limits)
+                        result = tools.run(call.name, call.arguments, limits, jobs)
                         kind = tools.failure_kind(result)
                         if command is not None and kind:
                             failures.setdefault(command, []).append(kind)

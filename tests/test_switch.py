@@ -15,7 +15,12 @@ from pathlib import Path
 
 import pytest
 
-from axiom import backend, main, models
+from axiom import backend, main, models, tools
+
+# Derived, not written down. These tests are about tools surviving a switch, not
+# about how many there are, and a literal count turns every new tool into a
+# spurious failure here - which is what it did when #74 added three.
+ALL_TOOLS = len(tools.REGISTRY)
 from axiom.backend import Call
 from conftest import StubBackend, feed
 
@@ -301,7 +306,9 @@ def test_switching_to_a_tool_less_model_drops_the_tools_and_says_so(
         capable={"qwen2.5:7b": True, "gemma2:2b": False},
     )
 
-    assert "7 tools including web" in out.out, "the session did not start with tools"
+    assert f"{ALL_TOOLS} tools including web" in out.out, (
+        "the session did not start with tools"
+    )
     assert "no tools - this model cannot call them" in out.out
     assert stub.tools_sent[-1] is None, "sent tools to a model that cannot use them"
 
@@ -318,7 +325,7 @@ def test_switching_back_to_a_capable_model_restores_the_tools(
     )
 
     assert "now ornith:9b" in out.out
-    assert "7 tools" in out.out.split("now ornith:9b")[1]
+    assert f"{ALL_TOOLS} tools" in out.out.split("now ornith:9b")[1]
     assert stub.tools_sent[-1] is not None, "the tools were not restored"
 
 

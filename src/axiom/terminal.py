@@ -486,6 +486,20 @@ class Typed:
 _typed: "Typed | None" = None
 
 
+def use_input(read=None) -> None:
+    """Replace the reader behind the timed read, or forget the one in use.
+
+    A module-level singleton is right for a program with one console and wrong
+    for a test suite: without this, the first test to take a timed read leaves a
+    thread reading a `builtins.input` that the next test has already replaced,
+    and the failure shows up as flakiness somewhere unrelated.
+
+    `None` forgets it, so the next timed read builds a fresh one.
+    """
+    global _typed
+    _typed = Typed(read=read) if read is not None else None
+
+
 def read_line(timeout: float | None = None) -> "str | None | object":
     """The next line the user types, or None if they are leaving.
 

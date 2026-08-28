@@ -15,7 +15,7 @@ is #74 AC 22 and AC 23, and is a property of this module holding the only copy.
 
 import uuid
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable
 
 from croniter import croniter
@@ -26,6 +26,14 @@ from croniter import croniter
 # expression" (AC 25) and a schedule finer than once a minute (AC 29). One guard
 # answers both criteria, which is why they are not separate code.
 FIELDS = 5
+
+# How long a repeating job lives before it is retired (#74 AC 21). It runs one
+# final time at the end of this and is then removed.
+#
+# A bound rather than forever, because a schedule nobody remembers making is a
+# session that never settles - and because the user is told this number when
+# they schedule one, so it has to be a number rather than a policy.
+LIFETIME_DAYS = 7
 
 
 class Invalid(ValueError):
@@ -151,6 +159,12 @@ class Schedule:
             del self._jobs[job_id]
             return None
         moment = now if now is not None else self._clock()
+        # AC 21: seven days old, so this run was its last. Checked *after* the
+        # run rather than before it, because the criterion is that it runs one
+        # final time and is then removed - not that it is removed instead.
+        if moment - job.created >= timedelta(days=LIFETIME_DAYS):
+            del self._jobs[job_id]
+            return None
         moved = replace(job, next_run=croniter(job.cron, moment).get_next(datetime))
         self._jobs[job_id] = moved
         return moved
