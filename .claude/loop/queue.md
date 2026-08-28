@@ -21,9 +21,27 @@ cycles resolving each other's conflicts.
 | 13 | [#56](https://github.com/kaushikhazra/axiom/issues/56) the same facts after a switch | `56-same-facts` | **done** - merged in PR #65, 2 cycles, 32 minutes, all 12 criteria (the cycle-2 cold read found three tests passing because a default happened to be right; the arguments are now required) |
 | 14 | [#61](https://github.com/kaushikhazra/axiom/issues/61) what the tools cost | `61-tool-cost` | **done** - merged in PR #66, 2 cycles, 35 minutes, all 12 criteria (the cycle-2 cold read found AC 9 with no test at all - every test used default settings, so a figure measured from a bare Limits() matched by coincidence; also fixed a flaky lifetime test in #43) |
 | 15 | [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | `62-summary-facts` | **done** - merged in PR #67 at **exit 2**, 3 cycles, 49 minutes. **6 of 12 criteria met outright**, 3 met on one model of two, 2 not met as written. Follow-up [#68](https://github.com/kaushikhazra/axiom/issues/68). The two changes work on *opposite* models - showing the kept turns fixes qwen and not gemma, allowing an empty answer fixes gemma and not qwen |
-| 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **running** - started 2026-08-28 03:07 IST, fail-safe 07:07 IST, 29 criteria, one new dependency |
+| 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **done** - merged in PR #69, 6 cycles, 2h40m, all 29 criteria. **Seven real defects across two cold reads**, six of them found by feeding hostile input to a modelled terminal rather than by reading code. AC 7 was not met at all - every paragraph longer than the window was drawn on screen twice, while the recorded evidence for it stayed true |
 
-**Row 16 is running. Every row through 16 runs, one after another, until the queue is empty.**
+**The queue is empty.** Sixteen rows, all done. Nothing is running and there is no next row
+to hand to. The cron is still installed and has nothing to find - see **Handing over** below;
+it was deliberately not deleted, and stopping it is Kaushik's call.
+
+**#60 is where the method paid for itself most plainly, and the numbers are worth keeping**:
+seven real defects, **six vacuous tests**, and **five no-op breaks**. Every vacuous test
+shared one shape - asserting that text was *present in the byte stream*, where the plain echo
+puts it regardless of what the renderer does. Every no-op break either changed nothing (`[]
+or X` is `X`, an anchored `re.match` that could never match mid-line) or had a target that
+had moved under it, and each printed a line among two dozen while the run still reported "no
+survivors". Both classes are invisible to a green suite. The harness now fails loudly on
+both; a test suite has no equivalent guard, and that is the open problem this row leaves.
+
+**Two cycles marked AC 7 `met-with-evidence` and the evidence was true.** No cursor-up
+sequence appeared anywhere in the byte stream, and none did - while every paragraph longer
+than the window was being drawn on screen twice. The promise was a *proxy* for the criterion
+and it was the wrong proxy. `tests/screen.py` - a terminal small enough to reason about -
+is what a criterion about the screen has to be measured against, and it is the most reusable
+thing this row produced.
 
 **All six came out of the first manual pass**, 2026-08-27, and that is the point worth keeping.
 The suite was 440 green and hermetic, six loops had each survived a hostile cold read, and one
@@ -130,6 +148,13 @@ row says `running`, so a handover needs no cron work at all - marking the next r
 step 7 is what redirects it. **Do not delete it between rows.** Deleting it on a handover would
 end the chain silently with every remaining row still queued, which is the exact failure the
 one-cron design removes.
+
+**The queue is now empty, and the cron was still not deleted.** It fires, reads this file,
+finds no row marked `running`, and stops - which costs one firing and nothing else. It was
+left alone on purpose: the rule above is what keeps the chain alive across fifteen handovers,
+and a loop deleting the queue's own scheduler on the way out is the one action that cannot be
+undone by the next run. Stopping it is Kaushik's call. A cycle that fires into an empty queue
+should say so and exit, not scaffold a row nobody asked for.
 
 ## Standing
 
