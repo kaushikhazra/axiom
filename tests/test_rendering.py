@@ -854,3 +854,155 @@ def test_a_resize_mid_reply_cannot_corrupt_what_is_on_screen(monkeypatch):
     shown = [line for line in displayed(emitted) if line.strip()]
     assert len(shown) == 5, "a line was rewritten when the width moved"
     assert "five" in shown[-1]
+
+
+# --- The layout of a list, pinned (#73) ----------------------------------
+
+
+@pytest.mark.parametrize("source, marker", [("- a bullet\n", "•"), ("1. one\n", "1")])
+def test_a_flat_list_item_keeps_its_layout(source, marker):
+    """#73 AC 6. Pinned so a nesting fix cannot quietly move every list.
+
+    617 tests said nothing about where a list item sits. The one that looked
+    like it did - `test_markdown_is_styled` - only checks that the markup is not
+    shown literally, and would pass whether the bullet landed at column 1 or
+    column 15. This issue is about to change the code that draws every list in
+    the program, so the thing it must not change needs saying out loud first.
+
+    The numbers are from the loop's cycle-1 measurement, not from running the
+    renderer and writing down what it said. A guard copied from the code it
+    guards agrees with whatever that code does next, which is the failure mode
+    this file already has one recorded example of.
+    """
+    rows = [row for row in displayed(stream(source)) if row.strip()]
+
+    assert len(rows) == 1, "a short list item is one row"
+    line = rows[0]
+    assert len(line) - len(line.lstrip(" ")) == 1, "the marker sits at column 1"
+    assert line.strip().startswith(marker), f"the marker is {marker!r}"
+    assert line == line.rstrip(), "padded out to the console width"
+
+
+NESTED = "- Outer\n  - Inner\n    - Deepest\n  - Back to two\n- Back to the top\n"
+
+
+def items(source: str) -> list[tuple[int, str]]:
+    """Each drawn list row as (indent column, marker)."""
+    out = []
+    for row in displayed(stream(source)):
+        if not row.strip():
+            continue
+        out.append((len(row) - len(row.lstrip(" ")), row.strip().split(" ")[0]))
+    return out
+
+
+def test_an_item_indented_under_another_is_drawn_under_it():
+    """#73 AC 1."""
+    outer, inner = items("- Outer\n  - Inner\n")
+
+    assert inner[0] > outer[0], "the sub-item is not indented past its parent"
+
+
+def test_three_levels_are_three_distinct_indents():
+    """#73 AC 2."""
+    columns = [column for column, _ in items(NESTED)]
+
+    assert len(set(columns[:3])) == 3, f"levels collapsed: {columns[:3]}"
+    assert columns[0] < columns[1] < columns[2]
+
+
+def test_a_level_always_uses_the_same_marker():
+    """#73 AC 4."""
+    drawn = items(NESTED)
+    by_level: dict[int, set[str]] = {}
+    for column, marker in drawn:
+        by_level.setdefault(column, set()).add(marker)
+
+    assert all(len(markers) == 1 for markers in by_level.values()), by_level
+    assert len({next(iter(m)) for m in by_level.values()}) == len(by_level), (
+        "two levels share a marker, so the level is not apparent from it"
+    )
+
+
+def test_returning_to_a_shallower_level_returns_to_that_level():
+    """#73 AC 5. Not to a new indent of its own."""
+    drawn = items(NESTED)
+
+    assert drawn[3] == drawn[1], "'Back to two' did not return to level two"
+    assert drawn[4] == drawn[0], "'Back to the top' did not return to the top"
+    # Without this the test passes when every level is flattened: five identical
+    # rows satisfy "returned to the same place" perfectly. Measured - it did.
+    assert drawn[1] != drawn[0], "there were no levels to return from"
+
+
+def test_an_ordered_list_nests_inside_an_unordered_one():
+    """#73 AC 3."""
+    outer, inner = items("- Outer\n  1. Numbered inside\n")
+
+    assert inner[0] > outer[0]
+    assert inner[1] == "1", f"the number was replaced by {inner[1]!r}"
+
+
+def test_an_unordered_list_nests_inside_an_ordered_one():
+    """#73 AC 3."""
+    outer, inner = items("1. One\n   - Bullet inside\n")
+
+    assert inner[0] > outer[0]
+
+
+def test_a_nested_item_is_one_row_not_a_code_block():
+    """#73 AC 2, the four-space case.
+
+    Four spaces of indent is an indented code block to a renderer with no list
+    context, and that is what a line-at-a-time renderer has. Before the depth
+    stack, `'    - Deepest'` came back as three rows - a full-width blank line,
+    the text, another blank line - which is 91 visible characters from an
+    18-character input.
+    """
+    emitted = displayed(stream("- a\n  - b\n    - c\n"))
+    rows = [row for row in emitted if row.strip()]
+
+    assert len(rows) == 3, f"expected one row per item, got {rows}"
+    # The blank rows a code block is padded with are whitespace, so filtering
+    # them out hides exactly the defect this test is named for. Measured: with
+    # the depth stack removed this assertion is the only one that fails.
+    padding = [row for row in emitted if row and not row.strip()]
+    assert not padding, f"a code block's padding rows: {padding!r}"
+
+
+def test_markup_inside_a_nested_item_is_still_formatted():
+    """#73 AC 7."""
+    emitted = stream("- Outer\n  - **bold** and *italic* and `code`\n")
+    drawn = [row for row in displayed(emitted) if "bold" in row][0]
+
+    assert "**" not in drawn and "*italic*" not in drawn and "`" not in drawn
+    assert "bold" in drawn and "italic" in drawn and "code" in drawn
+
+
+def test_an_item_with_no_text_shows_its_marker_at_its_level():
+    """#73 AC 8."""
+    outer, empty = items("- Outer\n  -\n")
+
+    assert empty[0] > outer[0]
+    assert empty[1] in terminal.NESTED_MARKERS
+
+
+def test_a_sub_item_with_no_parent_above_it_is_shown():
+    """#73 AC 10. Shown, rather than dropped for having no parent."""
+    drawn = [
+        row for row in displayed(stream("  - No parent above me\n")) if row.strip()
+    ]
+
+    assert len(drawn) == 1
+    assert "No parent above me" in drawn[0]
+
+
+def test_a_paragraph_between_two_lists_starts_the_depths_again():
+    """A list after prose is a new list, not a continuation of the last one."""
+    drawn = items("- one\n  - deep\n")
+    again = items("- one\n  - deep\nsome prose\n- back\n")
+
+    assert again[3] == drawn[0], "the second list resumed the first one's depth"
+    # Or flattening everything satisfies it: if no list ever has a second level,
+    # "the second list did not inherit one" is true and means nothing.
+    assert drawn[1] != drawn[0], "there was no depth to inherit"
