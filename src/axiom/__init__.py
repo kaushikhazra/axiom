@@ -50,6 +50,7 @@ def _could_still_be_a_call(reply: str) -> bool:
 
 def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> None:
     settings = config.resolve(argv)
+    terminal.use_rendering(settings.render_enabled)
     attached = servers.Servers(
         settings.mcp_servers,
         start_timeout=settings.mcp_start_timeout,

@@ -5,6 +5,8 @@ this module to say things rather than saying them itself, which is what keeps
 one module from both talking to a backend and writing to a terminal.
 """
 
+import os
+import re
 import sys
 
 from .backend import ConnectionLost
@@ -459,11 +461,495 @@ def end_turn() -> None:
     print()
 
 
+# Lines of a fenced block kept as context for highlighting the next one. See
+# `Rendered._code_line` for the measurement that chose it.
+CODE_CONTEXT = 20
+
+
+class Rendered:
+    """A reply turned into formatted lines, each written exactly once.
+
+    The shape is settled by measurement, in `logs/cycle-1.md`. Rich's `Live` -
+    which every published streaming-markdown implementation uses - emits
+    `CURSOR_UP` and `ERASE_IN_LINE` once per line of the previous render on
+    *every* chunk, and truncates to the screen height with an ellipsis when the
+    render is taller than the terminal. On a long reply that means only the last
+    screenful is ever visible while it streams, and everything above it is
+    rewritten continuously.
+
+    So `Live` is not used. A line is written when it is complete, with an
+    ordinary write, and from that moment it belongs to the terminal's scrollback
+    and is never addressed again. **No cursor-up sequence is ever emitted**,
+    which is a stronger promise than "does not move" and is what the tests
+    assert.
+
+    The line still being typed is echoed plainly as it arrives, so no character
+    waits for the one after it, and it is re-drawn *in place* with a carriage
+    return once it is complete and can be styled. That redraw touches one line,
+    never leaves it, and never reaches anything already committed - which is the
+    resolution of AC 7 against AC 10, recorded in the cycle log.
+    """
+
+    def __init__(self, write=None) -> None:
+        self._write = write or (lambda text: print(text, end="", flush=True))
+        self._line = ""  # the line being typed, not yet complete
+        self._echoed = 0  # how much of it the user has already seen
+        self._echo_width = 0  # the width it was drawn at, for taking it back
+        self._fence: str | None = None  # the language of an open fence
+        self._lexer: str | None = None  # that language, if one exists for it
+        self._code: list[str] = []  # the open fence's lines, for context
+        self._table: list[str] = []  # rows waiting for the table to end
+
+    def feed(self, text: str) -> None:
+        """Take a fragment of the reply and show what can now be shown."""
+        self._line += text
+        while "\n" in self._line:
+            line, _, self._line = self._line.partition("\n")
+            self._finished(line)
+            self._echoed, self._echo_width = 0, 0
+        # Whatever is left is incomplete. Echo the part not yet seen, plainly -
+        # holding it back until the newline would make output arrive a line at
+        # a time, which is visibly slower than today (AC 10).
+        want = self._echo_limit()
+        if want > self._echoed:
+            self._write(self._line[self._echoed : want])
+            self._echoed = want
+            # The width *this* text was drawn at. Taking it back later must use
+            # the same number - see `_rows_used`.
+            self._echo_width = _width()
+
+    def _echo_limit(self) -> int:
+        """How much of the unfinished line may be echoed - all but the boundary.
+
+        A terminal that has been sent exactly as many characters as it has
+        columns is in an ambiguous state: the VT-series and xterm hold the
+        cursor at the last column with the wrap *pending*, while a simpler
+        terminal has already moved to the next row. `_erase` cannot tell which,
+        and being wrong either leaves a duplicated row behind or climbs one row
+        too far and erases a line already committed.
+
+        Rather than pick a side, the boundary is never reached: one character is
+        held back whenever the echo would land exactly on a multiple of the
+        width. It arrives with the next chunk, or with the line - so it costs a
+        few hundred microseconds and removes the whole class.
+        """
+        full = len(self._line)
+        try:
+            from rich.cells import cell_len
+
+            width = max(1, _width())
+            if full and cell_len(self._line[:full]) % width == 0:
+                return full - 1
+        except Exception:
+            pass
+        return full
+
+    def finish(self) -> None:
+        """Flush a reply that ended without a final newline."""
+        if self._line:
+            self._finished(self._line)
+        self._settle_table()
+        self._line, self._echoed, self._echo_width = "", 0, 0
+        self._fence, self._lexer, self._code = None, None, []
+
+    def _finished(self, line: str) -> None:
+        """One complete line: committed now, or held because it is a table.
+
+        A table is the one construct that cannot be drawn a line at a time -
+        the column widths are not known until the last row has arrived, and a
+        row rendered alone is just its own text. It is also the only construct
+        held back, and that is a rule rather than a habit: AC 8 forbids holding
+        a fence's contents, and AC 10 forbids holding anything else.
+
+        Holding costs nothing that was ever shown. A held row is erased from
+        the line it was typed on, so the next row is typed over it, and when
+        the table ends the whole of it is written at once. Nothing that
+        reached the scrollback is touched, so AC 7 still holds exactly.
+        """
+        if self._fence is None and _looks_like_a_table_row(line):
+            self._table.append(line)
+            self._write(self._erase(line))  # take back the row typed here
+            return
+        self._settle_table()
+        self._commit(line)
+
+    def _settle_table(self) -> None:
+        """Write the held rows as one table, now that its extent is known."""
+        if not self._table:
+            return
+        rows, self._table = self._table, []
+        for line in _as_table(rows):
+            self._write("\r\x1b[K" + line + "\n")
+
+    def _commit(self, line: str) -> None:
+        """Write one finished line, styled, replacing whatever was echoed."""
+        self._write(self._erase(line) + self._styled(line) + "\n")
+
+    def _erase(self, typed: str) -> str:
+        """Take back the line being typed - all of it, however tall it got.
+
+        `\\r` and erase-to-end-of-line are enough only while the echoed line fits
+        the window. A model writes prose as one long line, so it usually does
+        not: at 80 columns a paragraph wraps to three rows, `\\r` returns to the
+        start of the *third*, and the two rows above it keep the raw text while
+        the styled line is written below them. **The paragraph appears twice.**
+
+        Cycles 2 and 3 both marked AC 7 met on the strength of "no cursor-up is
+        ever emitted", counted in the byte stream. That promise was a proxy for
+        the criterion and it was the wrong proxy: it held perfectly while the
+        screen showed every long paragraph twice. Found by modelling a terminal
+        rather than counting escapes.
+
+        So the cursor does move up - by exactly the number of rows *this
+        unfinished line* occupies, which cannot reach a line already committed.
+        That is what AC 7 asks for: nothing shown is repositioned, and nothing
+        is printed twice. `\\x1b[J` then clears from there down in one go.
+        """
+        rows = self._rows_used(typed)
+        return "\r" + (f"\x1b[{rows}A" if rows else "") + "\x1b[J"
+
+    def _rows_used(self, typed: str) -> int:
+        """Rows below the first that the echoed text has spilled onto.
+
+        `cell_len`, not `len`: a wide character occupies two columns, and
+        counting it as one would leave a row behind.
+
+        The width used is the one the text was **echoed** at, not the one in
+        force now. A window narrowed between the echo and the newline would
+        otherwise make this climb rows the echo never occupied and erase lines
+        already committed. Terminals disagree about whether they reflow what is
+        already drawn - Windows Terminal does, xterm does not - so there is no
+        arithmetic that is right for both. Measuring what was actually emitted
+        fails the safe way: leftover text, never a destroyed answer.
+        """
+        if self._echoed <= 0:
+            return 0
+        try:
+            from rich.cells import cell_len
+
+            width = max(1, self._echo_width or _width())
+            return max(0, (cell_len(typed[: self._echoed]) - 1) // width)
+        except Exception:
+            return 0
+
+    def _styled(self, line: str) -> str:
+        """One finished line, as it should look.
+
+        Fence markers open and close a block. Inside one, the line is code:
+        highlighted when the fence names a language that exists (AC 2), and
+        plain cyan when it names none or names one nobody has a lexer for
+        (AC 3) - still set apart from the prose, which is what that criterion
+        asks for.
+
+        Nothing below may cost the user the answer (AC 28). `_as_markdown`
+        guards itself, but the guard is repeated here because the promise is
+        about *any* failure in styling, not about one function's internals -
+        and the day someone adds a second renderer above this line, the promise
+        should already hold.
+        """
+        try:
+            if line.lstrip().startswith("```"):
+                self._open_or_close(line.lstrip()[3:].strip())
+                return f"\x1b[2m{line}\x1b[0m"
+            if self._fence is not None:
+                return self._code_line(line)
+            return _as_markdown(line)
+        except Exception:
+            return line
+
+    def _open_or_close(self, language: str) -> None:
+        """A fence marker arrived: start a block, or end the one open."""
+        if self._fence is not None:
+            self._fence, self._lexer, self._code = None, None, []
+            return
+        self._fence = language or ""
+        self._lexer = _lexer_for(self._fence)
+        self._code = []
+
+    def _code_line(self, line: str) -> str:
+        """One line of a fenced block, highlighted in the block's own context.
+
+        Highlighting a line *alone* guesses at context it does not have - the
+        middle of a triple-quoted string is not code, and colouring it as code
+        is a confident lie. So the whole block so far is lexed and only the new
+        line's rendering is taken. Cheap: a block is tens of lines, and this
+        happens once per line rather than once per chunk.
+
+        No line is ever redrawn by this. A line already committed keeps whatever
+        it was given, which is right - re-lexing changes the *next* line's
+        context, never an earlier line's text.
+
+        The context is **bounded**, and the bound was measured rather than
+        picked. Lexing the whole block on every line is quadratic: 7.2ms a line
+        at 10 lines, 29ms at 200, **71ms at 500** - 35 seconds of CPU for a
+        500-line block, a visible stall and so an AC 10 failure.
+
+        Held to a window the cost is flat and linear in the window: 2.2ms at 5
+        lines, 6.1 at 20, 16.0 at 60, 28.3 at 120. Twenty is the choice - well
+        inside the gap between two streamed lines, and more context than any
+        multi-line string in a chat reply plausibly needs. What it costs is a
+        string opened more than twenty lines earlier being coloured as code;
+        what it buys is a long block that still streams.
+        """
+        self._code.append(line)
+        del self._code[:-CODE_CONTEXT]
+        if self._lexer:
+            drawn = _highlighted("\n".join(self._code), self._lexer)
+            if len(drawn) >= len(self._code):
+                return drawn[len(self._code) - 1]
+        # Cyan is a colour, so `NO_COLOR` takes it. The dim on a fence marker is
+        # an attribute rather than a colour and stays - which is the line Rich
+        # draws, and the line the convention draws.
+        return line if _colourless() else f"\x1b[36m{line}\x1b[0m"
+
+
+def _lexer_for(language: str) -> str | None:
+    """The named language, if anything can actually highlight it.
+
+    Rich falls back to plain text for a name it does not know, silently - so
+    asking it is no way to tell a recognised language from an unrecognised one,
+    and AC 2 and AC 3 want different things for the two.
+    """
+    if not language:
+        return None
+    try:
+        from pygments.lexers import get_lexer_by_name
+
+        get_lexer_by_name(language)
+        return language
+    except Exception:
+        return None
+
+
+def _highlighted(code: str, language: str) -> list[str]:
+    """A block of code, drawn one output line per source line.
+
+    A very wide console and no word wrapping, on purpose: the caller places
+    lines itself and needs the two to correspond. The terminal does the
+    wrapping afterwards, as it does for every other line here.
+    """
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.syntax import Syntax
+
+        buffer = StringIO()
+        Console(
+            file=buffer, force_terminal=True, legacy_windows=False, width=10_000
+        ).print(
+            Syntax(
+                code,
+                language,
+                theme="ansi_dark",  # the terminal's own colours, not a palette
+                background_color="default",  # never paint behind the text
+                word_wrap=False,
+            ),
+            end="",
+        )
+        return [_unpadded(line) for line in buffer.getvalue().split("\n")]
+    except Exception:
+        return []
+
+
+def _colourless() -> bool:
+    """Whether the user has asked for no colour.
+
+    Presence, not truth: `NO_COLOR=` with nothing after it counts. The published
+    convention says "not an empty string", but Rich tests for presence, and Rich
+    draws most of what reaches the screen here. Agreeing with the renderer beats
+    agreeing with the specification and then disagreeing with itself - a session
+    where headings lose their colour and fenced code keeps it is the worse
+    outcome of the two.
+    """
+    return "NO_COLOR" in os.environ
+
+
+# A row of a table, kept deliberately tight: a line whose first non-space
+# character is a pipe. Markdown allows a table without leading pipes, but
+# treating any line *containing* one as a table row would swallow ordinary
+# prose - a shell pipeline, a regex alternation - into a table that never
+# closes. Missing a table reads badly; eating a paragraph loses the answer.
+_TABLE_ROW = re.compile(r"^\s*\|")
+
+# What Rich draws under a table's header row, and the sign that it understood
+# the rows as a table at all rather than as a paragraph of pipes.
+HEADER_RULE = "─"
+
+
+def _is_a_rule(line: str) -> bool:
+    """Whether a drawn line is a header rule and not text that contains one.
+
+    A whole line of it, not an appearance of it. Asking whether the character
+    is *present* takes a row like `| a─b | c |` - a model drawing a diagram in
+    a table cell - as proof that a table was drawn, and hands back the
+    paragraph Rich actually produced, with every row run together.
+    """
+    visible = _ESCAPE.sub("", line)
+    return bool(visible.strip()) and not visible.strip(" " + HEADER_RULE)
+
+
+def _looks_like_a_table_row(line: str) -> bool:
+    return bool(_TABLE_ROW.match(line))
+
+
+def _as_table(rows: list[str]) -> list[str]:
+    """The held rows drawn as one table, or handed back untouched.
+
+    Whether Rich *drew a table* is asked explicitly, by looking for the rule it
+    puts under a header. It is not enough that it returned something: handed
+    rows it cannot parse - a delimiter row narrower than the header, which AC 23
+    names - it draws them as one paragraph, and four rows come back run together
+    into a single wrapped line of pipes. The rows are all there and unreadable.
+
+    So anything that is not a table goes back exactly as the model wrote it, one
+    line per row. This is AC 5 and AC 23 at the one place in the renderer that
+    holds anything.
+    """
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.markdown import Markdown
+
+        buffer = StringIO()
+        Console(
+            file=buffer,
+            force_terminal=True,
+            legacy_windows=False,
+            width=_width(),
+            soft_wrap=False,  # a table draws its own edges; do not let them wrap
+        ).print(Markdown("\n".join(rows)), end="")
+        drawn = [_unpadded(line) for line in buffer.getvalue().split("\n")]
+        # Rich draws a top and bottom border row for a table, and the box style
+        # it uses for markdown puts nothing in them - so they arrive as lines
+        # that are empty apart from their escape sequences, and a blank line
+        # either side of every table. `strip()` does not see them as empty
+        # because an escape sequence is not whitespace.
+        while drawn and not _visible(drawn[0]):
+            drawn.pop(0)
+        while drawn and not _visible(drawn[-1]):
+            drawn.pop()
+        if not any(_is_a_rule(line) for line in drawn):
+            return rows  # not a table; hand back what the model wrote
+        return drawn or rows
+    except Exception:
+        # AC 28, and AC 5. A table that cannot be drawn is still a table the
+        # user asked for; hand back exactly what the model wrote.
+        return rows
+
+
+def _as_markdown(line: str) -> str:
+    """One line through Rich, without letting it own the cursor or the width.
+
+    Rich pads a rendering to the console width and puts a blank line before a
+    list item; neither belongs here, where the caller is placing lines itself.
+    A line Rich cannot make sense of comes back as it went in - never dropped,
+    which is AC 5 and the failure mode markdown renderers are prone to.
+
+    `legacy_windows=False` is not cosmetic. Rich detects the old Windows console
+    and, believing it cannot emit a hyperlink, renders `[the docs](https://...)`
+    as the four words `see the docs for more` - **the address is gone**, with no
+    way for the user to read or copy it. Measured, not assumed: with the flag it
+    emits the OSC-8 sequence and the address survives. Anything axiom runs on is
+    a terminal from this decade.
+    """
+    if not line.strip():
+        return line
+    try:
+        from io import StringIO
+
+        from rich.console import Console
+        from rich.markdown import Markdown
+
+        buffer = StringIO()
+        Console(
+            file=buffer,
+            force_terminal=True,
+            legacy_windows=False,  # or a link's address is dropped; see above
+            width=_width(),
+            soft_wrap=True,
+        ).print(Markdown(line), end="")
+        shown = buffer.getvalue().strip("\n")
+        return _unpadded(shown) if shown.strip() else line
+    except Exception:
+        # AC 28. A formatting failure costs the formatting, never the answer.
+        return line
+
+
+# Trailing spaces Rich adds to pad a block element - a quote, a heading - out to
+# the console width. A line padded to exactly the width, plus the newline this
+# module writes, wraps to a blank line on most terminals (AC 12). `rstrip` alone
+# does not reach them: the padding sits *before* the closing reset sequence.
+_PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)")
+_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _unpadded(shown: str) -> str:
+    return _PADDING.sub("", shown)
+
+
+def _visible(line: str) -> bool:
+    """Whether a line puts anything on the screen, escapes aside."""
+    return bool(_ESCAPE.sub("", line).strip())
+
+
+def _width() -> int:
+    """The terminal's width, or a sane column count when there is no terminal."""
+    try:
+        import shutil
+
+        return max(20, shutil.get_terminal_size().columns)
+    except Exception:
+        return 80
+
+
+_reply: "Rendered | None" = None
+_rendering = True
+
+
+def use_rendering(enabled: bool) -> None:
+    """Whether replies are formatted at all this run (AC 25).
+
+    Set once from the resolved settings. Off takes the same path a redirected
+    run takes, rather than a quieter rendering - so "off" is the behaviour the
+    golden transcript already records, and there is one plain path rather than
+    two that have to be kept identical.
+    """
+    global _rendering
+    _rendering = enabled
+
+
 def show_piece(text: str) -> None:
-    print(text, end="", flush=True)
+    """A fragment of the model's reply, as it arrives.
+
+    Plain and unbuffered when output is not a terminal - byte for byte what a
+    redirected or piped run produced before any of this existed, which is what
+    keeps the golden transcript and `axiom | grep` working.
+    """
+    global _reply
+    if not _rendering or not sys.stdout.isatty():
+        print(text, end="", flush=True)
+        return
+    if _reply is None:
+        _reply = Rendered()
+    _reply.feed(text)
+
+
+def _settle_reply() -> None:
+    """Finish and let go of any reply still being rendered.
+
+    Does nothing at all when there is none - which is every plain-path run, so
+    the bytes a redirected run produces are untouched.
+    """
+    global _reply
+    if _reply is not None:
+        _reply.finish()
+        _reply = None
 
 
 def end_reply() -> None:
+    _settle_reply()
     print()
 
 
@@ -633,7 +1119,17 @@ def report_failure(failure: BaseException, reply: str, host: str) -> None:
     interrupt or a single error family. The leading blank line separates the
     message from a partial reply already on screen; a cancellation always gets
     one, because the user pressed the key mid-line.
+
+    The pending reply is settled first. This is the only route out of a turn
+    that does not pass `end_reply`, so without it the renderer keeps the dead
+    turn's half-line and feeds the *next* answer into it - a fresh question
+    after a dropped connection came back as `partial a fresh answer`, with the
+    failed reply glued to the front of a new one. Settling here rather than at
+    the call site because this is the function that cannot be forgotten, and
+    settling after the message would erase it: the erase runs to the end of the
+    screen, and by then the message is on it.
     """
+    _settle_reply()
     if isinstance(failure, KeyboardInterrupt):
         message = f"cancelled after {len(reply)} characters"
     elif isinstance(failure, ConnectionLost) and reply:

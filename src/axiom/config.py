@@ -47,6 +47,9 @@ class Settings:
     fetch_timeout: float = DEFAULT_FETCH_TIMEOUT
     page_characters: int = DEFAULT_PAGE_CHARACTERS
     web_enabled: bool = True
+    # Whether a reply is formatted on its way to the screen. Off gives exactly
+    # what a redirected run gives - the same path, not a quieter rendering.
+    render_enabled: bool = True
     mcp_start_timeout: float = DEFAULT_MCP_START_TIMEOUT
     mcp_call_timeout: float = DEFAULT_MCP_CALL_TIMEOUT
     mcp_servers: tuple["ServerSpec", ...] = ()
@@ -258,6 +261,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--no-render",
+        action="store_true",
+        default=os.environ.get("AXIOM_RENDER", "").lower() in OFF_VALUES,
+        help=(
+            "Show replies as the model wrote them, markdown and all. "
+            "Overrides $AXIOM_RENDER. Default: rendering on. $NO_COLOR is "
+            "honoured separately and drops colour without dropping formatting"
+        ),
+    )
+    parser.add_argument(
         "--mcp-file",
         default=os.environ.get("AXIOM_MCP_FILE"),
         help=(
@@ -292,6 +305,10 @@ def resolve(argv: list[str] | None = None) -> Settings:
         # --no-tools takes everything, web included: switching off tools and
         # leaving the web on would be the clever answer, not the obvious one.
         web_enabled=not args.no_web and not args.no_tools,
+        # Deliberately not tied to --no-tools. Rendering is about reading the
+        # answer, and someone who wants a session without tools has said
+        # nothing about how they want to read it.
+        render_enabled=not args.no_render,
         # --no-tools takes MCP with it, the same way it already takes the web:
         # switching off tools and leaving someone else's tools on would be the
         # clever answer, not the obvious one.
