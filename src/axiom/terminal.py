@@ -772,6 +772,23 @@ def _colourless() -> bool:
 # closes. Missing a table reads badly; eating a paragraph loses the answer.
 _TABLE_ROW = re.compile(r"^\s*\|")
 
+# What Rich draws inside a container: a block quote, a list item. Inside one,
+# `soft_wrap` stops meaning "let the terminal wrap it" and becomes no-wrap in a
+# fixed-width box - and the box **crops**. Measured at 60 columns: a 182-
+# character quote came back 58 characters long and the rest was simply gone; a
+# line one character wider than the window lost exactly that one character.
+#
+# Letting Rich wrap these costs nothing and buys most of the issue. It carries
+# the quote's marker onto every continuation row (AC 5), aligns a list item's
+# continuation under its text rather than its marker (AC 6), and folds an
+# unbroken token longer than the window without losing a character of it (AC 14).
+#
+# Bare text is deliberately absent. A paragraph is emitted as one long line and
+# the *terminal* wraps it, which is why a resize reflows it. Pre-wrapping it
+# through Rich would look identical at first and then stop reflowing, which is
+# AC 10 and AC 18 both.
+_CONTAINED = re.compile(r"^\s*(>|[-*+]\s|\d{1,9}[.)]\s)")
+
 # What Rich draws under a table's header row, and the sign that it understood
 # the rows as a table at all rather than as a paragraph of pipes.
 HEADER_RULE = "─"
@@ -868,7 +885,9 @@ def _as_markdown(line: str) -> str:
             force_terminal=True,
             legacy_windows=False,  # or a link's address is dropped; see above
             width=_width(),
-            soft_wrap=True,
+            # Off for anything Rich draws in a container, on for everything
+            # else. See `_CONTAINED` - this one flag is the whole of #72.
+            soft_wrap=not _CONTAINED.match(line),
         ).print(Markdown(line), end="")
         shown = buffer.getvalue().strip("\n")
         return _unpadded(shown) if shown.strip() else line
@@ -881,7 +900,13 @@ def _as_markdown(line: str) -> str:
 # the console width. A line padded to exactly the width, plus the newline this
 # module writes, wraps to a blank line on most terminals (AC 12). `rstrip` alone
 # does not reach them: the padding sits *before* the closing reset sequence.
-_PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)")
+#
+# `MULTILINE`, because a rendering can now be more than one line. Without it `$`
+# is end-of-*string* and only the last line is reached - which was harmless while
+# every rendering was one line, and becomes a double-spaced quote the moment one
+# wraps (#72). Measured before the change: `_unpadded('a   \nb   ')` returned
+# `'a   \nb'`.
+_PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)", re.MULTILINE)
 _ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 

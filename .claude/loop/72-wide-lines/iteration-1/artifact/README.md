@@ -1,0 +1,1 @@
+Not used, deliberately. The artifact for this loop is the source under C:/Projects/axiom/src/ and the tests under C:/Projects/axiom/tests/. An iteration folder holds the loop's own files and logs, nothing else. Never copy source into here.

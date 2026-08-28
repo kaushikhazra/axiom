@@ -854,3 +854,113 @@ def test_a_resize_mid_reply_cannot_corrupt_what_is_on_screen(monkeypatch):
     shown = [line for line in displayed(emitted) if line.strip()]
     assert len(shown) == 5, "a line was rewritten when the width moved"
     assert "five" in shown[-1]
+
+
+# --- Wrapping a quote or a list item (#72) -------------------------------
+
+
+WIDE = "The quick brown fox jumps over the lazy dog. " * 4
+
+
+@pytest.mark.parametrize("width", [40, 60, 80])
+@pytest.mark.parametrize("source", ["> " + WIDE, "- " + WIDE, "1. " + WIDE])
+def test_a_wrapped_block_has_no_padded_rows(width, source, monkeypatch):
+    """#72 AC 12, at a length that actually wraps.
+
+    The two padding guards that already existed feed lines short enough to
+    render on a single row, so `_unpadded` reaching only the *last* line was
+    enough for them. Measured: with `re.MULTILINE` removed from `_PADDING` all
+    78 tests in this file still passed. Cycle 1 predicted they would catch it;
+    they do not, and this is the test that does.
+
+    A row padded to exactly the console width, plus the newline this module
+    writes, is a blank row on screen - so a wrapped quote would come out
+    double-spaced.
+
+    The assertion is on the row's **width**, not on whether it ends in a space.
+    A first version asserted `row == row.rstrip()` and failed on correct output:
+    Rich keeps the word-separator space at a wrap point, so a 37-column row in a
+    40-column window legitimately ends in one. Harmless - it is reaching the
+    width that costs a blank row, and nothing else does.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    for row in displayed(stream(source + "\n")):
+        assert len(row) < width, f"row as wide as the window ({width}): {row!r}"
+
+
+@pytest.mark.parametrize("width", [40, 60, 80])
+@pytest.mark.parametrize("source", ["> " + WIDE, "- " + WIDE, "1. " + WIDE])
+def test_every_word_of_a_wrapped_block_reaches_the_screen(width, source, monkeypatch):
+    """#72 AC 1, AC 2, AC 3 and AC 4.
+
+    Before this, a quote of 182 characters came back 58 characters long at 60
+    columns and the rest was gone - silently, with no way for the reader to know
+    a word went missing.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    on_screen = " ".join(displayed(stream(source + "\n")))
+    for word in WIDE.split():
+        assert word in on_screen, f"{word!r} was lost at width {width}"
+    assert on_screen.count("dog.") == 4, "a repetition was dropped or doubled"
+
+
+@pytest.mark.parametrize("width", [40, 60])
+def test_a_wrapped_quote_carries_its_marker_down_every_row(width, monkeypatch):
+    """#72 AC 5. The whole quote reads as one quote."""
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    rows = [row for row in displayed(stream("> " + WIDE + "\n")) if row.strip()]
+
+    assert len(rows) > 1, "did not wrap, so this proves nothing"
+    assert all("▌" in row for row in rows), rows
+
+
+@pytest.mark.parametrize("source", ["- " + WIDE, "1. " + WIDE])
+def test_a_wrapped_list_item_lines_up_under_its_text(source, monkeypatch):
+    """#72 AC 6. Under the text, not under the marker, not at the margin."""
+    monkeypatch.setattr(terminal, "_width", lambda: 60)
+
+    rows = [row for row in displayed(stream(source + "\n")) if row.strip()]
+    indents = [len(row) - len(row.lstrip(" ")) for row in rows]
+
+    assert len(rows) > 1, "did not wrap, so this proves nothing"
+    assert indents[0] == 1, "the marker moved"
+    assert set(indents[1:]) == {3}, f"continuations at {indents[1:]}, wanted 3"
+
+
+def test_an_unbroken_word_longer_than_the_window_keeps_every_character(monkeypatch):
+    """#72 AC 14. Folded, not cut."""
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    on_screen = "".join(displayed(stream("> " + "x" * 100 + "\n")))
+
+    assert on_screen.count("x") == 100
+
+
+def test_a_quote_one_character_wider_than_the_window_wraps_rather_than_cropping(
+    monkeypatch,
+):
+    """#72 AC 13. The one character goes on the second row."""
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    rows = [row for row in displayed(stream("> " + "z" * 37 + "\n")) if row.strip()]
+
+    assert len(rows) == 2, rows
+    assert sum(row.count("z") for row in rows) == 37
+
+
+def test_a_paragraph_is_still_one_long_line(monkeypatch):
+    """#72 AC 10 and AC 18.
+
+    A paragraph is handed to the terminal unwrapped, which is why a resize
+    reflows it. If Rich started wrapping it here it would look identical and
+    then stop reflowing, and the loss would only show when someone dragged
+    their window.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    rows = [row for row in displayed(stream(WIDE + "\n")) if row.strip()]
+
+    assert len(rows) == 1, f"the paragraph was pre-wrapped into {len(rows)} rows"
