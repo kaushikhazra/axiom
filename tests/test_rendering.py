@@ -1101,3 +1101,291 @@ def test_rendered_and_plain_differ_only_in_styling_and_line_breaks(width, monkey
     rendered = " ".join(displayed(stream(WRAPPY)))
 
     assert words_of(rendered) == words_of(WRAPPY)
+
+
+# --- The layout of a list, pinned (#73) ----------------------------------
+
+
+@pytest.mark.parametrize("source, marker", [("- a bullet\n", "•"), ("1. one\n", "1")])
+def test_a_flat_list_item_keeps_its_layout(source, marker):
+    """#73 AC 6. Pinned so a nesting fix cannot quietly move every list.
+
+    617 tests said nothing about where a list item sits. The one that looked
+    like it did - `test_markdown_is_styled` - only checks that the markup is not
+    shown literally, and would pass whether the bullet landed at column 1 or
+    column 15. This issue is about to change the code that draws every list in
+    the program, so the thing it must not change needs saying out loud first.
+
+    The numbers are from the loop's cycle-1 measurement, not from running the
+    renderer and writing down what it said. A guard copied from the code it
+    guards agrees with whatever that code does next, which is the failure mode
+    this file already has one recorded example of.
+    """
+    rows = [row for row in displayed(stream(source)) if row.strip()]
+
+    assert len(rows) == 1, "a short list item is one row"
+    line = rows[0]
+    assert len(line) - len(line.lstrip(" ")) == 1, "the marker sits at column 1"
+    assert line.strip().startswith(marker), f"the marker is {marker!r}"
+    assert line == line.rstrip(), "padded out to the console width"
+
+
+NESTED = "- Outer\n  - Inner\n    - Deepest\n  - Back to two\n- Back to the top\n"
+
+
+def items(source: str) -> list[tuple[int, str]]:
+    """Each drawn list row as (indent column, marker)."""
+    out = []
+    for row in displayed(stream(source)):
+        if not row.strip():
+            continue
+        out.append((len(row) - len(row.lstrip(" ")), row.strip().split(" ")[0]))
+    return out
+
+
+def test_an_item_indented_under_another_is_drawn_under_it():
+    """#73 AC 1."""
+    outer, inner = items("- Outer\n  - Inner\n")
+
+    assert inner[0] > outer[0], "the sub-item is not indented past its parent"
+
+
+def test_three_levels_are_three_distinct_indents():
+    """#73 AC 2."""
+    columns = [column for column, _ in items(NESTED)]
+
+    assert len(set(columns[:3])) == 3, f"levels collapsed: {columns[:3]}"
+    assert columns[0] < columns[1] < columns[2]
+
+
+def test_a_level_always_uses_the_same_marker():
+    """#73 AC 4."""
+    drawn = items(NESTED)
+    by_level: dict[int, set[str]] = {}
+    for column, marker in drawn:
+        by_level.setdefault(column, set()).add(marker)
+
+    assert all(len(markers) == 1 for markers in by_level.values()), by_level
+    assert len({next(iter(m)) for m in by_level.values()}) == len(by_level), (
+        "two levels share a marker, so the level is not apparent from it"
+    )
+
+
+def test_returning_to_a_shallower_level_returns_to_that_level():
+    """#73 AC 5. Not to a new indent of its own."""
+    drawn = items(NESTED)
+
+    assert drawn[3] == drawn[1], "'Back to two' did not return to level two"
+    assert drawn[4] == drawn[0], "'Back to the top' did not return to the top"
+    # Without this the test passes when every level is flattened: five identical
+    # rows satisfy "returned to the same place" perfectly. Measured - it did.
+    assert drawn[1] != drawn[0], "there were no levels to return from"
+
+
+def test_an_ordered_list_nests_inside_an_unordered_one():
+    """#73 AC 3."""
+    outer, inner = items("- Outer\n  1. Numbered inside\n")
+
+    assert inner[0] > outer[0]
+    assert inner[1] == "1", f"the number was replaced by {inner[1]!r}"
+
+
+def test_an_unordered_list_nests_inside_an_ordered_one():
+    """#73 AC 3."""
+    outer, inner = items("1. One\n   - Bullet inside\n")
+
+    assert inner[0] > outer[0]
+
+
+def test_a_nested_item_is_one_row_not_a_code_block():
+    """#73 AC 2, the four-space case.
+
+    Four spaces of indent is an indented code block to a renderer with no list
+    context, and that is what a line-at-a-time renderer has. Before the depth
+    stack, `'    - Deepest'` came back as three rows - a full-width blank line,
+    the text, another blank line - which is 91 visible characters from an
+    18-character input.
+    """
+    emitted = displayed(stream("- a\n  - b\n    - c\n"))
+    rows = [row for row in emitted if row.strip()]
+
+    assert len(rows) == 3, f"expected one row per item, got {rows}"
+    # The blank rows a code block is padded with are whitespace, so filtering
+    # them out hides exactly the defect this test is named for. Measured: with
+    # the depth stack removed this assertion is the only one that fails.
+    padding = [row for row in emitted if row and not row.strip()]
+    assert not padding, f"a code block's padding rows: {padding!r}"
+
+
+def test_markup_inside_a_nested_item_is_still_formatted():
+    """#73 AC 7."""
+    emitted = stream("- Outer\n  - **bold** and *italic* and `code`\n")
+    drawn = [row for row in displayed(emitted) if "bold" in row][0]
+
+    assert "**" not in drawn and "*italic*" not in drawn and "`" not in drawn
+    assert "bold" in drawn and "italic" in drawn and "code" in drawn
+
+
+def test_an_item_with_no_text_shows_its_marker_at_its_level():
+    """#73 AC 8."""
+    outer, empty = items("- Outer\n  -\n")
+
+    assert empty[0] > outer[0]
+    assert empty[1] in terminal.NESTED_MARKERS
+
+
+def test_a_sub_item_with_no_parent_above_it_is_shown():
+    """#73 AC 10. Shown, rather than dropped for having no parent."""
+    drawn = [
+        row for row in displayed(stream("  - No parent above me\n")) if row.strip()
+    ]
+
+    assert len(drawn) == 1
+    assert "No parent above me" in drawn[0]
+
+
+def test_a_paragraph_between_two_lists_starts_the_depths_again():
+    """A list after prose is a new list, not a continuation of the last one."""
+    drawn = items("- one\n  - deep\n")
+    again = items("- one\n  - deep\nsome prose\n- back\n")
+
+    assert again[3] == drawn[0], "the second list resumed the first one's depth"
+    # Or flattening everything satisfies it: if no list ever has a second level,
+    # "the second list did not inherit one" is true and means nothing.
+    assert drawn[1] != drawn[0], "there was no depth to inherit"
+
+
+# --- Nesting against the plain path (#73) --------------------------------
+
+
+DEEP = "- one\n  - two\n    - three\n  - back to two\n- back to one\n"
+
+
+def shape(rows: list[str]) -> list[int]:
+    """The sequence of levels, as levels rather than as columns.
+
+    Normalised so the comparison is about *structure* and not about how wide an
+    indent happens to be. Two renderings agree if they nest the same way, even
+    if one uses two columns a level and the other uses four.
+    """
+    columns = sorted({len(row) - len(row.lstrip(" ")) for row in rows})
+    return [columns.index(len(row) - len(row.lstrip(" "))) for row in rows]
+
+
+def test_the_indent_structure_matches_the_markdown_the_model_wrote():
+    """#73 AC 13.
+
+    The only one of this issue's remaining criteria that can find a *wrong*
+    answer rather than a missing one. Every other check confirms nothing was
+    lost; this one confirms the depth stack agrees with the source.
+    """
+    source = [line for line in DEEP.split("\n") if line.strip()]
+    drawn = [row for row in displayed(stream(DEEP)) if row.strip()]
+
+    assert shape(drawn) == shape(source), f"{shape(drawn)} against {shape(source)}"
+    assert shape(source) == [0, 1, 2, 1, 0], "the fixture stopped being nested"
+
+
+def test_rendering_off_gives_the_nested_markdown_byte_for_byte(capsys):
+    """#73 AC 11. The plain path never reaches the renderer at all.
+
+    Named for its fixture rather than for its criterion, because #72 wrote a
+    test of the same shape with the same name on another branch. Merging the two
+    branches silently dropped one of each pair - Python takes the later
+    definition and pytest reports green - and only the test count caught it.
+    """
+    terminal.use_rendering(False)
+    try:
+        for start in range(0, len(DEEP), 4):
+            terminal.show_piece(DEEP[start : start + 4])
+    finally:
+        terminal.use_rendering(True)
+
+    assert capsys.readouterr().out == DEEP
+
+
+def test_a_redirected_run_gives_the_nested_markdown_byte_for_byte(capsys):
+    """#73 AC 12. Not a terminal, so the plain path, rendering setting aside."""
+    for start in range(0, len(DEEP), 4):
+        terminal.show_piece(DEEP[start : start + 4])
+
+    assert capsys.readouterr().out == DEEP
+
+
+@pytest.mark.parametrize("width", [20, 40])
+def test_a_list_nested_deeper_than_the_window_keeps_every_item(width, monkeypatch):
+    """#73 AC 9.
+
+    Eight levels against a twenty-column window - deep enough that the indent
+    alone eats most of the room.
+
+    **Whitespace is squashed out before the comparison**, because a phrase that
+    straddles a row edge is not a lost phrase. This test was written on #73's
+    branch, where a nested item was one long line and the *terminal* wrapped it,
+    so `item at depth 2` stayed contiguous. #72 AC 7 made the renderer wrap it to
+    the item's own indent instead, which splits the phrase - and asserting on the
+    contiguous form would have called correct output broken.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+    source = "".join(f"{'  ' * depth}- item at depth {depth}\n" for depth in range(8))
+
+    squashed = "".join("".join(displayed(stream(source))).split())
+
+    for depth in range(8):
+        assert f"itematdepth{depth}" in squashed, f"depth {depth} was lost"
+
+
+# --- Nesting and wrapping together (#72 AC 7) ----------------------------
+
+
+@pytest.mark.parametrize("width", [40, 60])
+def test_a_nested_item_wraps_to_its_own_indent(width, monkeypatch):
+    """#72 AC 7. Not to the level above it, and not to the left margin.
+
+    This is the criterion that needed both branches: #73 gives an item its
+    depth, #72 gives it wrapping, and neither alone can satisfy it. Measured
+    before the fix, a nested item came back as one 93-character line at a
+    40-column window - the terminal wrapped it to column 0, which is the level
+    above's indent and every other level's too.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    rows = [
+        row for row in displayed(stream("- Outer\n  - " + WIDE + "\n")) if row.strip()
+    ]
+    indents = [len(row) - len(row.lstrip(" ")) for row in rows]
+
+    assert len(rows) > 2, "the nested item did not wrap, so this proves nothing"
+    assert indents[0] == 1, "the outer item moved"
+    # The marker sits at 3, so its text starts at 5 and every continuation
+    # belongs there - past the marker, not under it and not at the margin.
+    assert indents[1] == 3, "the nested marker moved"
+    assert set(indents[2:]) == {5}, f"continuations at {indents[2:]}, wanted 5"
+
+
+def test_each_level_wraps_to_a_deeper_indent_than_the_one_above():
+    """#72 AC 7. Two levels, so 'its own indent' means something."""
+    with_two = "- Outer\n  - " + WIDE + "\n    - " + WIDE + "\n"
+
+    rows = [row for row in displayed(stream(with_two)) if row.strip()]
+    indents = [len(row) - len(row.lstrip(" ")) for row in rows]
+    first_level = [i for i in indents if i in (3, 5)]
+    second_level = [i for i in indents if i in (5, 7)]
+
+    assert 5 in first_level and 7 in second_level
+    assert max(indents) == 7, f"the deeper level did not get its own indent: {indents}"
+
+
+@pytest.mark.parametrize("width", [20, 40])
+def test_no_length_of_a_nested_item_is_shown_twice(width, monkeypatch):
+    """#72 AC 8 and AC 9, for the marker the sweep did not have.
+
+    A nested item is a fourth marker at a fourth indent, and the erase
+    arithmetic had not seen it when the sweep was written.
+    """
+    for length in range(1, width * 3 + 2):
+        body = "x" * length
+        on_screen = shown(
+            "- Outer\n  - " + body + "\n", width=width, monkeypatch=monkeypatch
+        )
+        assert "".join(on_screen).count("x") == length, f"length {length}"
