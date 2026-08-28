@@ -964,3 +964,140 @@ def test_a_paragraph_is_still_one_long_line(monkeypatch):
     rows = [row for row in displayed(stream(WIDE + "\n")) if row.strip()]
 
     assert len(rows) == 1, f"the paragraph was pre-wrapped into {len(rows)} rows"
+
+
+# --- Wrapping, against the screen and against the plain path (#72) --------
+
+
+def words_of(text: str) -> list[str]:
+    """The payload words, with markers and whitespace taken out.
+
+    Markers go because a renderer legitimately swaps `-` for a bullet, and
+    whitespace goes because wrapping legitimately changes it. What is left is
+    what AC 21 means by "never in words".
+    """
+    return [w for w in text.replace("\n", " ").split() if w.strip("•▌-*>#0123456789.")]
+
+
+@pytest.mark.parametrize("width", [20, 40, 81])
+@pytest.mark.parametrize("marker", ["> ", "- ", "1. "])
+def test_no_length_of_a_wrapped_block_is_shown_twice(width, marker, monkeypatch):
+    """#72 AC 8 and AC 9, swept rather than sampled.
+
+    The plain-text sweep next to this one exists because every boundary bug in
+    #60 was an off-by-one at one particular length, found by trying that length
+    rather than by reasoning. A quote now occupies four rows where it used to
+    occupy one, and the erase arithmetic was written when it occupied one - so
+    the same sweep is owed to the constructs this issue changed.
+
+    Counting one repeated character catches both failures at once: too many is
+    a row drawn twice, too few is a row lost.
+    """
+    for length in range(1, width * 3 + 2):
+        body = "x" * length
+        on_screen = shown(marker + body + "\n", width=width, monkeypatch=monkeypatch)
+        assert "".join(on_screen).count("x") == length, f"length {length}"
+
+
+def test_a_wrapped_quote_never_climbs_into_a_committed_line(monkeypatch):
+    """#72 AC 8. The invariant behind the sweep.
+
+    A committed line belongs to the scrollback. The cursor may climb by the rows
+    the *unfinished* line occupies, and never further - at a width wider than
+    anything here, that budget is zero.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 500)
+
+    assert re.findall(r"\x1b\[\d*A", stream("> " + WIDE + "\n- " + WIDE + "\n")) == []
+
+
+@pytest.mark.parametrize("marker", ["> ", "- "])
+def test_a_window_narrower_than_the_marker_still_shows_everything(marker, monkeypatch):
+    """#72 AC 15. Narrower than the marker plus one character.
+
+    It holds, but **not because of the wrapping fix** - measured, this test
+    passes with the crop reinstated too. At three columns Rich produces nothing
+    usable and `_as_markdown` hands back the line exactly as it went in, which is
+    #60 AC 28: a formatting failure costs the formatting, never the answer.
+
+    So this pins the fallback rather than the wrap. That is the right thing to
+    pin at this width - there is no sensible way to draw a marker plus text in
+    three columns - but the reason is recorded here so nobody later reads a green
+    test as evidence that wrapping works at any width.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 3)
+
+    on_screen = "".join(displayed(stream(marker + "x" * 20 + "\n")))
+
+    assert on_screen.count("x") == 20
+
+
+@pytest.mark.parametrize("source", ["> ", "- ", "1. "])
+def test_a_block_with_no_text_prints_its_marker_and_nothing_else(source, monkeypatch):
+    """#72 AC 16.
+
+    A regression guard, and correctly not break-sensitive: it passes with the
+    crop reinstated, because an empty block has nothing to crop. It is here so a
+    later change to how a marker is drawn cannot quietly turn one empty quote
+    into two rows.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    rows = [row for row in displayed(stream(source.strip() + "\n")) if row.strip()]
+
+    assert len(rows) <= 1, f"an empty block drew {len(rows)} rows: {rows}"
+
+
+@pytest.mark.parametrize("marker", ["> ", "- ", "1. "])
+def test_halving_the_window_loses_no_words_and_only_gains_lines(marker, monkeypatch):
+    """#72 AC 17. The severity argument, as a test.
+
+    Before this issue, halving the window roughly halved how much of a quote
+    survived. Now it only changes how many rows it takes.
+    """
+    source = marker + WIDE + "\n"
+
+    monkeypatch.setattr(terminal, "_width", lambda: 80)
+    wide_rows = [row for row in displayed(stream(source)) if row.strip()]
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+    narrow_rows = [row for row in displayed(stream(source)) if row.strip()]
+
+    assert words_of(" ".join(wide_rows)) == words_of(" ".join(narrow_rows))
+    assert len(narrow_rows) > len(wide_rows), "halving the window gained no lines"
+
+
+WRAPPY = "> " + WIDE + "\n- " + WIDE + "\n1. " + WIDE + "\n"
+
+
+def test_rendering_off_gives_the_markdown_byte_for_byte(capsys):
+    """#72 AC 19."""
+    terminal.use_rendering(False)
+    try:
+        for start in range(0, len(WRAPPY), 4):
+            terminal.show_piece(WRAPPY[start : start + 4])
+    finally:
+        terminal.use_rendering(True)
+
+    assert capsys.readouterr().out == WRAPPY
+
+
+def test_a_redirected_run_gives_the_markdown_byte_for_byte(capsys):
+    """#72 AC 20. Not a terminal, so the plain path."""
+    for start in range(0, len(WRAPPY), 4):
+        terminal.show_piece(WRAPPY[start : start + 4])
+
+    assert capsys.readouterr().out == WRAPPY
+
+
+@pytest.mark.parametrize("width", [40, 80])
+def test_rendered_and_plain_differ_only_in_styling_and_line_breaks(width, monkeypatch):
+    """#72 AC 21.
+
+    The check that would catch this issue's change dropping or reordering a
+    word rather than merely cropping one. Words, in order, both ways.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    rendered = " ".join(displayed(stream(WRAPPY)))
+
+    assert words_of(rendered) == words_of(WRAPPY)

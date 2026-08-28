@@ -1,27 +1,29 @@
 # Action
 
-Nine of twenty-one criteria are met with tests that go red when the fix is removed. The nine
-untested ones split into two groups, and only one of them can be worked here.
+Twenty of twenty-one. **AC 7 - a nested item wraps to its own indent - is the only one left,
+and it cannot be tested on this branch**, because it needs #73's depth stack, which lives on
+`feature/73-nested-lists`. #73's loop has converged, so that branch is finished and stable.
 
-1. **AC 8 and AC 9 - nothing is redrawn, nothing printed twice.** These are the criteria #60
-   failed twice while a byte-stream assertion said it passed, and they are now *more* at risk
-   than before: a quote that used to occupy one row now occupies four, and `_erase` takes
-   back the raw echo by the rows it occupied. Measure on a modelled screen - `tests/screen.py`
-   exists for exactly this and is what caught #60's duplication. Sweep every length around
-   the wrap boundary at widths 20, 40 and 81, as `test_no_length_at_any_width_is_shown_twice`
-   already does for plain text, but for a quote and a list item.
-2. **AC 15, 16, 17, 19, 20, 21 - `--no-render`, pipes, and the half-window comparison.** All
-   need the full output path rather than `_as_markdown`. AC 21 is the strongest of them: the
-   same prompt rendered and unrendered must differ only in styling and line breaks, never in
-   words, and that is a property this cycle's change could violate without any existing test
-   noticing.
-3. **Leave AC 7 alone.** A nested item wrapping to its own indent needs #73's depth stack,
-   which is on another branch. Record it as blocked rather than half-doing it here.
-4. **Break every new test.** This cycle found one prediction wrong and one assertion wrong,
-   in one hour. Assume the same rate.
-5. `uv run pytest` - 642 on this branch, green.
+So this cycle merges, and then tests the one criterion the merge makes reachable.
 
-First thing to tackle: **AC 8 and AC 9 on a modelled screen.** A construct that used to be
-one row is now four, the erase arithmetic was written when it was one, and the only reason
-to think it still holds is that 642 tests pass - which is exactly the evidence that was
-wrong about `_unpadded` an hour ago.
+1. **Merge `feature/73-nested-lists` into `feature/72-wide-lines`.** Both changed
+   `_as_markdown` and `Rendered`, in different places - #73 added `_nested`, `_depth` and
+   `_levels` and hooked `_styled`; #72 changed `soft_wrap` and `_PADDING`. Expect the merge
+   to be clean and **check rather than assume**: if it conflicts, resolve it by reading both
+   cycle logs, not by picking a side.
+2. **Run both suites before writing anything.** 664 here, 635 there. A merge that drops a
+   test is the failure to look for first, and the count is how it shows.
+3. **Then test AC 7.** A nested item longer than the window wraps to *its own* indent, not to
+   the indent of the level above it. #73 renders a nested item's text through the paragraph
+   path with the marker placed by hand, so the continuation may well land at column 0 rather
+   than under the item's text - **measure before assuming it passes**. If it is wrong, the
+   fix belongs here, in `_nested`, and it is this loop's to make.
+4. **Re-run the sweep from this cycle with nesting present.** About 1,300 renderings proved
+   nothing is shown twice for `> `, `- ` and `1. `. A nested item is a fourth marker at a
+   fourth indent and the erase arithmetic has not seen it.
+5. **Break AC 7's test.** Flatten the continuation indent and watch it go red.
+6. `uv run pytest` - the merged count, green.
+
+First thing to tackle: **the merge, and the two test counts either side of it.** Everything
+else in this cycle is downstream of it, and a silently dropped test would make every number
+after it wrong.
