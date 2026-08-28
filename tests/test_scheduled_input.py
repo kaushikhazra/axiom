@@ -107,3 +107,33 @@ def test_the_untimed_read_still_returns_none_on_leaving(monkeypatch, ending):
     monkeypatch.setattr("builtins.input", raising)
 
     assert terminal.read_line() is None
+
+
+# --- what a session that never schedules anything sees -------------------
+
+
+def test_the_reader_thread_cannot_hold_the_session_open():
+    """#74 AC 33, structurally.
+
+    Exiting with jobs scheduled must exit immediately. The reader thread is
+    parked inside `input()` and there is no way to interrupt that, so the only
+    thing that makes exit immediate is the thread being a daemon - a
+    non-daemon one would keep the process alive until the user pressed enter,
+    which is a hang rather than an exit.
+    """
+    reader = typing()
+    reader.next(timeout=0.01)
+
+    assert reader._thread is not None
+    assert reader._thread.daemon, "a non-daemon reader would block exit"
+
+
+def test_use_input_forgets_the_reader_in_use(monkeypatch):
+    """A module-level singleton is right for one console and wrong for a suite."""
+    terminal.use_input(lambda: "injected")
+    try:
+        assert terminal.read_line(timeout=1.0) == "injected"
+    finally:
+        terminal.use_input(None)
+
+    assert terminal._typed is None

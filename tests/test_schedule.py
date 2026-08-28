@@ -237,3 +237,69 @@ def test_a_new_store_starts_with_nothing():
     holding.add("*/15 * * * *", "check the deploy")
 
     assert len(schedule.Schedule(clock=at(MONDAY_EVENING))) == 0
+
+
+# --- a one-shot that has already gone (#74 AC 27) ------------------------
+
+
+AUGUST = datetime(2026, 8, 28, 18, 47)
+NEW_YEARS_EVE = datetime(2026, 12, 31, 18, 47)
+
+
+@pytest.mark.parametrize(
+    "label, cron, now",
+    [
+        ("this morning", "0 9 28 8 *", AUGUST),
+        ("this morning, on new year's eve", "0 9 31 12 *", NEW_YEARS_EVE),
+        ("a leap day that has been and gone", "0 9 29 2 *", datetime(2024, 3, 1)),
+    ],
+)
+def test_a_one_shot_that_has_already_passed_is_refused(label, cron, now):
+    """#74 AC 27, and it is not answerable from what croniter returns.
+
+    croniter never returns a past time - it returns the next match - so "gone"
+    and "a year out" are the same answer. Measured: a genuinely-gone job resolves
+    364 days out, and a *legitimate* leap-day job resolves 549 or 1460. The
+    legitimate one is further away, so no distance threshold can separate them.
+    """
+    holding = schedule.Schedule(clock=at(now))
+
+    with pytest.raises(schedule.Invalid) as refused:
+        holding.add(cron, "too late", recurring=False)
+
+    assert "already passed" in str(refused.value), label
+    assert len(holding) == 0
+
+
+@pytest.mark.parametrize(
+    "label, cron, now",
+    [
+        ("later today", "0 21 28 8 *", AUGUST),
+        ("tomorrow", "0 9 29 8 *", AUGUST),
+        # The trap. Nine in the morning on 1 January, asked on 31 December, is
+        # fourteen hours away - and this year's 1 January is eleven months gone.
+        ("new year's day, asked on new year's eve", "0 9 1 1 *", NEW_YEARS_EVE),
+        # 29 February does not exist in 2026, so it has not passed in 2026.
+        ("a leap day that is still to come", "0 9 29 2 *", AUGUST),
+        # Not one moment: a step names many, and the next is always soon.
+        ("every fifteen minutes", "*/15 * * * *", AUGUST),
+        ("every morning", "0 9 * * *", AUGUST),
+    ],
+)
+def test_a_one_shot_still_to_come_is_taken(label, cron, now):
+    """#74 AC 27's other side, which is the one a careless rule gets wrong."""
+    holding = schedule.Schedule(clock=at(now))
+
+    job = holding.add(cron, "in time", recurring=False)
+
+    assert job.next_run > now, label
+    assert len(holding) == 1
+
+
+def test_a_repeating_job_named_for_a_time_today_that_has_passed_is_taken():
+    """It is not a job that has been missed - it is one that starts tomorrow."""
+    holding = schedule.Schedule(clock=at(AUGUST))
+
+    job = holding.add("0 9 * * *", "every morning", recurring=True)
+
+    assert job.next_run == datetime(2026, 8, 29, 9, 0)

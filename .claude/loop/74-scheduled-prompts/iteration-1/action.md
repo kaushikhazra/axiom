@@ -1,30 +1,29 @@
 # Action
 
-Twenty-five of thirty-three. The remaining eight split into three groups, and one of them is
-the hard one this loop has been deferring since cycle 1.
+Twenty-eight of thirty-three. The five that are left are all **failure and whole-session**
+criteria, and none can be settled by calling a function - they need a turn that goes wrong,
+or a session that runs more than one.
 
-1. **AC 27, and it is time.** A one-shot whose time has already passed must be refused.
-   croniter cannot help: `0 9 28 8 *` asked at 18:47 on 28 August resolves to **2027**, so
-   "already gone" and "a year out" are the same answer. The store has to reason about the
-   *pinned fields* against now - a one-shot pins minute, hour, day-of-month and month, so if
-   the resolved time is more than a year minus a day away, the user named a moment that has
-   passed. **Measure that boundary before coding it**, at a leap day and at 31 December, or
-   it will be right for August and wrong twice a year.
-2. **AC 19, AC 20 and AC 24 through a whole session**, not through the store. A repeating job
-   runs on every match; a one-shot runs once and is gone; a `/model` switch leaves jobs alone,
-   neither cancelled nor duplicated. `terminal.use_input` exists now, so an end-to-end test
-   through `main` is possible - that was cycle 3's blocker and it is cleared.
-3. **AC 1, AC 30, AC 31, AC 32, AC 33** - a run with nothing scheduled says nothing about
-   schedules; a job whose run fails says so, leaves the session usable, and still runs next
-   time; a failing job never ends the session; a job that produces no reply is not a failure;
-   exiting with jobs scheduled exits immediately with the same status code as exiting with
-   none.
-4. **Re-establish green between every revert and the next break.** This cycle lost a break's
-   result to a stripped import: the formatter removed `timedelta` while a break made it
-   unused, and the next break's reddening was two-thirds stale failures. Do not trust the
-   previous run's baseline.
-5. `uv run pytest` - 683 on this branch, green.
+1. **AC 30, 31, 32 - a job whose run fails.** A stub backend that raises on the scheduled
+   turn. Prove three things separately: the failure is *said*; the session is still usable
+   afterwards (the next typed line still gets an answer); and a repeating job still runs at
+   its next time rather than being dropped for having failed once. AC 32 is the one that will
+   be got wrong - a job that produces an empty reply is **not** a failure, and the code path
+   that reports failure is the same one.
+2. **AC 19 and AC 20 through a whole session.** Both hold in the store and neither has been
+   driven end to end. `terminal.use_input` exists for exactly this now.
+3. **AC 24 - a `/model` switch leaves jobs alone.** Neither cancelled nor duplicated. The
+   schedule lives in `_chat`'s locals and a switch rebinds `run`, not `jobs`, so this should
+   hold structurally - **prove it rather than reasoning it**, because "it is in a different
+   variable" is the kind of argument that is true right up until someone moves the variable.
+4. **AC 1 - a run with nothing scheduled says nothing about schedules.** Cheap, and it is the
+   guard against a future cycle adding a startup line for a feature most sessions never use.
+5. **Re-establish green between every revert and the next break.** Cycle 4 lost a
+   measurement to a stripped import; this cycle lost one to a break that removed the readable
+   half of a condition and left the working half behind. Both were caught by re-running.
+6. `uv run pytest` - 695, green, and **watch the wall clock**. This cycle found a spinning
+   thread because 14 fast tests took five seconds; the number is worth reading every time.
 
-First thing to tackle: **AC 27's boundary, measured at a leap day and at the end of a year
-before any code is written.** It is the one remaining criterion whose implementation could be
-plausibly wrong and still look right, because August is the month it will be tested in.
+First thing to tackle: **AC 32, the empty reply that is not a failure.** It shares a code
+path with AC 30, it is the one a reasonable implementation gets wrong, and getting it wrong
+means every quiet scheduled job reports itself as broken.

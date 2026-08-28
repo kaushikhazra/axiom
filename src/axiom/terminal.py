@@ -453,7 +453,18 @@ class Typed:
         # would draw it at a moment the main loop cannot predict, and a job
         # firing would then have to reach into another thread's output.
         self._read = read or (lambda: input())
-        self._lines: "queue.Queue[str | None]" = queue.Queue()
+        # One line at a time. `put` blocks until the caller has taken the last
+        # one, so the thread reads exactly as fast as the loop consumes.
+        #
+        # Unbounded, this spins: a reader that returns without blocking - which
+        # a real `input()` never does, and a test's fake always does - fills the
+        # queue as fast as the interpreter allows. Found by the wall clock, not
+        # by a failing test: fourteen tests taking 0.04s each, and the file
+        # taking five seconds.
+        #
+        # Nothing is lost by the bound. A line the user has typed but that has
+        # not been read yet is still sitting in the terminal's own buffer.
+        self._lines: "queue.Queue[str | None]" = queue.Queue(maxsize=1)
         self._thread: "threading.Thread | None" = None
 
     def _pump(self) -> None:
