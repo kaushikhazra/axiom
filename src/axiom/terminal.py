@@ -448,7 +448,11 @@ class Typed:
     """
 
     def __init__(self, read=None) -> None:
-        self._read = read or (lambda: input(PROMPT))
+        # `input()` with no prompt string, deliberately. The prompt belongs to
+        # the caller, not to the read - see `show_prompt`. A thread that drew it
+        # would draw it at a moment the main loop cannot predict, and a job
+        # firing would then have to reach into another thread's output.
+        self._read = read or (lambda: input())
         self._lines: "queue.Queue[str | None]" = queue.Queue()
         self._thread: "threading.Thread | None" = None
 
@@ -508,6 +512,49 @@ def read_line(timeout: float | None = None) -> "str | None | object":
     if got is None:
         print()
     return got
+
+
+def show_prompt() -> None:
+    """Draw the prompt, for a caller reading with a timeout.
+
+    The untimed `read_line` still draws its own, because `input(PROMPT)` is one
+    call and every existing caller uses it. A timed read cannot: the read is on
+    another thread, and a job firing has to take the prompt back before it draws
+    anything. **One place owns the prompt**, and with a timeout that place is the
+    caller.
+    """
+    print(PROMPT, end="", flush=True)
+
+
+def take_back_prompt() -> None:
+    """Erase the prompt row, because something is about to be drawn over it.
+
+    Measured on the modelled screen rather than chosen. Without it a scheduled
+    turn starts *on* the prompt row and the user reads
+    `> axiom: scheduled - ...`, with their own prompt and axiom's line run
+    together. Leaving the prompt and starting on the next row instead strands a
+    bare `> ` above the turn, which is untidy but not wrong; erasing it is the
+    one that reads correctly.
+
+    Only the row the prompt is on. Nothing already in the scrollback is touched,
+    which is the same promise `_erase` makes for a line being typed.
+    """
+    print("\r\x1b[K", end="", flush=True)
+
+
+def note_scheduled(prompt: str) -> None:
+    """A turn that came from a schedule rather than from the user (#74 AC 13).
+
+    In axiom's own voice, not a fourth one. #60 AC 17 is that axiom's lines stay
+    distinguishable from the model's, and AC 29 is that everything axiom prints
+    which is not the model's reply says what it says today - a scheduled turn is
+    new, so it gets `VOICE` like every other thing axiom says about a turn, and
+    the model's reply below it is untouched.
+
+    The prompt is echoed because the user did not type it and would otherwise be
+    reading an answer to a question they cannot see.
+    """
+    print(f"{VOICE} scheduled - {prompt}")
 
 
 def start_turn() -> None:

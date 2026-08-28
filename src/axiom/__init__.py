@@ -4,7 +4,17 @@ import json
 import sys
 from dataclasses import dataclass
 
-from . import backend, compaction, config, context, models, servers, terminal, tools
+from . import (
+    backend,
+    compaction,
+    config,
+    context,
+    models,
+    schedule,
+    servers,
+    terminal,
+    tools,
+)
 from .backend import Call, ModelBackend
 
 EXIT_COMMANDS = {"/exit", "/quit"}
@@ -35,6 +45,52 @@ CANNOT_START = 2
 # and returned an empty answer. The bound is here to stop a runaway, not to
 # ration work a model legitimately needs.
 MAX_TOOL_ROUNDS = 8
+
+# How often an idle session looks at the clock, in seconds. Only ever reached
+# when something is actually scheduled - a session with an empty schedule takes
+# the blocking read it has always taken, and never wakes up at all.
+#
+# A quarter second because the finest schedule anyone can ask for is one a
+# minute (#74 AC 29), so this is two hundred times finer than it needs to be and
+# still costs nothing measurable. It bounds how late a job can be, not how often
+# anything is computed.
+SCHEDULE_TICK = 0.25
+
+
+def _next_line(jobs: "schedule.Schedule | None") -> tuple[str | None, bool]:
+    """What to act on next: what the user typed, or a job whose time has come.
+
+    Returns the line, and whether it came from a schedule rather than a person.
+
+    **With nothing scheduled this is the blocking read it has always been** - no
+    thread, no timeout, no waking up. A session that never schedules anything
+    cannot tell any of this exists, which is the same promise `read_line` makes.
+
+    With something scheduled, the prompt is drawn here and the read is timed, so
+    a job can fire while the user sits doing nothing. That is #74 AC 9, and it is
+    the only reason any of this is here.
+
+    AC 10 and AC 11 are structural rather than defended: this is called at the
+    top of the loop and nowhere else, so a job cannot begin mid-turn, and one job
+    is returned per pass, so two due at once run one after the other in the order
+    `due()` gives them.
+    """
+    if jobs is None or not len(jobs):
+        return terminal.read_line(), False
+    terminal.show_prompt()
+    while True:
+        got = terminal.read_line(timeout=SCHEDULE_TICK)
+        if got is not terminal.WAITING:
+            return got, False  # a line, or None for leaving
+        due = jobs.due()
+        if not due:
+            continue
+        job = due[0]
+        jobs.mark_run(job.id)
+        # The prompt was drawn above and is about to be drawn over. Taking it
+        # back first is what stops the turn reading as `> axiom: scheduled - ...`
+        terminal.take_back_prompt()
+        return job.prompt, True
 
 
 def _could_still_be_a_call(reply: str) -> bool:
@@ -466,9 +522,13 @@ def _chat(
 
     messages: list[dict[str, str]] = []
     running_usage: int | None = None  # real prompt_eval_count + eval_count, last turn
+    # Empty until something schedules a job, and an empty one costs nothing:
+    # `_next_line` takes the blocking read while it is empty. It lives here
+    # rather than at module level so it dies with the session, which is AC 23.
+    jobs = schedule.Schedule()
 
     while True:
-        line = terminal.read_line()
+        line, from_a_schedule = _next_line(jobs)
         if line is None or line in EXIT_COMMANDS:
             return
         if not line:
@@ -493,6 +553,12 @@ def _chat(
                 # still runs, so nothing is left unguarded.
                 running_usage = None
             continue
+
+        # The user did not type this one, and would otherwise be reading an
+        # answer to a question they cannot see (#74 AC 13). Before `start_turn`,
+        # so the blank line falls between the announcement and the reply.
+        if from_a_schedule:
+            terminal.note_scheduled(line)
 
         # Past every command and every empty line, so a turn that never
         # happens leaves no stray gap behind (AC 7, AC 8).
