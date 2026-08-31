@@ -1,35 +1,40 @@
 # Action
 
-**Clear the second bucket before building anything new.** Ten criteria have passing tests
-and no break: AC 17, AC 20, AC 21, AC 22, AC 23, AC 24, AC 26, AC 27, AC 30, AC 42. That is
-more than twice the number that are proven, and a bucket that size is where a vacuous test
-hides.
+**Build `/skill` and `/skills`.** Six criteria, AC 5 to AC 11, and they are the last part of
+the feature a user touches directly.
 
-Run them as a batch - most are one edit each in `skills.py`:
+They sit beside `MODEL_COMMAND` in `src/axiom/__init__.py` and are handled in the same place
+`/model` is - before `terminal.start_turn()`, so a command that never becomes a turn leaves
+no stray gap on screen. That placement is already load-bearing for #60's AC 7 and AC 8; put
+these inside it rather than beside it.
 
-- **AC 42** is the one cycle 3 got wrong. Move validation to *after* the file is opened for
-  writing, so a refused write truncates the good skill. It must go red for **that**, not
-  because its setup stopped working. If the test passes under this break, it is testing
-  nothing and needs rewriting before it counts.
-- **AC 22** - make a tool-written skill differ from a hand-written one.
-- **AC 17** - return the body instead of the file. **AC 20** - delete without refreshing.
-- **AC 26, AC 27, AC 30** - remove each guard in `_one` and `read` in turn.
-- **AC 23, AC 24** - drop the frontmatter parse; accept any file as a skill.
+- **AC 5** - `/skills` lists every loaded skill, name and description, one to a line.
+- **AC 6** - with none loaded, say so *and* say where a skill would go. Both halves.
+- **AC 7** - `/skill <name>` puts the instructions into the conversation and **starts a
+  turn**.
+- **AC 8** - `/skill <name> <text>` takes the trailing text as the request.
+- **AC 9, AC 10** - no name, or an unknown name: list what is available and **send nothing
+  to the model.**
+- **AC 11** - the user sees which skill is in use *before* the reply begins.
 
-Any test that stays green under its own break is a defect in the test. Say so in the log
-and rewrite it - that is a better outcome than a break that dutifully goes red.
+**AC 9 and AC 10 are the ones a test will half-do.** A command that prints the right thing
+and *also* starts a turn looks correct on screen and fails both criteria. Assert on
+`StubBackend.streamed` being untouched, not on what was printed. That is the same seam the
+AC 13 test already uses and it is the only one that can tell the difference.
 
-**Then check the wall clock before anything else.** Cycle 4 measured 91.34s against cycle
-3's 79.08s and attributed it to machine load, on the evidence that all eight slowest tests
-are pre-existing MCP waits. **If this cycle adds no tests and still measures ~91s, that
-attribution stands. If it is back near 79s, it also stands. If it has climbed again, it does
-not** - and finding out costs one `uv run pytest` that was going to happen anyway.
+**AC 11 needs `terminal.py`, and axiom's voice rules bind.** #60 AC 17 and AC 29 govern how
+axiom's own lines stay distinguishable from the model's; a skill announcement is axiom
+speaking, so it uses `VOICE` and does not invent a fourth voice. Look at how
+`note_tool` announces a tool call and follow it - AC 14 says the model invoking a skill is
+shown "the way a tool call is shown", so the two should not end up looking different.
 
-**Only then start `/skill` and `/skills`.** They sit beside `MODEL_COMMAND` in
-`src/axiom/__init__.py` and are handled before the turn starts, the way `/model` is. Six
-criteria, AC 5 to AC 11, and AC 9 and AC 10 both say *nothing is sent to the model* - which
-is the half a test will forget, because a command that prints the right thing and also
-starts a turn looks correct on screen.
+Run the break on each before counting it. For AC 7, the break that matters is a command
+that loads the instructions but does not start a turn - it will look like it works.
 
-First thing to tackle: **the AC 42 break**, because cycle 3 recorded it as unproven for a
-specific reason and a bucket that is never emptied is how eleven criteria become forty.
+Do not start on configuration (AC 36 to AC 39) or compaction (AC 34, AC 35) yet. The off
+switch has to know what it is switching off, and two of the three things it disables are
+these commands.
+
+First thing to tackle: **`/skills`**, because listing is what makes every other command
+testable by hand, and AC 6's "say where a skill would go" is the only line in the feature
+that tells a new user how to start.
