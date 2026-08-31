@@ -499,6 +499,7 @@ class Rendered:
         self._lexer: str | None = None  # that language, if one exists for it
         self._code: list[str] = []  # the open fence's lines, for context
         self._table: list[str] = []  # rows waiting for the table to end
+        self._levels: list[int] = []  # indents of the open list levels (#73)
 
     def feed(self, text: str) -> None:
         """Take a fragment of the reply and show what can now be shown."""
@@ -551,6 +552,7 @@ class Rendered:
         self._settle_table()
         self._line, self._echoed, self._echo_width = "", 0, 0
         self._fence, self._lexer, self._code = None, None, []
+        self._levels = []
 
     def _finished(self, line: str) -> None:
         """One complete line: committed now, or held because it is a table.
@@ -653,9 +655,75 @@ class Rendered:
                 return f"\x1b[2m{line}\x1b[0m"
             if self._fence is not None:
                 return self._code_line(line)
-            return _as_markdown(line)
+            nested = self._nested(line)
+            return nested if nested is not None else _as_markdown(line)
         except Exception:
             return line
+
+    def _nested(self, line: str) -> str | None:
+        """A list item below the top level, drawn at its own depth.
+
+        `None` for anything that is not one - which is how a flat list keeps
+        today's rendering exactly (AC 6). Only a genuinely nested item takes
+        this path, so the common case is untouched.
+
+        The renderer has to place the indent itself. `_as_markdown` renders one
+        line with no memory of the line before it, so markdown's context is
+        gone: an item indented two spaces is indistinguishable from a top-level
+        one, and an item indented four is an indented *code block* - which is
+        why `'    - Deepest'` came back as three padded rows with blank lines
+        around it. Giving Rich the context would mean holding lines back, and
+        holding is barred for everything but a table (#60 AC 8 and AC 10).
+
+        So the item's text is rendered alone, as prose - which keeps bold,
+        italic, inline code and links working at depth (AC 7) - and the marker
+        and the indent are written here.
+        """
+        match = _LIST_ITEM.match(line)
+        if match is None:
+            # A blank line may sit inside a list. Anything else ends it, or a
+            # list after a paragraph would resume the previous one's depths.
+            if line.strip():
+                self._levels.clear()
+            return None
+        spaces, marker, text = match.group(1), match.group(2), match.group(3) or ""
+        depth = self._depth(len(spaces))
+        if depth == 0:
+            return None  # today's path, deliberately untouched
+        # An ordered item keeps the number the model wrote; the punctuation goes
+        # because Rich drops it at the top level and the two should match.
+        glyph = (
+            marker.rstrip(".)")
+            if marker[:1].isdigit()
+            else NESTED_MARKERS[(depth - 1) % len(NESTED_MARKERS)]
+        )
+        lead = f"{' ' * (1 + NEST_INDENT * depth)}{glyph} "
+        if not text.strip():
+            return lead.rstrip()
+        # Wrapped here rather than left to the terminal. A terminal wraps to
+        # column 0, and #72 AC 7 wants the continuation at *this item's* indent -
+        # so the text is drawn into the room left beside the marker, and every
+        # row after the first is pushed out to where the first row's text began.
+        room = max(1, _width() - len(lead))
+        rows = _as_markdown(text, width=room, wrapped=True).split("\n")
+        drawn = [lead + rows[0]] + [" " * len(lead) + row for row in rows[1:]]
+        return _unpadded("\n".join(drawn))
+
+    def _depth(self, indent: int) -> int:
+        """Which level an indent is, against the levels seen so far.
+
+        A stack rather than arithmetic. Markdown nests by indent relative to the
+        parent's *content* column, which moves with the parent's marker - three
+        for `1. `, two for `- ` - so dividing an indent by a fixed width gets
+        mixed lists wrong. Deeper than the top pushes a level, shallower pops
+        back to the level that matches, equal stays where it is. That is AC 2
+        and AC 5 between them, and it needs no lookahead.
+        """
+        while self._levels and indent < self._levels[-1]:
+            self._levels.pop()
+        if not self._levels or indent > self._levels[-1]:
+            self._levels.append(indent)
+        return len(self._levels) - 1
 
     def _open_or_close(self, language: str) -> None:
         """A fence marker arrived: start a block, or end the one open."""
@@ -772,6 +840,35 @@ def _colourless() -> bool:
 # closes. Missing a table reads badly; eating a paragraph loses the answer.
 _TABLE_ROW = re.compile(r"^\s*\|")
 
+# What Rich draws inside a container: a block quote, a list item. Inside one,
+# `soft_wrap` stops meaning "let the terminal wrap it" and becomes no-wrap in a
+# fixed-width box - and the box **crops**. Measured at 60 columns: a 182-
+# character quote came back 58 characters long and the rest was simply gone; a
+# line one character wider than the window lost exactly that one character.
+#
+# Letting Rich wrap these costs nothing and buys most of the issue. It carries
+# the quote's marker onto every continuation row (AC 5), aligns a list item's
+# continuation under its text rather than its marker (AC 6), and folds an
+# unbroken token longer than the window without losing a character of it (AC 14).
+#
+# Bare text is deliberately absent. A paragraph is emitted as one long line and
+# the *terminal* wraps it, which is why a resize reflows it. Pre-wrapping it
+# through Rich would look identical at first and then stop reflowing, which is
+# AC 10 and AC 18 both.
+_CONTAINED = re.compile(r"^\s*(>|[-*+]\s|\d{1,9}[.)]\s)")
+
+# A list item: its indent, its marker, and the text after it. The text is
+# optional so a marker on its own is still an item (#73 AC 8), and a space is
+# required before any text so `-a-b` stays the prose it is rather than becoming
+# a bullet.
+_LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d{1,9}[.)])(?:\s+(.*))?$")
+
+# One marker per depth, so a level is apparent from the glyph and not only from
+# the indent (#73 AC 4). Top level is absent from this: it keeps whatever Rich
+# already draws, because AC 6 says a flat list must not change.
+NESTED_MARKERS = ("◦", "▪", "•")  # ring, small square, bullet
+NEST_INDENT = 2  # columns a level is indented by
+
 # What Rich draws under a table's header row, and the sign that it understood
 # the rows as a table at all rather than as a paragraph of pipes.
 HEADER_RULE = "─"
@@ -839,8 +936,15 @@ def _as_table(rows: list[str]) -> list[str]:
         return rows
 
 
-def _as_markdown(line: str) -> str:
+def _as_markdown(
+    line: str, width: int | None = None, wrapped: bool | None = None
+) -> str:
     """One line through Rich, without letting it own the cursor or the width.
+
+    `width` and `wrapped` are for a caller drawing inside its own margin - a
+    nested list item, which has to wrap to *its* indent rather than to the
+    terminal's left edge (#72 AC 7). Everything else leaves both alone and gets
+    the window's width and the per-construct choice below.
 
     Rich pads a rendering to the console width and puts a blank line before a
     list item; neither belongs here, where the caller is placing lines itself.
@@ -867,8 +971,10 @@ def _as_markdown(line: str) -> str:
             file=buffer,
             force_terminal=True,
             legacy_windows=False,  # or a link's address is dropped; see above
-            width=_width(),
-            soft_wrap=True,
+            width=width or _width(),
+            # Off for anything Rich draws in a container, on for everything
+            # else. See `_CONTAINED` - this one flag is the whole of #72.
+            soft_wrap=(not _CONTAINED.match(line)) if wrapped is None else not wrapped,
         ).print(Markdown(line), end="")
         shown = buffer.getvalue().strip("\n")
         return _unpadded(shown) if shown.strip() else line
@@ -881,7 +987,13 @@ def _as_markdown(line: str) -> str:
 # the console width. A line padded to exactly the width, plus the newline this
 # module writes, wraps to a blank line on most terminals (AC 12). `rstrip` alone
 # does not reach them: the padding sits *before* the closing reset sequence.
-_PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)")
+#
+# `MULTILINE`, because a rendering can now be more than one line. Without it `$`
+# is end-of-*string* and only the last line is reached - which was harmless while
+# every rendering was one line, and becomes a double-spaced quote the moment one
+# wraps (#72). Measured before the change: `_unpadded('a   \nb   ')` returned
+# `'a   \nb'`.
+_PADDING = re.compile(r"[ \t]+(?=(?:\x1b\[[0-9;]*m)*$)", re.MULTILINE)
 _ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 

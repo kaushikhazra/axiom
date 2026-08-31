@@ -854,3 +854,538 @@ def test_a_resize_mid_reply_cannot_corrupt_what_is_on_screen(monkeypatch):
     shown = [line for line in displayed(emitted) if line.strip()]
     assert len(shown) == 5, "a line was rewritten when the width moved"
     assert "five" in shown[-1]
+
+
+# --- Wrapping a quote or a list item (#72) -------------------------------
+
+
+WIDE = "The quick brown fox jumps over the lazy dog. " * 4
+
+
+@pytest.mark.parametrize("width", [40, 60, 80])
+@pytest.mark.parametrize("source", ["> " + WIDE, "- " + WIDE, "1. " + WIDE])
+def test_a_wrapped_block_has_no_padded_rows(width, source, monkeypatch):
+    """#72 AC 12, at a length that actually wraps.
+
+    The two padding guards that already existed feed lines short enough to
+    render on a single row, so `_unpadded` reaching only the *last* line was
+    enough for them. Measured: with `re.MULTILINE` removed from `_PADDING` all
+    78 tests in this file still passed. Cycle 1 predicted they would catch it;
+    they do not, and this is the test that does.
+
+    A row padded to exactly the console width, plus the newline this module
+    writes, is a blank row on screen - so a wrapped quote would come out
+    double-spaced.
+
+    The assertion is on the row's **width**, not on whether it ends in a space.
+    A first version asserted `row == row.rstrip()` and failed on correct output:
+    Rich keeps the word-separator space at a wrap point, so a 37-column row in a
+    40-column window legitimately ends in one. Harmless - it is reaching the
+    width that costs a blank row, and nothing else does.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    for row in displayed(stream(source + "\n")):
+        assert len(row) < width, f"row as wide as the window ({width}): {row!r}"
+
+
+@pytest.mark.parametrize("width", [40, 60, 80])
+@pytest.mark.parametrize("source", ["> " + WIDE, "- " + WIDE, "1. " + WIDE])
+def test_every_word_of_a_wrapped_block_reaches_the_screen(width, source, monkeypatch):
+    """#72 AC 1, AC 2, AC 3 and AC 4.
+
+    Before this, a quote of 182 characters came back 58 characters long at 60
+    columns and the rest was gone - silently, with no way for the reader to know
+    a word went missing.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    on_screen = " ".join(displayed(stream(source + "\n")))
+    for word in WIDE.split():
+        assert word in on_screen, f"{word!r} was lost at width {width}"
+    assert on_screen.count("dog.") == 4, "a repetition was dropped or doubled"
+
+
+@pytest.mark.parametrize("width", [40, 60])
+def test_a_wrapped_quote_carries_its_marker_down_every_row(width, monkeypatch):
+    """#72 AC 5. The whole quote reads as one quote."""
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    rows = [row for row in displayed(stream("> " + WIDE + "\n")) if row.strip()]
+
+    assert len(rows) > 1, "did not wrap, so this proves nothing"
+    assert all("▌" in row for row in rows), rows
+
+
+@pytest.mark.parametrize("source", ["- " + WIDE, "1. " + WIDE])
+def test_a_wrapped_list_item_lines_up_under_its_text(source, monkeypatch):
+    """#72 AC 6. Under the text, not under the marker, not at the margin."""
+    monkeypatch.setattr(terminal, "_width", lambda: 60)
+
+    rows = [row for row in displayed(stream(source + "\n")) if row.strip()]
+    indents = [len(row) - len(row.lstrip(" ")) for row in rows]
+
+    assert len(rows) > 1, "did not wrap, so this proves nothing"
+    assert indents[0] == 1, "the marker moved"
+    assert set(indents[1:]) == {3}, f"continuations at {indents[1:]}, wanted 3"
+
+
+def test_an_unbroken_word_longer_than_the_window_keeps_every_character(monkeypatch):
+    """#72 AC 14. Folded, not cut."""
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    on_screen = "".join(displayed(stream("> " + "x" * 100 + "\n")))
+
+    assert on_screen.count("x") == 100
+
+
+def test_a_quote_one_character_wider_than_the_window_wraps_rather_than_cropping(
+    monkeypatch,
+):
+    """#72 AC 13. The one character goes on the second row."""
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    rows = [row for row in displayed(stream("> " + "z" * 37 + "\n")) if row.strip()]
+
+    assert len(rows) == 2, rows
+    assert sum(row.count("z") for row in rows) == 37
+
+
+def test_a_paragraph_is_still_one_long_line(monkeypatch):
+    """#72 AC 10 and AC 18.
+
+    A paragraph is handed to the terminal unwrapped, which is why a resize
+    reflows it. If Rich started wrapping it here it would look identical and
+    then stop reflowing, and the loss would only show when someone dragged
+    their window.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    rows = [row for row in displayed(stream(WIDE + "\n")) if row.strip()]
+
+    assert len(rows) == 1, f"the paragraph was pre-wrapped into {len(rows)} rows"
+
+
+# --- Wrapping, against the screen and against the plain path (#72) --------
+
+
+def words_of(text: str) -> list[str]:
+    """The payload words, with markers and whitespace taken out.
+
+    Markers go because a renderer legitimately swaps `-` for a bullet, and
+    whitespace goes because wrapping legitimately changes it. What is left is
+    what AC 21 means by "never in words".
+    """
+    return [w for w in text.replace("\n", " ").split() if w.strip("•▌-*>#0123456789.")]
+
+
+@pytest.mark.parametrize("width", [20, 40, 81])
+@pytest.mark.parametrize("marker", ["> ", "- ", "1. "])
+def test_no_length_of_a_wrapped_block_is_shown_twice(width, marker, monkeypatch):
+    """#72 AC 8 and AC 9, swept rather than sampled.
+
+    The plain-text sweep next to this one exists because every boundary bug in
+    #60 was an off-by-one at one particular length, found by trying that length
+    rather than by reasoning. A quote now occupies four rows where it used to
+    occupy one, and the erase arithmetic was written when it occupied one - so
+    the same sweep is owed to the constructs this issue changed.
+
+    Counting one repeated character catches both failures at once: too many is
+    a row drawn twice, too few is a row lost.
+    """
+    for length in range(1, width * 3 + 2):
+        body = "x" * length
+        on_screen = shown(marker + body + "\n", width=width, monkeypatch=monkeypatch)
+        assert "".join(on_screen).count("x") == length, f"length {length}"
+
+
+def test_a_wrapped_quote_never_climbs_into_a_committed_line(monkeypatch):
+    """#72 AC 8. The invariant behind the sweep.
+
+    A committed line belongs to the scrollback. The cursor may climb by the rows
+    the *unfinished* line occupies, and never further - at a width wider than
+    anything here, that budget is zero.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 500)
+
+    assert re.findall(r"\x1b\[\d*A", stream("> " + WIDE + "\n- " + WIDE + "\n")) == []
+
+
+@pytest.mark.parametrize("marker", ["> ", "- "])
+def test_a_window_narrower_than_the_marker_still_shows_everything(marker, monkeypatch):
+    """#72 AC 15. Narrower than the marker plus one character.
+
+    It holds, but **not because of the wrapping fix** - measured, this test
+    passes with the crop reinstated too. At three columns Rich produces nothing
+    usable and `_as_markdown` hands back the line exactly as it went in, which is
+    #60 AC 28: a formatting failure costs the formatting, never the answer.
+
+    So this pins the fallback rather than the wrap. That is the right thing to
+    pin at this width - there is no sensible way to draw a marker plus text in
+    three columns - but the reason is recorded here so nobody later reads a green
+    test as evidence that wrapping works at any width.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 3)
+
+    on_screen = "".join(displayed(stream(marker + "x" * 20 + "\n")))
+
+    assert on_screen.count("x") == 20
+
+
+@pytest.mark.parametrize("source", ["> ", "- ", "1. "])
+def test_a_block_with_no_text_prints_its_marker_and_nothing_else(source, monkeypatch):
+    """#72 AC 16.
+
+    A regression guard, and correctly not break-sensitive: it passes with the
+    crop reinstated, because an empty block has nothing to crop. It is here so a
+    later change to how a marker is drawn cannot quietly turn one empty quote
+    into two rows.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+
+    rows = [row for row in displayed(stream(source.strip() + "\n")) if row.strip()]
+
+    assert len(rows) <= 1, f"an empty block drew {len(rows)} rows: {rows}"
+
+
+@pytest.mark.parametrize("marker", ["> ", "- ", "1. "])
+def test_halving_the_window_loses_no_words_and_only_gains_lines(marker, monkeypatch):
+    """#72 AC 17. The severity argument, as a test.
+
+    Before this issue, halving the window roughly halved how much of a quote
+    survived. Now it only changes how many rows it takes.
+    """
+    source = marker + WIDE + "\n"
+
+    monkeypatch.setattr(terminal, "_width", lambda: 80)
+    wide_rows = [row for row in displayed(stream(source)) if row.strip()]
+    monkeypatch.setattr(terminal, "_width", lambda: 40)
+    narrow_rows = [row for row in displayed(stream(source)) if row.strip()]
+
+    assert words_of(" ".join(wide_rows)) == words_of(" ".join(narrow_rows))
+    assert len(narrow_rows) > len(wide_rows), "halving the window gained no lines"
+
+
+WRAPPY = "> " + WIDE + "\n- " + WIDE + "\n1. " + WIDE + "\n"
+
+
+def test_rendering_off_gives_the_markdown_byte_for_byte(capsys):
+    """#72 AC 19."""
+    terminal.use_rendering(False)
+    try:
+        for start in range(0, len(WRAPPY), 4):
+            terminal.show_piece(WRAPPY[start : start + 4])
+    finally:
+        terminal.use_rendering(True)
+
+    assert capsys.readouterr().out == WRAPPY
+
+
+def test_a_redirected_run_gives_the_markdown_byte_for_byte(capsys):
+    """#72 AC 20. Not a terminal, so the plain path."""
+    for start in range(0, len(WRAPPY), 4):
+        terminal.show_piece(WRAPPY[start : start + 4])
+
+    assert capsys.readouterr().out == WRAPPY
+
+
+@pytest.mark.parametrize("width", [40, 80])
+def test_rendered_and_plain_differ_only_in_styling_and_line_breaks(width, monkeypatch):
+    """#72 AC 21.
+
+    The check that would catch this issue's change dropping or reordering a
+    word rather than merely cropping one. Words, in order, both ways.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    rendered = " ".join(displayed(stream(WRAPPY)))
+
+    assert words_of(rendered) == words_of(WRAPPY)
+
+
+# --- The layout of a list, pinned (#73) ----------------------------------
+
+
+@pytest.mark.parametrize("source, marker", [("- a bullet\n", "•"), ("1. one\n", "1")])
+def test_a_flat_list_item_keeps_its_layout(source, marker):
+    """#73 AC 6. Pinned so a nesting fix cannot quietly move every list.
+
+    617 tests said nothing about where a list item sits. The one that looked
+    like it did - `test_markdown_is_styled` - only checks that the markup is not
+    shown literally, and would pass whether the bullet landed at column 1 or
+    column 15. This issue is about to change the code that draws every list in
+    the program, so the thing it must not change needs saying out loud first.
+
+    The numbers are from the loop's cycle-1 measurement, not from running the
+    renderer and writing down what it said. A guard copied from the code it
+    guards agrees with whatever that code does next, which is the failure mode
+    this file already has one recorded example of.
+    """
+    rows = [row for row in displayed(stream(source)) if row.strip()]
+
+    assert len(rows) == 1, "a short list item is one row"
+    line = rows[0]
+    assert len(line) - len(line.lstrip(" ")) == 1, "the marker sits at column 1"
+    assert line.strip().startswith(marker), f"the marker is {marker!r}"
+    assert line == line.rstrip(), "padded out to the console width"
+
+
+NESTED = "- Outer\n  - Inner\n    - Deepest\n  - Back to two\n- Back to the top\n"
+
+
+def items(source: str) -> list[tuple[int, str]]:
+    """Each drawn list row as (indent column, marker)."""
+    out = []
+    for row in displayed(stream(source)):
+        if not row.strip():
+            continue
+        out.append((len(row) - len(row.lstrip(" ")), row.strip().split(" ")[0]))
+    return out
+
+
+def test_an_item_indented_under_another_is_drawn_under_it():
+    """#73 AC 1."""
+    outer, inner = items("- Outer\n  - Inner\n")
+
+    assert inner[0] > outer[0], "the sub-item is not indented past its parent"
+
+
+def test_three_levels_are_three_distinct_indents():
+    """#73 AC 2."""
+    columns = [column for column, _ in items(NESTED)]
+
+    assert len(set(columns[:3])) == 3, f"levels collapsed: {columns[:3]}"
+    assert columns[0] < columns[1] < columns[2]
+
+
+def test_a_level_always_uses_the_same_marker():
+    """#73 AC 4."""
+    drawn = items(NESTED)
+    by_level: dict[int, set[str]] = {}
+    for column, marker in drawn:
+        by_level.setdefault(column, set()).add(marker)
+
+    assert all(len(markers) == 1 for markers in by_level.values()), by_level
+    assert len({next(iter(m)) for m in by_level.values()}) == len(by_level), (
+        "two levels share a marker, so the level is not apparent from it"
+    )
+
+
+def test_returning_to_a_shallower_level_returns_to_that_level():
+    """#73 AC 5. Not to a new indent of its own."""
+    drawn = items(NESTED)
+
+    assert drawn[3] == drawn[1], "'Back to two' did not return to level two"
+    assert drawn[4] == drawn[0], "'Back to the top' did not return to the top"
+    # Without this the test passes when every level is flattened: five identical
+    # rows satisfy "returned to the same place" perfectly. Measured - it did.
+    assert drawn[1] != drawn[0], "there were no levels to return from"
+
+
+def test_an_ordered_list_nests_inside_an_unordered_one():
+    """#73 AC 3."""
+    outer, inner = items("- Outer\n  1. Numbered inside\n")
+
+    assert inner[0] > outer[0]
+    assert inner[1] == "1", f"the number was replaced by {inner[1]!r}"
+
+
+def test_an_unordered_list_nests_inside_an_ordered_one():
+    """#73 AC 3."""
+    outer, inner = items("1. One\n   - Bullet inside\n")
+
+    assert inner[0] > outer[0]
+
+
+def test_a_nested_item_is_one_row_not_a_code_block():
+    """#73 AC 2, the four-space case.
+
+    Four spaces of indent is an indented code block to a renderer with no list
+    context, and that is what a line-at-a-time renderer has. Before the depth
+    stack, `'    - Deepest'` came back as three rows - a full-width blank line,
+    the text, another blank line - which is 91 visible characters from an
+    18-character input.
+    """
+    emitted = displayed(stream("- a\n  - b\n    - c\n"))
+    rows = [row for row in emitted if row.strip()]
+
+    assert len(rows) == 3, f"expected one row per item, got {rows}"
+    # The blank rows a code block is padded with are whitespace, so filtering
+    # them out hides exactly the defect this test is named for. Measured: with
+    # the depth stack removed this assertion is the only one that fails.
+    padding = [row for row in emitted if row and not row.strip()]
+    assert not padding, f"a code block's padding rows: {padding!r}"
+
+
+def test_markup_inside_a_nested_item_is_still_formatted():
+    """#73 AC 7."""
+    emitted = stream("- Outer\n  - **bold** and *italic* and `code`\n")
+    drawn = [row for row in displayed(emitted) if "bold" in row][0]
+
+    assert "**" not in drawn and "*italic*" not in drawn and "`" not in drawn
+    assert "bold" in drawn and "italic" in drawn and "code" in drawn
+
+
+def test_an_item_with_no_text_shows_its_marker_at_its_level():
+    """#73 AC 8."""
+    outer, empty = items("- Outer\n  -\n")
+
+    assert empty[0] > outer[0]
+    assert empty[1] in terminal.NESTED_MARKERS
+
+
+def test_a_sub_item_with_no_parent_above_it_is_shown():
+    """#73 AC 10. Shown, rather than dropped for having no parent."""
+    drawn = [
+        row for row in displayed(stream("  - No parent above me\n")) if row.strip()
+    ]
+
+    assert len(drawn) == 1
+    assert "No parent above me" in drawn[0]
+
+
+def test_a_paragraph_between_two_lists_starts_the_depths_again():
+    """A list after prose is a new list, not a continuation of the last one."""
+    drawn = items("- one\n  - deep\n")
+    again = items("- one\n  - deep\nsome prose\n- back\n")
+
+    assert again[3] == drawn[0], "the second list resumed the first one's depth"
+    # Or flattening everything satisfies it: if no list ever has a second level,
+    # "the second list did not inherit one" is true and means nothing.
+    assert drawn[1] != drawn[0], "there was no depth to inherit"
+
+
+# --- Nesting against the plain path (#73) --------------------------------
+
+
+DEEP = "- one\n  - two\n    - three\n  - back to two\n- back to one\n"
+
+
+def shape(rows: list[str]) -> list[int]:
+    """The sequence of levels, as levels rather than as columns.
+
+    Normalised so the comparison is about *structure* and not about how wide an
+    indent happens to be. Two renderings agree if they nest the same way, even
+    if one uses two columns a level and the other uses four.
+    """
+    columns = sorted({len(row) - len(row.lstrip(" ")) for row in rows})
+    return [columns.index(len(row) - len(row.lstrip(" "))) for row in rows]
+
+
+def test_the_indent_structure_matches_the_markdown_the_model_wrote():
+    """#73 AC 13.
+
+    The only one of this issue's remaining criteria that can find a *wrong*
+    answer rather than a missing one. Every other check confirms nothing was
+    lost; this one confirms the depth stack agrees with the source.
+    """
+    source = [line for line in DEEP.split("\n") if line.strip()]
+    drawn = [row for row in displayed(stream(DEEP)) if row.strip()]
+
+    assert shape(drawn) == shape(source), f"{shape(drawn)} against {shape(source)}"
+    assert shape(source) == [0, 1, 2, 1, 0], "the fixture stopped being nested"
+
+
+def test_rendering_off_gives_the_nested_markdown_byte_for_byte(capsys):
+    """#73 AC 11. The plain path never reaches the renderer at all.
+
+    Named for its fixture rather than for its criterion, because #72 wrote a
+    test of the same shape with the same name on another branch. Merging the two
+    branches silently dropped one of each pair - Python takes the later
+    definition and pytest reports green - and only the test count caught it.
+    """
+    terminal.use_rendering(False)
+    try:
+        for start in range(0, len(DEEP), 4):
+            terminal.show_piece(DEEP[start : start + 4])
+    finally:
+        terminal.use_rendering(True)
+
+    assert capsys.readouterr().out == DEEP
+
+
+def test_a_redirected_run_gives_the_nested_markdown_byte_for_byte(capsys):
+    """#73 AC 12. Not a terminal, so the plain path, rendering setting aside."""
+    for start in range(0, len(DEEP), 4):
+        terminal.show_piece(DEEP[start : start + 4])
+
+    assert capsys.readouterr().out == DEEP
+
+
+@pytest.mark.parametrize("width", [20, 40])
+def test_a_list_nested_deeper_than_the_window_keeps_every_item(width, monkeypatch):
+    """#73 AC 9.
+
+    Eight levels against a twenty-column window - deep enough that the indent
+    alone eats most of the room.
+
+    **Whitespace is squashed out before the comparison**, because a phrase that
+    straddles a row edge is not a lost phrase. This test was written on #73's
+    branch, where a nested item was one long line and the *terminal* wrapped it,
+    so `item at depth 2` stayed contiguous. #72 AC 7 made the renderer wrap it to
+    the item's own indent instead, which splits the phrase - and asserting on the
+    contiguous form would have called correct output broken.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+    source = "".join(f"{'  ' * depth}- item at depth {depth}\n" for depth in range(8))
+
+    squashed = "".join("".join(displayed(stream(source))).split())
+
+    for depth in range(8):
+        assert f"itematdepth{depth}" in squashed, f"depth {depth} was lost"
+
+
+# --- Nesting and wrapping together (#72 AC 7) ----------------------------
+
+
+@pytest.mark.parametrize("width", [40, 60])
+def test_a_nested_item_wraps_to_its_own_indent(width, monkeypatch):
+    """#72 AC 7. Not to the level above it, and not to the left margin.
+
+    This is the criterion that needed both branches: #73 gives an item its
+    depth, #72 gives it wrapping, and neither alone can satisfy it. Measured
+    before the fix, a nested item came back as one 93-character line at a
+    40-column window - the terminal wrapped it to column 0, which is the level
+    above's indent and every other level's too.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: width)
+
+    rows = [
+        row for row in displayed(stream("- Outer\n  - " + WIDE + "\n")) if row.strip()
+    ]
+    indents = [len(row) - len(row.lstrip(" ")) for row in rows]
+
+    assert len(rows) > 2, "the nested item did not wrap, so this proves nothing"
+    assert indents[0] == 1, "the outer item moved"
+    # The marker sits at 3, so its text starts at 5 and every continuation
+    # belongs there - past the marker, not under it and not at the margin.
+    assert indents[1] == 3, "the nested marker moved"
+    assert set(indents[2:]) == {5}, f"continuations at {indents[2:]}, wanted 5"
+
+
+def test_each_level_wraps_to_a_deeper_indent_than_the_one_above():
+    """#72 AC 7. Two levels, so 'its own indent' means something."""
+    with_two = "- Outer\n  - " + WIDE + "\n    - " + WIDE + "\n"
+
+    rows = [row for row in displayed(stream(with_two)) if row.strip()]
+    indents = [len(row) - len(row.lstrip(" ")) for row in rows]
+    first_level = [i for i in indents if i in (3, 5)]
+    second_level = [i for i in indents if i in (5, 7)]
+
+    assert 5 in first_level and 7 in second_level
+    assert max(indents) == 7, f"the deeper level did not get its own indent: {indents}"
+
+
+@pytest.mark.parametrize("width", [20, 40])
+def test_no_length_of_a_nested_item_is_shown_twice(width, monkeypatch):
+    """#72 AC 8 and AC 9, for the marker the sweep did not have.
+
+    A nested item is a fourth marker at a fourth indent, and the erase
+    arithmetic had not seen it when the sweep was written.
+    """
+    for length in range(1, width * 3 + 2):
+        body = "x" * length
+        on_screen = shown(
+            "- Outer\n  - " + body + "\n", width=width, monkeypatch=monkeypatch
+        )
+        assert "".join(on_screen).count("x") == length, f"length {length}"
