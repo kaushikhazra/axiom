@@ -91,7 +91,20 @@ def read(directory: Path) -> Catalogue:
     claimed: dict[str, str] = {}  # skill name -> the folder that got there first
 
     for folder in sorted(entry for entry in directory.iterdir() if entry.is_dir()):
-        skill, problem = _one(folder)
+        try:
+            skill, problem = _one(folder)
+        except Exception as unexpected:  # noqa: BLE001
+            # AC 43: no skill failure ends the session. `_one` names every
+            # failure it anticipates, and this catches the ones it does not.
+            #
+            # Not belt and braces. Cycle 2 broke the required-field check and
+            # `_one` raised `KeyError` instead of reporting - because
+            # `parsed["name"]` is only safe while a guard above it happens to
+            # run first. That made a whole session's startup depend on the
+            # order of two lines in one function, with nothing structural
+            # holding it. This is the structure.
+            problems.append(f"{folder.name} could not be loaded ({unexpected})")
+            continue
         if problem is not None:
             problems.append(problem)
             continue
@@ -218,6 +231,12 @@ class Library:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self.catalogue = read(directory)
+        # Skills whose instructions are already in this conversation. AC 34:
+        # invoking one twice leaves them in once. A model that re-invokes on
+        # every turn is not hypothetical - it is the cheapest way for a model to
+        # be sure it is following the skill - and it would fill the window with
+        # copies of the same text while nothing looked wrong.
+        self.invoked: set[str] = set()
 
     def refresh(self) -> None:
         self.catalogue = read(self.directory)
@@ -286,10 +305,38 @@ class Library:
         return f"deleted skill {name}"
 
     def invoke(self, name: str) -> str:
+        """A skill's instructions - once per run (AC 34).
+
+        A repeat gets a pointer rather than the text. The model still learns
+        that the skill applies and where to look, which is the useful half; what
+        it does not get is a second copy of the same instructions filling the
+        window.
+
+        `forgotten` is the other half of this and belongs to AC 35: if
+        compaction lets go of the instructions, "already above" becomes untrue
+        and the skill has to be sendable again.
+        """
         found = self.catalogue.find(name)
         if found is None:
             return self._no_such(name)
-        return instructions(found)
+        if found.name in self.invoked:
+            return (
+                f"The instructions for {found.name} are already in this "
+                f"conversation, above. Follow them; they have not changed."
+            )
+        body = instructions(found)
+        if not body.startswith("error:"):
+            self.invoked.add(found.name)
+        return body
+
+    def forgotten(self) -> None:
+        """Whatever was in the conversation may no longer be (AC 35).
+
+        Called when compaction has been through. Every skill becomes sendable
+        again, because the pointer `invoke` hands back on a repeat is a claim
+        about the conversation - and after a compaction that claim may be false.
+        """
+        self.invoked.clear()
 
     def _no_such(self, name: str) -> str:
         """Named, with what there is instead.

@@ -766,7 +766,11 @@ def _chat(
                 # command that printed the right thing and then asked anyway.
                 terminal.note_no_skill(name, library.catalogue.names)
                 continue
-            body = skills.instructions(found)
+            # Through the library, not `skills.instructions`, so a user typing
+            # `/skill one` twice and a model invoking it twice are the same
+            # thing to AC 34. Two routes to one behaviour is how the second one
+            # quietly stops obeying the rule.
+            body = library.invoke(found.name)
             if body.startswith("error:"):
                 # AC 41 reaching the user rather than the model: the file went
                 # away between startup and now.
@@ -793,6 +797,17 @@ def _chat(
         )
         if kept_pairs is not None:
             terminal.note_compaction(kept_pairs)
+            # AC 35. An invoked skill's instructions are ordinary turns and are
+            # let go like any others, and `note_facts_forgotten` already names
+            # what went - so the user is told by the mechanism that already
+            # exists rather than by a second one invented for skills.
+            #
+            # What must not survive is the library's belief that the
+            # instructions are still up there: `invoke` answers a repeat with
+            # "already in this conversation", and after a compaction that can be
+            # false. Clearing it makes the skill sendable again.
+            if library is not None:
+                library.forgotten()
         if forgotten:
             terminal.note_facts_forgotten(forgotten)
 

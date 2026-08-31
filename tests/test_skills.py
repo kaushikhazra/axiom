@@ -745,3 +745,148 @@ def test_a_run_with_no_skills_says_nothing_about_them(capsys, monkeypatch, tmp_p
     _, out = run_argv(capsys, monkeypatch, tmp_path, tmp_path / "none")
 
     assert "skill" not in out.out.lower()
+
+
+# -- the remainder ------------------------------------------------------------
+
+
+def test_invoking_the_same_skill_twice_leaves_the_instructions_in_once(tmp_path):
+    """AC 34 - and this was false until it was measured.
+
+    A model that re-invokes on every turn is not hypothetical: it is the
+    cheapest way for a model to be sure it is still following the skill. Before
+    this, that filled the window with copies of the same text and nothing looked
+    wrong.
+    """
+    write_skill(tmp_path / "skills", "one", name="one", description="d", body="BODY")
+    made = library(tmp_path)
+
+    first = made.invoke("one")
+    second = made.invoke("one")
+
+    assert first == "BODY"
+    assert "BODY" not in second
+    assert "already in this conversation" in second
+
+
+def test_after_compaction_a_skill_can_be_sent_again(tmp_path):
+    """AC 35's other half - the pointer is a claim about the conversation.
+
+    "Already above" stops being true once compaction has been through, and a
+    model told that about instructions which are no longer there has been given
+    a wrong answer rather than a short one.
+    """
+    write_skill(tmp_path / "skills", "one", name="one", description="d", body="BODY")
+    made = library(tmp_path)
+    made.invoke("one")
+
+    made.forgotten()
+
+    assert made.invoke("one") == "BODY"
+
+
+def test_a_skill_that_raises_while_loading_costs_that_skill_only(tmp_path, monkeypatch):
+    """AC 43 - the failure `_one` does not anticipate.
+
+    Cycle 2 broke the required-field check and `_one` raised KeyError instead of
+    reporting, because `parsed["name"]` is only safe while a guard above it
+    happens to run first. A whole session's startup depended on the order of two
+    lines. This proves it no longer does.
+    """
+    write_skill(tmp_path / "skills", "good", name="good", description="Fine")
+    write_skill(tmp_path / "skills", "bad", name="bad", description="Also fine")
+
+    real = skills.fault_in
+
+    def explode(parsed):
+        if str(parsed.get("name")) == "bad":
+            raise RuntimeError("something nobody thought of")
+        return real(parsed)
+
+    monkeypatch.setattr(skills, "fault_in", explode)
+    found = skills.read(tmp_path / "skills")
+
+    assert found.names == ("good",)
+    assert any("bad could not be loaded" in problem for problem in found.problems)
+
+
+def test_a_file_that_cannot_be_read_is_reported_with_the_reason(tmp_path, monkeypatch):
+    """AC 40 - a read failure, which is not the parse failure already tested."""
+    write_skill(tmp_path / "skills", "locked", name="locked", description="d")
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(skills.Path, "read_text", refuse)
+    found = skills.read(tmp_path / "skills")
+
+    assert found.names == ()
+    assert any("Permission denied" in problem for problem in found.problems)
+
+
+def test_files_beside_the_skill_file_are_not_loaded(tmp_path):
+    """AC 25 - a skill's other files are its own business until it names one."""
+    made = write_skill(tmp_path / "skills", "one", name="one", description="d")
+    (made / "reference.md").write_text("NOT-PART-OF-THE-SKILL", encoding="utf-8")
+    (made / "script.py").write_text("print('nor this')", encoding="utf-8")
+
+    found = skills.read(tmp_path / "skills")
+
+    assert found.names == ("one",)
+    assert "NOT-PART-OF-THE-SKILL" not in skills.catalogue_text(found)
+    assert "NOT-PART-OF-THE-SKILL" not in skills.instructions(found.skills[0])
+
+
+def test_a_skill_written_in_one_run_is_there_in_the_next(tmp_path):
+    """AC 31 - the first thing axiom writes that outlives the run that wrote it."""
+    directory = tmp_path / "skills"
+    first = skills.Library(directory)
+    first.write("kept", VALID.format(name="kept", description="d", body="Still here."))
+
+    second = skills.Library(directory)
+
+    assert second.catalogue.names == ("kept",)
+    assert second.invoke("kept") == "Still here."
+
+
+def test_a_skill_deleted_in_one_run_is_gone_in_the_next(tmp_path):
+    """AC 32."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "doomed", name="doomed", description="d")
+    first = skills.Library(directory)
+    first.delete("doomed")
+
+    assert skills.Library(directory).catalogue.names == ()
+
+
+def test_the_model_invoking_a_skill_is_shown_as_a_tool_call(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 14 - already true through note_tool, and now asserted."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d", body="Steps.")
+
+    _, out = run(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        typed=["do it"],
+        turns=[[Call("invoke_skill", {"name": "one"})], ["done"]],
+    )
+
+    assert "invoke_skill(name=one)" in out.out
+
+
+def test_every_way_out_is_unchanged_with_a_skill_loaded(capsys, monkeypatch, tmp_path):
+    """AC 44 - three ways out, and none of them behaves differently for skills."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    for leaving in (["/exit"], ["/quit"], []):
+        monkeypatch.setattr(skills, "DEFAULT_SKILLS_DIRECTORY", directory)
+        monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+        made = StubBackend(models=["big:70b"])
+        feed(monkeypatch, leaving)
+        main(["--model", "big:70b"], using=made)
+        capsys.readouterr()
