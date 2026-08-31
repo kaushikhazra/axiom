@@ -1,24 +1,29 @@
 # Action
 
-Read `gh issue view 75` cold, then record the baseline: 0 of 44, the suite at 775 tests,
-and its wall-clock time. That is the first row of the measurement and every later cycle is
-read against it.
+Two things, in this order.
 
-Then build the one thing everything else hangs off — **the catalogue, and the boundary that
-keeps the body out of it.** A loader that walks `.axiom/skills/`, parses each `SKILL.md`'s
-frontmatter with a library, and yields name and description with the instructions left on
-disk. Not the tools, not the commands, not the token line: those all read from this, and
-each one built before it exists is a guess about its shape.
+**First, run the break cycle 1 did not.** AC 33 — instructions read at invocation rather
+than at load. Add a `body` field to `Skill`, populate it in `_one`, return it from
+`instructions()`, and watch `test_instructions_are_read_at_invocation_not_at_load` go red.
+Then revert and re-establish green before touching anything else. It is one criterion, but
+it is the one observe.md flags as most likely to be quietly false, and cycle 1 reasoned
+about it instead of proving it. While the breaks are cheap, run them for AC 28 and AC 41
+too and move those three out of the second bucket.
 
-Two things get settled in the same cycle, because both get harder later:
+**Then fix the shape of the cost.** Cycle 1 measured the catalogue: a 302-character
+preamble that costs about 75 tokens, plus 88 characters per skill. The first skill
+therefore costs 97 tokens of which 22 is the skill. **The explanation outweighs the
+content until there are four skills**, and every user with one skill pays for a paragraph
+about skills in general.
 
-- **A test that inspects what is actually sent to the model** and asserts no skill's body is
-  in it. Written now, this test governs every cycle after it. Written at the end, it is
-  written against whatever was built and proves nothing.
-- **Where a live-model test lives**, separate from the hermetic suite. AC 15 and AC 16 are
-  the criteria most likely to be deferred and then not fit. Pick the lane now, even if
-  nothing runs in it yet.
+Get the preamble down. The standing prompt already tells the model what it is and what its
+limits are; the catalogue does not need to re-explain the concept from scratch. Aim for a
+line, not a paragraph, and **re-measure** — the table in cycle 1's log is the baseline and
+the next log must show the same four rows.
 
-First thing to tackle: **the loader and its catalogue** — because the four tools, both
-commands, the token line and the off switch are all views onto it, and none of them can be
-shaped correctly until it exists.
+Do not start the four tools or the two commands yet. Both read from the catalogue, and the
+catalogue's shape is still moving.
+
+First thing to tackle: **the AC 33 break** — because everything after it is built on the
+claim that instructions live on disk until they are wanted, and that claim has not yet been
+tested by removing it.

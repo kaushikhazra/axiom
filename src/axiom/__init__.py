@@ -12,6 +12,7 @@ from . import (
     models,
     schedule,
     servers,
+    skills,
     terminal,
     tools,
 )
@@ -414,7 +415,11 @@ def _limits(settings: config.Settings) -> "tools.Limits":
     )
 
 
-def _tool_cost(run: Running, settings: config.Settings) -> int | None:
+def _tool_cost(
+    run: Running,
+    settings: config.Settings,
+    catalogue: "skills.Catalogue | None" = None,
+) -> int | None:
     """What rides in every request before the conversation starts. None if nothing does.
 
     The declarations **and the standing prompt**. The prompt is the easy one to
@@ -441,7 +446,13 @@ def _tool_cost(run: Running, settings: config.Settings) -> int | None:
                 {"role": "system", "content": json.dumps(declaration)}
                 for declaration in run.declarations
             ),
-            {"role": "system", "content": tools.system_prompt(_limits(settings))},
+            {
+                "role": "system",
+                "content": tools.system_prompt(
+                    _limits(settings),
+                    skills.catalogue_text(catalogue or skills.Catalogue()),
+                ),
+            },
         ]
     )
 
@@ -497,6 +508,12 @@ def _chat(
         [*settings.mcp_problems, *attached.failures],
         bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
     )
+    # Read once, before the cost is reported, and refreshed whenever a skill is
+    # written or deleted. Not on `Settings`, which is frozen and settled before
+    # the run starts: AC 18 promises a skill written mid-session is usable
+    # without a restart, and a catalogue that cannot change could not keep that
+    # promise.
+    catalogue = skills.read(skills.DEFAULT_SKILLS_DIRECTORY)
     # After the server lines rather than inside them. The figure is a fact
     # about the session - what rides in every request before a word is typed -
     # and it lived inside `note_servers`, which returns early when nothing is
@@ -505,7 +522,7 @@ def _chat(
     #
     # Last of the startup lines, deliberately: the server counts above explain
     # where part of it comes from, so the total reads as their sum.
-    terminal.note_tool_cost(_tool_cost(run, settings), run.context)
+    terminal.note_tool_cost(_tool_cost(run, settings, catalogue), run.context)
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a
     # leading system message as a carried-forward summary: a prompt at index 0
@@ -514,7 +531,10 @@ def _chat(
     # forget the middle of the string rather than the front. Kept outside, none
     # of that is true and the model has its limits on every turn rather than
     # until the first compaction.
-    instructions = {"role": "system", "content": tools.system_prompt(limits)}
+    instructions = {
+        "role": "system",
+        "content": tools.system_prompt(limits, skills.catalogue_text(catalogue)),
+    }
 
     def to_send(history: list[dict[str, str]]) -> list[dict[str, str]]:
         """What actually goes to the model - and what the size checks must weigh."""

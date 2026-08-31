@@ -115,7 +115,7 @@ def outside(arguments: dict, limits: "Limits") -> list[str]:
     return found
 
 
-def system_prompt(limits: "Limits") -> str:
+def system_prompt(limits: "Limits", skills: str = "") -> str:
     """What the model is told before it does anything.
 
     Built from the same `Limits` the tools are handed, so what the model is
@@ -131,6 +131,12 @@ def system_prompt(limits: "Limits") -> str:
     qwen2.5:7b answered from the prompt; asked what directory it was working
     in, from the same list, it called `read_file` instead. A duration reads as
     a fact and a path reads as something to go and look up.
+
+    `skills` is the catalogue - one line per skill, name and description only,
+    never a skill's instructions. It arrives as text rather than as a list of
+    skills so that this module does not have to know what a skill is; and it is
+    appended here rather than sent as a second system message so that there is
+    exactly one thing to weigh when the cost of a request is being reported.
     """
     return (
         "You are axiom, a terminal assistant.\n"
@@ -148,7 +154,7 @@ def system_prompt(limits: "Limits") -> str:
         "\n"
         "These are facts about how you are running, not settings. Neither you "
         "nor the user can change them during this run. If a request needs more "
-        "than one of them allows, say so rather than trying anyway."
+        "than one of them allows, say so rather than trying anyway." + skills
     )
 
 
