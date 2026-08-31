@@ -194,17 +194,23 @@ def catalogue_text(catalogue: Catalogue) -> str:
     ever appear in what this returns, the feature has become a way to make every
     request more expensive rather than a way to make one request cheaper - so
     the test that guards it asserts on what is *sent*, not on this function.
+
+    **The preamble is provisional and its wording is an open question.** It was
+    302 characters and is now 149, which is about 38 tokens off every request -
+    measured, because at one skill the old paragraph cost more than three times
+    the skill it introduced. But this text is also the only lever on AC 15,
+    where a model has to reach for a skill instead of answering from memory, and
+    the cheapest prompt is not automatically the one that gets that right. Do
+    not shorten it further on taste. Measure it.
     """
     if not catalogue.skills:
         return ""
     return "\n".join(
         [
             "",
-            "Skills available to you. Each is a set of instructions someone "
-            "wrote for a particular kind of work. When one of them fits what is "
-            "being asked, invoke it and follow what it says rather than working "
-            "from memory. You are given the name and a description here; the "
-            "instructions arrive when you invoke it.",
+            "Skills you can invoke. Each is instructions someone wrote for one "
+            "kind of work. When one fits, invoke it and follow it rather than "
+            "working from memory.",
             "",
             *(skill.line() for skill in catalogue.skills),
         ]

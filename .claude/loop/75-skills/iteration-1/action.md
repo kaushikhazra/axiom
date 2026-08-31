@@ -1,29 +1,43 @@
 # Action
 
-Two things, in this order.
+The catalogue is settled and break-proven. Build the four tools on top of it.
 
-**First, run the break cycle 1 did not.** AC 33 — instructions read at invocation rather
-than at load. Add a `body` field to `Skill`, populate it in `_one`, return it from
-`instructions()`, and watch `test_instructions_are_read_at_invocation_not_at_load` go red.
-Then revert and re-establish green before touching anything else. It is one criterion, but
-it is the one observe.md flags as most likely to be quietly false, and cycle 1 reasoned
-about it instead of proving it. While the breaks are cheap, run them for AC 28 and AC 41
-too and move those three out of the second bucket.
+`read_skill`, `write_skill`, `delete_skill`, `invoke_skill`, declared in `REGISTRY` in
+`src/axiom/tools.py` exactly the way the existing seven are. They need the catalogue, which
+`Limits` cannot carry - it is frozen and holds settings that belong to the user, while the
+catalogue is mutable session state that a write has to refresh. `#74` hit this exact
+problem and solved it with a `needs_schedule` flag beside `needs_limits`. **Follow that,
+do not invent a second mechanism.**
 
-**Then fix the shape of the cost.** Cycle 1 measured the catalogue: a 302-character
-preamble that costs about 75 tokens, plus 88 characters per skill. The first skill
-therefore costs 97 tokens of which 22 is the skill. **The explanation outweighs the
-content until there are four skills**, and every user with one skill pays for a paragraph
-about skills in general.
+What each has to do, in the criteria's terms rather than in code:
 
-Get the preamble down. The standing prompt already tells the model what it is and what its
-limits are; the catalogue does not need to re-explain the concept from scratch. Aim for a
-line, not a paragraph, and **re-measure** — the table in cycle 1's log is the baseline and
-the next log must show the same four rows.
+- **read** returns the file as written, frontmatter included (AC 17). Not the body -
+  `instructions()` already returns the body, and read is the one that has to show the
+  frontmatter so a model can edit it.
+- **write** creates or replaces, validates before it writes, and **refreshes the
+  catalogue** so the skill is listed and invocable in the same session (AC 18, AC 19).
+- **delete** removes and refreshes, so the skill leaves the list at once (AC 20).
+- **invoke** returns `instructions()` and nothing else (AC 13).
 
-Do not start the four tools or the two commands yet. Both read from the catalogue, and the
-catalogue's shape is still moving.
+**Validation is the whole reason these are tools rather than `write_file`.** A write with
+missing or malformed frontmatter is refused, the refusal names the field, and nothing
+reaches disk (AC 21). `_one` already produces exactly those messages - reuse it rather than
+writing a second set of rules that will drift from the loader's.
 
-First thing to tackle: **the AC 33 break** — because everything after it is built on the
-claim that instructions live on disk until they are wanted, and that claim has not yet been
-tested by removing it.
+**AC 42 - a refused write leaves the previous version untouched - is the one to get right
+by construction**, not by remembering: validate the new text before opening the file for
+writing, so there is no path where a bad write has already truncated a good skill. Settle
+it with a stub client inside `tmp_path`, as CLAUDE.md requires. Never ask a live model to
+improvise a malformed file.
+
+Run the break on each tool before counting it. The one most likely to be vacuous is AC 19 -
+a test that writes twice and reads back will pass whether or not the catalogue refreshed,
+because reading goes to disk either way. **Assert on what the model is told next**, not on
+the file.
+
+Leave `/skill` and `/skills` for the cycle after. They are a different seam - the REPL, not
+the registry - and mixing them in makes both harder to break-test.
+
+First thing to tackle: **`needs_schedule`'s twin for the catalogue**, because all four
+tools need the session's catalogue and none of them can be written until there is a way to
+hand it to them.
