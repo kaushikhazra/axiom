@@ -545,7 +545,8 @@ def test_skills_with_none_loaded_says_so_and_says_where_they_go(
 def test_skill_puts_the_instructions_in_and_starts_a_turn(
     capsys, monkeypatch, tmp_path
 ):
-    """AC 7 - both halves. The break that matters is loading without asking."""
+    """AC 7 and AC 11 - the instructions go in, a turn starts, and the skill is
+    named before the reply begins. The break that matters is loading without asking."""
     directory = tmp_path / "skills"
     write_skill(
         directory, "one", name="one", description="d", body="FOLLOW-THESE-STEPS"
@@ -637,7 +638,8 @@ def test_skills_are_on_by_default(capsys, monkeypatch, tmp_path):
 
 
 def test_the_flag_turns_skills_off(capsys, monkeypatch, tmp_path):
-    """AC 37, AC 38 - nothing about any skill reaches the model."""
+    """AC 37, AC 38, AC 39 - nothing about any skill reaches the model, and the
+    startup line says skills are off rather than staying silent about them."""
     directory = tmp_path / "skills"
     write_skill(directory, "one", name="one", description="Some description")
 
@@ -713,7 +715,7 @@ def test_with_skills_off_the_commands_say_so(capsys, monkeypatch, tmp_path):
 def test_the_startup_line_says_how_many_loaded_and_what_they_cost(
     capsys, monkeypatch, tmp_path
 ):
-    """AC 2, AC 3 - the count beside the tools, and the skills' own share."""
+    """AC 2, AC 3, AC 39 - the count beside the tools, and the skills' own share."""
     directory = tmp_path / "skills"
     write_skill(directory, "a", name="alpha", description="x" * 120)
     write_skill(directory, "b", name="beta", description="y" * 120)
@@ -888,5 +890,82 @@ def test_every_way_out_is_unchanged_with_a_skill_loaded(capsys, monkeypatch, tmp
         monkeypatch.setattr("sys.stdin.isatty", lambda: True)
         made = StubBackend(models=["big:70b"])
         feed(monkeypatch, leaving)
-        main(["--model", "big:70b"], using=made)
-        capsys.readouterr()
+
+        # Returns rather than exits. Every ordinary way out of axiom is status
+        # 0, and `CANNOT_START` is the only non-zero one - so a `SystemExit`
+        # here would mean a loaded skill had changed the exit path, which is
+        # exactly what the criterion forbids.
+        try:
+            main(["--model", "big:70b"], using=made)
+        except SystemExit as exited:
+            pytest.fail(f"leaving with {leaving} exited with {exited.code}")
+        out = capsys.readouterr()
+        assert "1 skill loaded" in out.out, "the skill was not actually loaded"
+
+
+def test_a_skill_too_large_for_the_window_is_not_sent_and_is_named(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 29 - both halves, and the naming is the whole point.
+
+    "This message is too large" sends a user to look at what they typed, and
+    they typed `/skill huge`. The thing that is too large is the file behind it.
+    """
+    monkeypatch.setenv("AXIOM_DEBUG_MAX_CONTEXT", "500")
+    directory = tmp_path / "skills"
+    write_skill(directory, "huge", name="huge", description="d", body="x" * 40_000)
+
+    made, out = run_argv(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        typed=["/skill huge"],
+    )
+
+    assert "huge is about" in out.out
+    assert "too large" in out.out
+    assert turns_taken(made) == 0, "an oversized skill was sent anyway"
+
+
+def test_a_skill_that_fits_is_still_sent(capsys, monkeypatch, tmp_path):
+    """The counterpart - without it the test above passes by sending nothing ever."""
+    monkeypatch.setenv("AXIOM_DEBUG_MAX_CONTEXT", "500")
+    directory = tmp_path / "skills"
+    write_skill(directory, "small", name="small", description="d", body="SHORT-BODY")
+
+    made, _ = run_argv(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        typed=["/skill small"],
+    )
+
+    assert turns_taken(made) == 1
+    assert "SHORT-BODY" in everything_sent(made)
+
+
+def test_the_model_is_told_when_a_skill_it_invoked_will_not_fit(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 29 on the model's route - a door #42's oversized-turn check does not watch.
+
+    Without this the instructions arrive as a tool result, are appended, and the
+    turn is cut by Ollama with the model answering from a fragment.
+    """
+    monkeypatch.setenv("AXIOM_DEBUG_MAX_CONTEXT", "500")
+    directory = tmp_path / "skills"
+    write_skill(directory, "huge", name="huge", description="d", body="x" * 40_000)
+
+    made, out = run_argv(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        typed=["do it"],
+        turns=[[Call("invoke_skill", {"name": "huge"})], ["cannot"]],
+    )
+
+    assert "huge is about" in out.out
+    assert "x" * 1000 not in everything_sent(made), "the oversized body was sent"

@@ -517,6 +517,23 @@ def _tool_cost(
     )
 
 
+def _will_not_fit(body: str, context: int | None, overhead: int) -> int | None:
+    """How many tokens a skill is over by, or None if it fits (AC 29).
+
+    The same arithmetic as `compaction.what_will_not_fit`'s MESSAGE_TOO_LARGE
+    branch, deliberately: a skill that this lets through and that then trips the
+    oversized-turn check would be refused twice, with two different messages,
+    one of which tells the user to type less.
+
+    None when the window is unknown - a refusal computed against an unknown
+    bound is a guess, and this one costs the user their skill.
+    """
+    if context is None:
+        return None
+    would_be = (overhead + len(body)) // compaction.SAFE_CHARS_PER_TOKEN
+    return would_be - context if would_be > context else None
+
+
 def _skills_cost(
     settings: config.Settings, catalogue: "skills.Catalogue"
 ) -> int | None:
@@ -771,6 +788,14 @@ def _chat(
             # thing to AC 34. Two routes to one behaviour is how the second one
             # quietly stops obeying the rule.
             body = library.invoke(found.name)
+            over = _will_not_fit(body, run.context, len(instructions["content"]))
+            if over is not None:
+                # Not sent, and named. `continue` before `messages` is touched,
+                # so nothing reaches the model - the same shape as AC 9 and
+                # AC 10, and for the same reason.
+                terminal.note_skill_too_large(found.name, over)
+                library.forgotten()  # it never arrived, so it is not "above"
+                continue
             if body.startswith("error:"):
                 # AC 41 reaching the user rather than the model: the file went
                 # away between startup and now.
@@ -995,6 +1020,26 @@ def _chat(
                         # not know it exists.
                         if call.name in ("write_skill", "delete_skill"):
                             restate_skills()
+                        # AC 29 on the model's route. Without this a skill too
+                        # large for the window arrives as a tool result, is
+                        # appended, and the turn is cut by Ollama with the model
+                        # answering from a fragment - the failure #42 exists to
+                        # prevent, reached by a door #42 does not watch.
+                        if call.name == "invoke_skill":
+                            over = _will_not_fit(
+                                result, run.context, len(instructions["content"])
+                            )
+                            if over is not None:
+                                terminal.note_skill_too_large(
+                                    str(arguments.get("name")), over
+                                )
+                                result = (
+                                    f"error: that skill is about {over} tokens too "
+                                    f"large for this model's window and was not "
+                                    f"loaded. Answer without it, or say it will not fit."
+                                )
+                                if library is not None:
+                                    library.forgotten()
                         kind = tools.failure_kind(result)
                         if command is not None and kind:
                             failures.setdefault(command, []).append(kind)

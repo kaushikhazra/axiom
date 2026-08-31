@@ -1505,3 +1505,18 @@ def note_skills(
         print(f"{VOICE} {loaded} {word} loaded{share}")
     for problem in problems:
         print(f"{VOICE} skill not loaded - {problem}")
+
+
+def note_skill_too_large(name: str, over: int) -> None:
+    """A skill that cannot fit the window is not sent, and is named (AC 29).
+
+    Named, because "this message is too large" sends a user looking at what they
+    typed - and they typed `/skill release-checklist`, which is nineteen
+    characters. The thing that is too large is the file behind it, and only this
+    line says so.
+    """
+    print(
+        f"{VOICE} {name} is about {over} tokens too large for this model's "
+        f"window - not sent. Shorten the skill, or switch to a model with more "
+        f"room with /model."
+    )
