@@ -1,43 +1,38 @@
 # Action
 
-The catalogue is settled and break-proven. Build the four tools on top of it.
+**First, declare only the skill tools that can do anything.** Cycle 3 measured four skill
+tools costing 396 tokens on every request with no skills configured - the tool count went
+10 to 14 and the cost 1111 to 1507, which is 87% above `master` before #74. AC 1 says a run
+with no skills starts as it does today, and paying 36% more for four unusable tools is not
+that.
 
-`read_skill`, `write_skill`, `delete_skill`, `invoke_skill`, declared in `REGISTRY` in
-`src/axiom/tools.py` exactly the way the existing seven are. They need the catalogue, which
-`Limits` cannot carry - it is frozen and holds settings that belong to the user, while the
-catalogue is mutable session state that a write has to refresh. `#74` hit this exact
-problem and solved it with a `needs_schedule` flag beside `needs_limits`. **Follow that,
-do not invent a second mechanism.**
+`read_skill`, `delete_skill` and `invoke_skill` do nothing against an empty catalogue and
+should not be declared when it is empty. `write_skill` is always declared, because writing
+the first skill is how a catalogue stops being empty. The seam is `_prepare` in
+`src/axiom/__init__.py`, which already drops `WEB_TOOLS` when `--no-web` is set - follow
+that, and use `SKILL_TOOLS`, which exists for this.
 
-What each has to do, in the criteria's terms rather than in code:
+The declarations have to be rebuilt when the first skill is written, or a session that
+starts empty can never invoke what it just created. That is the same restatement
+`restate_skills` already does for the prompt, and it is the thing this change is most
+likely to get wrong. **Test it as a sequence: start empty, write, then invoke.**
 
-- **read** returns the file as written, frontmatter included (AC 17). Not the body -
-  `instructions()` already returns the body, and read is the one that has to show the
-  frontmatter so a model can edit it.
-- **write** creates or replaces, validates before it writes, and **refreshes the
-  catalogue** so the skill is listed and invocable in the same session (AC 18, AC 19).
-- **delete** removes and refreshes, so the skill leaves the list at once (AC 20).
-- **invoke** returns `instructions()` and nothing else (AC 13).
+Re-measure the table in cycle 3's log and put the new numbers beside it. Regenerate the
+golden baseline afterwards and **read its diff** - if anything other than the tool count and
+the cost has moved, that is a defect, not a baseline update.
 
-**Validation is the whole reason these are tools rather than `write_file`.** A write with
-missing or malformed frontmatter is refused, the refusal names the field, and nothing
-reaches disk (AC 21). `_one` already produces exactly those messages - reuse it rather than
-writing a second set of rules that will drift from the loader's.
+**Then run the two breaks cycle 3 could not count.**
 
-**AC 42 - a refused write leaves the previous version untouched - is the one to get right
-by construction**, not by remembering: validate the new text before opening the file for
-writing, so there is no path where a bad write has already truncated a good skill. Settle
-it with a stub client inside `tmp_path`, as CLAUDE.md requires. Never ask a live model to
-improvise a malformed file.
+- **AC 42** - move validation to *after* the file is opened for writing, so a refused write
+  truncates the good skill. The test must go red for *that*, not because its setup stopped
+  working.
+- **AC 22** - make a tool-written skill differ from a hand-written one.
 
-Run the break on each tool before counting it. The one most likely to be vacuous is AC 19 -
-a test that writes twice and reads back will pass whether or not the catalogue refreshed,
-because reading goes to disk either way. **Assert on what the model is told next**, not on
-the file.
+Cycle 3 turned both red with a break that hit their setup instead of their claim, and did
+not count them. Do not count them until a break lands on the criterion itself.
 
-Leave `/skill` and `/skills` for the cycle after. They are a different seam - the REPL, not
-the registry - and mixing them in makes both harder to break-test.
+Leave `/skill` and `/skills` for the cycle after, still. The REPL is a different seam and
+the declaration change above touches the same function that decides what a model is offered.
 
-First thing to tackle: **`needs_schedule`'s twin for the catalogue**, because all four
-tools need the session's catalogue and none of them can be written until there is a way to
-hand it to them.
+First thing to tackle: **the conditional declarations**, because the cost is a promise the
+issue makes in AC 1 and every later cycle measures against a number that is currently wrong.

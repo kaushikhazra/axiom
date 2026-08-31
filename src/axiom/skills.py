@@ -111,6 +111,30 @@ def read(directory: Path) -> Catalogue:
     return Catalogue(tuple(loaded), tuple(problems))
 
 
+def fault_in(parsed) -> str | None:  # noqa: ANN001 - a frontmatter Post
+    """Why this is not a usable skill, or None if it is one.
+
+    One rule, used twice: the loader prefixes it with a folder name to report a
+    skill that would not load, and `Library.write` returns it to a model that
+    tried to create one. Written once deliberately - two sets of rules for what
+    a valid skill is would drift, and the first sign of the drift would be a
+    skill that writes without complaint and then refuses to load.
+
+    The field is named rather than called malformed. "Malformed" sends someone
+    back to read the whole file; "no description" sends them to one line of it.
+    """
+    missing = [
+        field for field in REQUIRED_FIELDS if not str(parsed.get(field) or "").strip()
+    ]
+    if missing:
+        return f"no {' and no '.join(missing)}"
+    if not parsed.content.strip():
+        # A description with nothing behind it. Offering it would put a promise
+        # in the catalogue that invoking it cannot keep.
+        return "no instructions"
+    return None
+
+
 def _one(folder: Path) -> tuple[Skill, None] | tuple[None, str]:
     """One folder as a skill, or the reason it is not one.
 
@@ -137,18 +161,9 @@ def _one(folder: Path) -> tuple[Skill, None] | tuple[None, str]:
             f"{folder.name} has frontmatter that could not be read ({unparsable})",
         )
 
-    missing = [
-        field for field in REQUIRED_FIELDS if not str(parsed.get(field) or "").strip()
-    ]
-    if missing:
-        # The field is named. "malformed" sends the user back to read the whole
-        # file; "no description" sends them to one line of it.
-        return None, f"{folder.name} has no {' and no '.join(missing)}"
-
-    if not parsed.content.strip():
-        # A description with nothing behind it. Offering it would put a promise
-        # in the catalogue that invoking it cannot keep.
-        return None, f"{folder.name} has no instructions"
+    fault = fault_in(parsed)
+    if fault is not None:
+        return None, f"{folder.name} has {fault}"
 
     return (
         Skill(
@@ -185,6 +200,106 @@ def instructions(skill: Skill) -> str:
     if not body:
         return f"error: {skill.name} has no instructions"
     return body
+
+
+class Library:
+    """The session's skills: where they live, what loaded, and how that changes.
+
+    A class rather than a `Catalogue` passed around, for one reason: AC 18 and
+    AC 20 promise that a skill written or deleted mid-session is listed and
+    invocable straight away. That needs somewhere for the new catalogue to
+    *land*, and a frozen dataclass handed to a tool has nowhere.
+
+    This is the twin of `schedule.Schedule` and is injected into tools the same
+    way, through a flag on `Tool` - because it is the session's, not the
+    model's, and `tools.run` refuses any argument a tool did not declare.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.catalogue = read(directory)
+
+    def refresh(self) -> None:
+        self.catalogue = read(self.directory)
+
+    def folder(self, name: str) -> Path:
+        """Where a skill by this name lives, whether or not it exists yet."""
+        found = self.catalogue.find(name)
+        return found.path.parent if found else self.directory / name
+
+    # -- what the four tools do -------------------------------------------
+
+    def source(self, name: str) -> str:
+        """A skill exactly as it is written, frontmatter included (AC 17).
+
+        Deliberately not `instructions()`. That returns the body, which is what
+        a model follows; this returns the file, which is what a model edits.
+        """
+        found = self.catalogue.find(name)
+        if found is None:
+            return self._no_such(name)
+        try:
+            return found.path.read_text(encoding="utf-8-sig")
+        except OSError:
+            return f"error: {name} is no longer readable at {found.path}"
+
+    def write(self, name: str, content: str) -> str:
+        """Create or replace a skill, refusing anything that would not load.
+
+        **Validated before anything is opened for writing.** That is AC 42 by
+        construction rather than by care: there is no path here where a refused
+        write has already truncated a good skill, because the refusal happens
+        before the file is touched at all.
+        """
+        try:
+            parsed = frontmatter.loads(content)
+        except Exception as unparsable:  # noqa: BLE001
+            return f"error: not written - frontmatter could not be read ({unparsable})"
+
+        fault = fault_in(parsed)
+        if fault is not None:
+            return f"error: not written - it has {fault}"
+
+        target = self.folder(name) / SKILL_FILE
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        # Before returning, so the very next thing the model is told already
+        # reflects the write. AC 18 and AC 19.
+        self.refresh()
+        return f"wrote skill {name} to {target}"
+
+    def delete(self, name: str) -> str:
+        found = self.catalogue.find(name)
+        if found is None:
+            return self._no_such(name)
+        try:
+            found.path.unlink()
+            # The folder too, when this leaves it empty - otherwise a deleted
+            # skill leaves a directory that the loader reports as "has no
+            # SKILL.md" on every later run, which is a complaint about a skill
+            # the user already removed.
+            if not any(found.path.parent.iterdir()):
+                found.path.parent.rmdir()
+        except OSError as failed:
+            return f"error: could not delete {name} ({failed.strerror or failed})"
+        self.refresh()
+        return f"deleted skill {name}"
+
+    def invoke(self, name: str) -> str:
+        found = self.catalogue.find(name)
+        if found is None:
+            return self._no_such(name)
+        return instructions(found)
+
+    def _no_such(self, name: str) -> str:
+        """Named, with what there is instead.
+
+        The alternatives are listed because a model that got the name slightly
+        wrong can correct itself from this, and one that is told only "no such
+        skill" will answer from memory instead.
+        """
+        available = ", ".join(self.catalogue.names) or "none"
+        return f"error: there is no skill named {name!r} - available: {available}"
 
 
 def catalogue_text(catalogue: Catalogue) -> str:

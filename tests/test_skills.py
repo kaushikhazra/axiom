@@ -299,3 +299,125 @@ def test_the_catalogue_is_what_the_cost_line_counts(capsys, monkeypatch, tmp_pat
 
     assert catalogued > bare
     assert reported >= catalogued - bare
+
+
+# -- the four tools -----------------------------------------------------------
+
+VALID = "---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"
+
+
+def library(tmp_path):
+    return skills.Library(tmp_path / "skills")
+
+
+def test_read_returns_the_file_including_its_frontmatter(tmp_path):
+    """AC 17 - read is for editing, which needs the frontmatter invoke never sends."""
+    write_skill(tmp_path / "skills", "one", name="one", description="d", body="Steps.")
+
+    got = library(tmp_path).source("one")
+
+    assert "name: one" in got
+    assert "Steps." in got
+
+
+def test_invoke_returns_the_instructions_and_nothing_else(tmp_path):
+    """AC 13 - the frontmatter is catalogue material and does not travel again."""
+    write_skill(tmp_path / "skills", "one", name="one", description="d", body="Steps.")
+
+    got = library(tmp_path).invoke("one")
+
+    assert got == "Steps."
+    assert "description" not in got
+
+
+def test_a_written_skill_is_catalogued_at_once(tmp_path):
+    """AC 18 - available in the same session, without a restart.
+
+    Asserted on the catalogue rather than on the file. A test that writes and
+    then reads the file back passes whether or not the refresh happened, which
+    is the vacuous shape this criterion invites.
+    """
+    made = library(tmp_path)
+    assert made.catalogue.names == ()
+
+    made.write("fresh", VALID.format(name="fresh", description="New", body="Do it."))
+
+    assert made.catalogue.names == ("fresh",)
+    assert made.invoke("fresh") == "Do it."
+
+
+def test_writing_over_a_skill_changes_what_the_model_is_told(tmp_path):
+    """AC 19 - the replacement is what is used from then on.
+
+    The description is what reaches the model in the catalogue, so that is what
+    this asserts on. Checking the file would prove the write and not the
+    replacement.
+    """
+    made = library(tmp_path)
+    made.write("one", VALID.format(name="one", description="First", body="A."))
+    made.write("one", VALID.format(name="one", description="Second", body="B."))
+
+    assert [s.description for s in made.catalogue.skills] == ["Second"]
+    assert made.invoke("one") == "B."
+
+
+def test_a_deleted_skill_leaves_the_catalogue_at_once(tmp_path):
+    """AC 20."""
+    write_skill(tmp_path / "skills", "gone", name="gone", description="d")
+    made = library(tmp_path)
+
+    made.delete("gone")
+
+    assert made.catalogue.names == ()
+    assert made.invoke("gone").startswith("error:")
+
+
+def test_a_write_with_no_description_is_refused_and_names_the_field(tmp_path):
+    """AC 21 - the refusal names what is wrong, and nothing is written."""
+    made = library(tmp_path)
+
+    result = made.write("bad", "---\nname: bad\n---\n\nSome instructions.\n")
+
+    assert result.startswith("error:")
+    assert "description" in result
+    assert made.catalogue.names == ()
+    assert not (tmp_path / "skills" / "bad").exists()
+
+
+def test_a_refused_write_leaves_the_previous_version_untouched(tmp_path):
+    """AC 42 - by construction: validation happens before the file is opened."""
+    made = library(tmp_path)
+    made.write("one", VALID.format(name="one", description="Good", body="Keep me."))
+
+    result = made.write("one", "---\nname: one\n---\n\nno description\n")
+
+    assert result.startswith("error:")
+    assert made.invoke("one") == "Keep me."
+    assert made.catalogue.find("one").description == "Good"
+
+
+def test_a_hand_written_skill_and_a_written_one_behave_the_same(tmp_path):
+    """AC 22."""
+    write_skill(tmp_path / "skills", "byhand", name="byhand", description="d", body="X.")
+    made = library(tmp_path)
+    made.write("bytool", VALID.format(name="bytool", description="d", body="X."))
+
+    assert made.invoke("byhand") == made.invoke("bytool")
+    assert sorted(made.catalogue.names) == ["byhand", "bytool"]
+
+
+def test_an_unknown_skill_is_named_with_what_there_is_instead(tmp_path):
+    """AC 10's shape at the tool level - a model that got the name nearly right
+    can correct itself, where "no such skill" sends it back to memory."""
+    write_skill(tmp_path / "skills", "one", name="one", description="d")
+
+    result = library(tmp_path).invoke("onee")
+
+    assert "onee" in result
+    assert "one" in result
+
+
+def test_a_skill_tool_without_a_library_says_so(tmp_path):
+    """AC 38, AC 43 - not a crash and not silence."""
+    assert tools.run("invoke_skill", {"name": "x"}) == tools.NO_SKILLS
+    assert tools.run("write_skill", {"name": "x", "content": "y"}) == tools.NO_SKILLS

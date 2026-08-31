@@ -513,7 +513,8 @@ def _chat(
     # the run starts: AC 18 promises a skill written mid-session is usable
     # without a restart, and a catalogue that cannot change could not keep that
     # promise.
-    catalogue = skills.read(skills.DEFAULT_SKILLS_DIRECTORY)
+    library = skills.Library(skills.DEFAULT_SKILLS_DIRECTORY)
+    catalogue = library.catalogue
     # After the server lines rather than inside them. The figure is a fact
     # about the session - what rides in every request before a word is typed -
     # and it lived inside `note_servers`, which returns early when nothing is
@@ -535,6 +536,19 @@ def _chat(
         "role": "system",
         "content": tools.system_prompt(limits, skills.catalogue_text(catalogue)),
     }
+
+    def restate_skills() -> None:
+        """Put the current catalogue back into the standing prompt.
+
+        Called after a write or a delete. AC 18 and AC 20 are not satisfied by
+        the library alone: the model chooses what to invoke from the catalogue
+        in this prompt, so a skill that exists but is not named here is one it
+        will never reach for. Mutated in place because `to_send` closes over
+        this dict.
+        """
+        instructions["content"] = tools.system_prompt(
+            limits, skills.catalogue_text(library.catalogue)
+        )
 
     def to_send(history: list[dict[str, str]]) -> list[dict[str, str]]:
         """What actually goes to the model - and what the size checks must weigh."""
@@ -767,7 +781,15 @@ def _chat(
                         # loop knows the difference.
                         result = attached.run(call.name, arguments)
                     else:
-                        result = tools.run(call.name, call.arguments, limits, jobs)
+                        result = tools.run(
+                            call.name, call.arguments, limits, jobs, library
+                        )
+                        # The catalogue in the standing prompt is now stale.
+                        # Restated here rather than inside the library, because
+                        # the prompt belongs to the session and the library does
+                        # not know it exists.
+                        if call.name in ("write_skill", "delete_skill"):
+                            restate_skills()
                         kind = tools.failure_kind(result)
                         if command is not None and kind:
                             failures.setdefault(command, []).append(kind)
