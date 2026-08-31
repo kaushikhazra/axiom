@@ -227,7 +227,9 @@ class Running:
 
 
 def _without_unusable_skill_tools(
-    declarations: list[dict], catalogue: "skills.Catalogue | None"
+    declarations: list[dict],
+    catalogue: "skills.Catalogue | None",
+    enabled: bool = True,
 ) -> list[dict]:
     """Drop the skill tools that can do nothing against this catalogue.
 
@@ -249,6 +251,16 @@ def _without_unusable_skill_tools(
     # empty one is falsy, and `catalogue or ...` would silently swap a real
     # empty catalogue for a different empty catalogue. Harmless here and a trap
     # anywhere it is copied.
+    # Off means all four go, `write_skill` included. Empty means three go and
+    # `write_skill` stays, because writing the first skill is how a catalogue
+    # stops being empty - but a user who said `--no-skills` is not waiting for
+    # that, they have said they do not want the feature at all.
+    if not enabled:
+        return [
+            tool
+            for tool in declarations
+            if tool["function"]["name"] not in tools.SKILL_TOOLS
+        ]
     if catalogue is not None and catalogue.skills:
         return declarations
     unusable = tools.SKILL_TOOLS - {"write_skill"}
@@ -284,7 +296,9 @@ def _prepare(
             if tool["function"]["name"] not in tools.WEB_TOOLS
         ]
     if declarations is not None:
-        declarations = _without_unusable_skill_tools(declarations, catalogue)
+        declarations = _without_unusable_skill_tools(
+            declarations, catalogue, settings.skills_enabled
+        )
     if declarations is not None:
         # Said before the wait, not after: starting a server can take seconds,
         # and a silent pause reads as a hang. Only when something will actually
@@ -503,6 +517,39 @@ def _tool_cost(
     )
 
 
+def _skills_cost(
+    settings: config.Settings, catalogue: "skills.Catalogue"
+) -> int | None:
+    """What the catalogue alone adds to every request, in tokens (AC 3).
+
+    A difference, not an absolute: the prompt weighed with the catalogue less
+    the same prompt weighed without it. Measured through
+    `compaction.estimated_tokens` for the reason `_tool_cost` gives - a figure
+    computed a second way would disagree with the compaction it is describing,
+    and being consistent matters more here than being accurate.
+
+    None when there is nothing to report, so the caller stays silent rather than
+    saying a cost of zero, which is a number and reads like one.
+    """
+    if not catalogue.skills:
+        return None
+    limits = _limits(settings)
+    with_them = compaction.estimated_tokens(
+        [
+            {
+                "role": "system",
+                "content": tools.system_prompt(
+                    limits, skills.catalogue_text(catalogue)
+                ),
+            }
+        ]
+    )
+    without = compaction.estimated_tokens(
+        [{"role": "system", "content": tools.system_prompt(limits)}]
+    )
+    return with_them - without
+
+
 def _remember(chosen: str, host: str) -> None:
     """Save the pick, and say so the first time a file is written here.
 
@@ -540,9 +587,18 @@ def _chat(
 
     # Before `_prepare`, because what a model is offered now depends on whether
     # there is anything to read, delete or invoke.
-    library = skills.Library(skills.DEFAULT_SKILLS_DIRECTORY)
+    #
+    # Switched off, the directory is never read at all - not read and then
+    # ignored. AC 38 says nothing about any skill reaches the model, and the
+    # cheapest way to keep that promise is for there to be nothing to leak.
+    library = (
+        skills.Library(skills.DEFAULT_SKILLS_DIRECTORY)
+        if settings.skills_enabled
+        else None
+    )
+    catalogue_now = library.catalogue if library else skills.Catalogue()
 
-    run = _prepare(model_backend, settings, attached, model, library.catalogue)
+    run = _prepare(model_backend, settings, attached, model, catalogue_now)
     limits = _limits(settings)
 
     terminal.announce(
@@ -563,7 +619,7 @@ def _chat(
     # the run starts: AC 18 promises a skill written mid-session is usable
     # without a restart, and a catalogue that cannot change could not keep that
     # promise.
-    catalogue = library.catalogue
+    catalogue = catalogue_now
     # After the server lines rather than inside them. The figure is a fact
     # about the session - what rides in every request before a word is typed -
     # and it lived inside `note_servers`, which returns early when nothing is
@@ -573,6 +629,19 @@ def _chat(
     # Last of the startup lines, deliberately: the server counts above explain
     # where part of it comes from, so the total reads as their sum.
     terminal.note_tool_cost(_tool_cost(run, settings, catalogue), run.context)
+    # After the total, so the skills' share reads as part of it rather than as a
+    # separate bill. AC 2, AC 3 and AC 4's startup half.
+    terminal.note_skills(
+        len(catalogue),
+        list(catalogue.problems),
+        _skills_cost(settings, catalogue),
+        # `--no-tools` already says everything is off, and the web does not
+        # announce itself separately under it either. A second line naming
+        # skills would be repeating a fact the user has already been given, for
+        # a feature they did not mention. Only a run that switched skills off
+        # *specifically* is told so.
+        enabled=settings.skills_enabled or not settings.tools_enabled,
+    )
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a
     # leading system message as a carried-forward summary: a prompt at index 0
@@ -607,12 +676,17 @@ def _chat(
         """
         nonlocal run
         instructions["content"] = tools.system_prompt(
-            limits, skills.catalogue_text(library.catalogue)
+            limits,
+            skills.catalogue_text(library.catalogue if library else skills.Catalogue()),
         )
         if run.declarations is None:
             return  # tools are off, or this model cannot call them
         offered = _prepare(
-            model_backend, settings, attached, run.model, library.catalogue
+            model_backend,
+            settings,
+            attached,
+            run.model,
+            library.catalogue if library else skills.Catalogue(),
         ).declarations
         run = replace(
             run,
@@ -647,7 +721,7 @@ def _chat(
                 attached,
                 run,
                 line[len(MODEL_COMMAND) :].strip(),
-                library.catalogue,
+                library.catalogue if library else skills.Catalogue(),
             )
             if switched is _LEAVING:
                 return
@@ -660,6 +734,19 @@ def _chat(
                 # still runs, so nothing is left unguarded.
                 running_usage = None
             continue
+
+        if (
+            line == SKILLS_COMMAND
+            or line == SKILL_COMMAND
+            or line.startswith(SKILL_COMMAND + " ")
+        ):
+            # Both commands, one gate. AC 38 asks that they say skills are off
+            # rather than behave as though there simply are none - "no skills
+            # loaded" would send a user off to write one that would never be
+            # read.
+            if library is None:
+                terminal.note_skills_off()
+                continue
 
         if line == SKILLS_COMMAND:
             terminal.show_skills(

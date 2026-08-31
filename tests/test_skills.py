@@ -399,7 +399,9 @@ def test_a_refused_write_leaves_the_previous_version_untouched(tmp_path):
 
 def test_a_hand_written_skill_and_a_written_one_behave_the_same(tmp_path):
     """AC 22."""
-    write_skill(tmp_path / "skills", "byhand", name="byhand", description="d", body="X.")
+    write_skill(
+        tmp_path / "skills", "byhand", name="byhand", description="d", body="X."
+    )
     made = library(tmp_path)
     made.write("bytool", VALID.format(name="bytool", description="d", body="X."))
 
@@ -455,9 +457,12 @@ def test_a_catalogue_with_a_skill_is_offered_all_four(capsys, monkeypatch, tmp_p
 
     made, _ = run(capsys, monkeypatch, tmp_path, directory, typed=["hello"])
 
-    assert {"read_skill", "delete_skill", "invoke_skill", "write_skill"} <= offered_names(
-        made
-    )
+    assert {
+        "read_skill",
+        "delete_skill",
+        "invoke_skill",
+        "write_skill",
+    } <= offered_names(made)
 
 
 def test_writing_the_first_skill_brings_invoke_into_existence(
@@ -495,7 +500,9 @@ def test_writing_the_first_skill_brings_invoke_into_existence(
         ],
     )
 
-    assert "invoke_skill" in offered_names(made), "the skill it just wrote is unreachable"
+    assert "invoke_skill" in offered_names(made), (
+        "the skill it just wrote is unreachable"
+    )
     assert "fresh" in everything_sent(made), "the new skill never reached the catalogue"
 
 
@@ -535,10 +542,14 @@ def test_skills_with_none_loaded_says_so_and_says_where_they_go(
     assert "SKILL.md" in out.out
 
 
-def test_skill_puts_the_instructions_in_and_starts_a_turn(capsys, monkeypatch, tmp_path):
+def test_skill_puts_the_instructions_in_and_starts_a_turn(
+    capsys, monkeypatch, tmp_path
+):
     """AC 7 - both halves. The break that matters is loading without asking."""
     directory = tmp_path / "skills"
-    write_skill(directory, "one", name="one", description="d", body="FOLLOW-THESE-STEPS")
+    write_skill(
+        directory, "one", name="one", description="d", body="FOLLOW-THESE-STEPS"
+    )
 
     made, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skill one"])
 
@@ -547,7 +558,9 @@ def test_skill_puts_the_instructions_in_and_starts_a_turn(capsys, monkeypatch, t
     assert "skill: one" in out.out
 
 
-def test_skill_with_trailing_text_takes_it_as_the_request(capsys, monkeypatch, tmp_path):
+def test_skill_with_trailing_text_takes_it_as_the_request(
+    capsys, monkeypatch, tmp_path
+):
     """AC 8 - the skill is context, the trailing text is what was asked."""
     directory = tmp_path / "skills"
     write_skill(directory, "one", name="one", description="d", body="THE-INSTRUCTIONS")
@@ -594,3 +607,141 @@ def test_skills_is_not_read_as_skill_with_an_argument(capsys, monkeypatch, tmp_p
 
     assert "no skill named s" not in out.out
     assert turns_taken(made) == 0
+
+
+# -- the off switch, and what startup says ------------------------------------
+
+
+def run_argv(
+    capsys, monkeypatch, tmp_path, skills_directory, argv=(), typed=(), **stub
+):
+    """A session with extra command-line arguments."""
+    monkeypatch.setattr(skills, "DEFAULT_SKILLS_DIRECTORY", skills_directory)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    stub.setdefault("models", ["big:70b"])
+    made = StubBackend(**stub)
+    feed(monkeypatch, [*typed, "/exit"])
+    main([*argv, "--model", "big:70b"], using=made)
+    return made, capsys.readouterr()
+
+
+def test_skills_are_on_by_default(capsys, monkeypatch, tmp_path):
+    """AC 36."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="Some description")
+
+    made, out = run_argv(capsys, monkeypatch, tmp_path, directory, typed=["hello"])
+
+    assert "Some description" in everything_sent(made)
+    assert "1 skill loaded" in out.out
+
+
+def test_the_flag_turns_skills_off(capsys, monkeypatch, tmp_path):
+    """AC 37, AC 38 - nothing about any skill reaches the model."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="Some description")
+
+    made, out = run_argv(
+        capsys, monkeypatch, tmp_path, directory, argv=["--no-skills"], typed=["hello"]
+    )
+
+    sent = everything_sent(made)
+    assert "Some description" not in sent
+    assert skills.catalogue_text(skills.read(directory)) not in sent
+    assert "skills off" in out.out
+
+
+def test_the_variable_turns_skills_off(capsys, monkeypatch, tmp_path):
+    """AC 37 - the environment variable, on its own."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="Some description")
+    monkeypatch.setenv("AXIOM_SKILLS", "off")
+
+    made, _ = run_argv(capsys, monkeypatch, tmp_path, directory, typed=["hello"])
+
+    assert "Some description" not in everything_sent(made)
+
+
+def test_the_flag_wins_over_the_variable(capsys, monkeypatch, tmp_path):
+    """AC 37 - precedence, stated as a criterion and therefore tested as one."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="Some description")
+    monkeypatch.setenv("AXIOM_SKILLS", "on")
+
+    made, _ = run_argv(
+        capsys, monkeypatch, tmp_path, directory, argv=["--no-skills"], typed=["hello"]
+    )
+
+    assert "Some description" not in everything_sent(made)
+
+
+def test_with_skills_off_the_cost_is_not_paid(capsys, monkeypatch, tmp_path):
+    """AC 38's third clause - the one that gets faked.
+
+    An off switch that hides the line but still declares the tools would pass a
+    test written against the message. This asserts on what was declared.
+    """
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    off, _ = run_argv(
+        capsys, monkeypatch, tmp_path, directory, argv=["--no-skills"], typed=["hi"]
+    )
+
+    assert not offered_names(off) & tools.SKILL_TOOLS
+
+
+def test_with_skills_off_the_commands_say_so(capsys, monkeypatch, tmp_path):
+    """AC 38's second clause - and not "no skills loaded", which would be a lie."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    made, out = run_argv(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        argv=["--no-skills"],
+        typed=["/skills", "/skill one"],
+    )
+
+    assert "skills are off for this run" in out.out
+    assert "no skills loaded" not in out.out
+    assert turns_taken(made) == 0
+
+
+def test_the_startup_line_says_how_many_loaded_and_what_they_cost(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 2, AC 3 - the count beside the tools, and the skills' own share."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "a", name="alpha", description="x" * 120)
+    write_skill(directory, "b", name="beta", description="y" * 120)
+
+    _, out = run_argv(capsys, monkeypatch, tmp_path, directory)
+
+    assert "2 skills loaded" in out.out
+    found = re.search(r"2 skills loaded, about (\d+) tokens per request", out.out)
+    assert found, "the skills' own share was not reported"
+    assert int(found.group(1)) > 0
+
+
+def test_a_skill_that_could_not_load_is_named_at_startup_with_its_reason(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 4's startup half - proven at the loader, not until now at the line."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "good", name="good", description="Fine")
+    (directory / "broken").mkdir()
+
+    _, out = run_argv(capsys, monkeypatch, tmp_path, directory)
+
+    assert "skill not loaded - broken has no SKILL.md" in out.out
+    assert "1 skill loaded" in out.out, "the good one should still have loaded"
+
+
+def test_a_run_with_no_skills_says_nothing_about_them(capsys, monkeypatch, tmp_path):
+    """AC 1 at the startup line - not "0 skills", which is a number and reads like one."""
+    _, out = run_argv(capsys, monkeypatch, tmp_path, tmp_path / "none")
+
+    assert "skill" not in out.out.lower()
