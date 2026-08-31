@@ -13,6 +13,7 @@ import re
 import pytest
 
 from axiom import compaction, main, models, skills, tools
+from axiom.backend import Call
 from conftest import StubBackend, feed
 
 
@@ -421,3 +422,78 @@ def test_a_skill_tool_without_a_library_says_so(tmp_path):
     """AC 38, AC 43 - not a crash and not silence."""
     assert tools.run("invoke_skill", {"name": "x"}) == tools.NO_SKILLS
     assert tools.run("write_skill", {"name": "x", "content": "y"}) == tools.NO_SKILLS
+
+
+# -- what is offered, and what it costs ---------------------------------------
+
+
+def offered_names(made) -> set:
+    """The tool names actually sent to the model on the last turn."""
+    sent = [offered for offered in made.tools_sent if offered]
+    return {tool["function"]["name"] for tool in sent[-1]} if sent else set()
+
+
+def test_an_empty_catalogue_is_not_offered_the_tools_it_cannot_use(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 1 - a run with no skills starts as it does today.
+
+    Measured: the four skill tools cost 396 tokens per request, taking the total
+    from 1111 to 1507. Three of them can do nothing against an empty catalogue.
+    """
+    made, _ = run(capsys, monkeypatch, tmp_path, tmp_path / "none", typed=["hello"])
+
+    names = offered_names(made)
+    assert "write_skill" in names, "the first skill could never be written"
+    assert not names & {"read_skill", "delete_skill", "invoke_skill"}
+
+
+def test_a_catalogue_with_a_skill_is_offered_all_four(capsys, monkeypatch, tmp_path):
+    """The other direction - without this the test above passes by offering nothing."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    made, _ = run(capsys, monkeypatch, tmp_path, directory, typed=["hello"])
+
+    assert {"read_skill", "delete_skill", "invoke_skill", "write_skill"} <= offered_names(
+        made
+    )
+
+
+def test_writing_the_first_skill_brings_invoke_into_existence(
+    capsys, monkeypatch, tmp_path
+):
+    """The sequence the gating is most likely to break.
+
+    A session that starts empty is not offered `invoke_skill` at all. Writing
+    the first skill of a project therefore has to bring the tool into being, or
+    the model is told about a skill it has no way to call - a dead end that
+    every unit test of the library would miss, because the library is not what
+    decides what is offered.
+    """
+    directory = tmp_path / "skills"
+    made, _ = run(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        typed=["make one", "now use it"],
+        turns=[
+            [
+                Call(
+                    "write_skill",
+                    {
+                        "name": "fresh",
+                        "content": VALID.format(
+                            name="fresh", description="New", body="Do it."
+                        ),
+                    },
+                )
+            ],
+            ["made it"],
+            ["used it"],
+        ],
+    )
+
+    assert "invoke_skill" in offered_names(made), "the skill it just wrote is unreachable"
+    assert "fresh" in everything_sent(made), "the new skill never reached the catalogue"

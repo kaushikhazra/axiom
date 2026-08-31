@@ -20,7 +20,12 @@ from axiom import backend, main, models, tools
 # Derived, not written down. These tests are about tools surviving a switch, not
 # about how many there are, and a literal count turns every new tool into a
 # spurious failure here - which is what it did when #74 added three.
-ALL_TOOLS = len(tools.REGISTRY)
+#
+# The derivation has to follow what is *offered*, not what exists. Since #75
+# three of the four skill tools are held back while the catalogue is empty, and
+# these runs have no skills - so `len(REGISTRY)` stopped being the number on the
+# startup line even though nothing about switching changed.
+ALL_TOOLS = len(tools.REGISTRY) - len(tools.SKILL_TOOLS - {"write_skill"})
 from axiom.backend import Call
 from conftest import StubBackend, feed
 

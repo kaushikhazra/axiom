@@ -1,38 +1,35 @@
 # Action
 
-**First, declare only the skill tools that can do anything.** Cycle 3 measured four skill
-tools costing 396 tokens on every request with no skills configured - the tool count went
-10 to 14 and the cost 1111 to 1507, which is 87% above `master` before #74. AC 1 says a run
-with no skills starts as it does today, and paying 36% more for four unusable tools is not
-that.
+**Clear the second bucket before building anything new.** Ten criteria have passing tests
+and no break: AC 17, AC 20, AC 21, AC 22, AC 23, AC 24, AC 26, AC 27, AC 30, AC 42. That is
+more than twice the number that are proven, and a bucket that size is where a vacuous test
+hides.
 
-`read_skill`, `delete_skill` and `invoke_skill` do nothing against an empty catalogue and
-should not be declared when it is empty. `write_skill` is always declared, because writing
-the first skill is how a catalogue stops being empty. The seam is `_prepare` in
-`src/axiom/__init__.py`, which already drops `WEB_TOOLS` when `--no-web` is set - follow
-that, and use `SKILL_TOOLS`, which exists for this.
+Run them as a batch - most are one edit each in `skills.py`:
 
-The declarations have to be rebuilt when the first skill is written, or a session that
-starts empty can never invoke what it just created. That is the same restatement
-`restate_skills` already does for the prompt, and it is the thing this change is most
-likely to get wrong. **Test it as a sequence: start empty, write, then invoke.**
-
-Re-measure the table in cycle 3's log and put the new numbers beside it. Regenerate the
-golden baseline afterwards and **read its diff** - if anything other than the tool count and
-the cost has moved, that is a defect, not a baseline update.
-
-**Then run the two breaks cycle 3 could not count.**
-
-- **AC 42** - move validation to *after* the file is opened for writing, so a refused write
-  truncates the good skill. The test must go red for *that*, not because its setup stopped
-  working.
+- **AC 42** is the one cycle 3 got wrong. Move validation to *after* the file is opened for
+  writing, so a refused write truncates the good skill. It must go red for **that**, not
+  because its setup stopped working. If the test passes under this break, it is testing
+  nothing and needs rewriting before it counts.
 - **AC 22** - make a tool-written skill differ from a hand-written one.
+- **AC 17** - return the body instead of the file. **AC 20** - delete without refreshing.
+- **AC 26, AC 27, AC 30** - remove each guard in `_one` and `read` in turn.
+- **AC 23, AC 24** - drop the frontmatter parse; accept any file as a skill.
 
-Cycle 3 turned both red with a break that hit their setup instead of their claim, and did
-not count them. Do not count them until a break lands on the criterion itself.
+Any test that stays green under its own break is a defect in the test. Say so in the log
+and rewrite it - that is a better outcome than a break that dutifully goes red.
 
-Leave `/skill` and `/skills` for the cycle after, still. The REPL is a different seam and
-the declaration change above touches the same function that decides what a model is offered.
+**Then check the wall clock before anything else.** Cycle 4 measured 91.34s against cycle
+3's 79.08s and attributed it to machine load, on the evidence that all eight slowest tests
+are pre-existing MCP waits. **If this cycle adds no tests and still measures ~91s, that
+attribution stands. If it is back near 79s, it also stands. If it has climbed again, it does
+not** - and finding out costs one `uv run pytest` that was going to happen anyway.
 
-First thing to tackle: **the conditional declarations**, because the cost is a promise the
-issue makes in AC 1 and every later cycle measures against a number that is currently wrong.
+**Only then start `/skill` and `/skills`.** They sit beside `MODEL_COMMAND` in
+`src/axiom/__init__.py` and are handled before the turn starts, the way `/model` is. Six
+criteria, AC 5 to AC 11, and AC 9 and AC 10 both say *nothing is sent to the model* - which
+is the half a test will forget, because a command that prints the right thing and also
+starts a turn looks correct on screen.
+
+First thing to tackle: **the AC 42 break**, because cycle 3 recorded it as unproven for a
+specific reason and a bucket that is never emptied is how eleven criteria become forty.

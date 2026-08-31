@@ -50,6 +50,25 @@ def share(text: str) -> str | None:
     return found.group(1) if found else None
 
 
+def offered(*, web: bool = True) -> list:
+    """What a run in this file actually declares - not the whole registry.
+
+    Since #75 the declared set is smaller than `tools.declarations()`: three of
+    the four skill tools are dropped when the catalogue is empty, and every run
+    here has an empty one. Reading the figure back from `tools_sent` would be
+    better still, but the runs these tests make never take a turn - the cost
+    line is printed at startup, before anything is streamed - so there is no
+    payload to read.
+
+    Derived from `SKILL_TOOLS` and `WEB_TOOLS` rather than listed, so a tool
+    added to either follows automatically.
+    """
+    dropped = tools.SKILL_TOOLS - {"write_skill"}
+    if not web:
+        dropped = dropped | tools.WEB_TOOLS
+    return [d for d in tools.declarations() if d["function"]["name"] not in dropped]
+
+
 def weighed(declarations, prompt: str) -> int:
     """The cost as the size checks would weigh it - declarations and prompt."""
     return compaction.estimated_tokens(
@@ -101,7 +120,7 @@ def test_the_figure_covers_the_standing_prompt_too(capsys, monkeypatch):
     """
     _, out = run(capsys, monkeypatch)
 
-    declarations = tools.declarations()
+    declarations = offered()
     prompt = tools.system_prompt(tools.Limits())
     assert reported(out.out) == weighed(declarations, prompt)
 
@@ -122,7 +141,7 @@ def test_the_figure_is_the_one_the_size_checks_use(capsys, monkeypatch):
     _, out = run(capsys, monkeypatch)
 
     assert reported(out.out) == weighed(
-        tools.declarations(), tools.system_prompt(tools.Limits())
+        offered(), tools.system_prompt(tools.Limits())
     )
 
 
@@ -146,9 +165,9 @@ def test_the_prompt_measured_is_the_prompt_actually_sent(capsys, monkeypatch):
     )
 
     real = tools.Limits(working_directory=where, command_timeout=900.0)
-    assert reported(out.out) == weighed(tools.declarations(), tools.system_prompt(real))
+    assert reported(out.out) == weighed(offered(), tools.system_prompt(real))
     assert reported(out.out) != weighed(
-        tools.declarations(), tools.system_prompt(tools.Limits())
+        offered(), tools.system_prompt(tools.Limits())
     ), "the settings made no difference, so this proves nothing"
 
 
@@ -200,10 +219,9 @@ def test_the_figure_reports_what_is_actually_declared(capsys, monkeypatch):
     """AC 7. With the web off, the cost is of the tools that remain."""
     _, out = run(capsys, monkeypatch, argv=["--no-web"])
 
-    remaining = [
-        d for d in tools.declarations() if d["function"]["name"] not in tools.WEB_TOOLS
-    ]
-    assert reported(out.out) == weighed(remaining, tools.system_prompt(tools.Limits()))
+    assert reported(out.out) == weighed(
+        offered(web=False), tools.system_prompt(tools.Limits())
+    )
 
 
 def test_after_a_switch_the_figure_belongs_to_the_new_model(capsys, monkeypatch):
@@ -237,7 +255,7 @@ def test_a_switch_to_a_capable_model_reports_its_cost(capsys, monkeypatch):
 
     after = out.out[out.out.index("now small:1b") :]
     assert reported(after) == weighed(
-        tools.declarations(), tools.system_prompt(tools.Limits())
+        offered(), tools.system_prompt(tools.Limits())
     )
 
 

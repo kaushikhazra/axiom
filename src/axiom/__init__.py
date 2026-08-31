@@ -2,7 +2,7 @@
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import (
     backend,
@@ -218,11 +218,41 @@ class Running:
         )
 
 
+def _without_unusable_skill_tools(
+    declarations: list[dict], catalogue: "skills.Catalogue | None"
+) -> list[dict]:
+    """Drop the skill tools that can do nothing against this catalogue.
+
+    Measured reason (#75, cycle 3): the four skill tools cost 396 tokens on
+    every request, taking the total from 1111 to 1507 - 87% above what `master`
+    paid before #74. A project with no skills was buying all four and could use
+    none of them, which is not what AC 1 means by starting as it does today.
+
+    `write_skill` is always offered. Writing the first skill is how a catalogue
+    stops being empty, so gating it on a non-empty catalogue would make the
+    feature unreachable from a fresh project - the one state every project
+    starts in.
+
+    The other three are offered only once there is something to read, delete or
+    invoke. This is the same shape as `--no-web` dropping `WEB_TOOLS`: what a
+    model is offered varies with what the run can actually do.
+    """
+    # `is not None` rather than truthiness: `Catalogue` defines `__len__`, so an
+    # empty one is falsy, and `catalogue or ...` would silently swap a real
+    # empty catalogue for a different empty catalogue. Harmless here and a trap
+    # anywhere it is copied.
+    if catalogue is not None and catalogue.skills:
+        return declarations
+    unusable = tools.SKILL_TOOLS - {"write_skill"}
+    return [tool for tool in declarations if tool["function"]["name"] not in unusable]
+
+
 def _prepare(
     model_backend: ModelBackend,
     settings: config.Settings,
     attached: "servers.Servers",
     model: str,
+    catalogue: "skills.Catalogue | None" = None,
 ) -> Running:
     """What this model can do, and how much room it has.
 
@@ -245,6 +275,8 @@ def _prepare(
             for tool in declarations
             if tool["function"]["name"] not in tools.WEB_TOOLS
         ]
+    if declarations is not None:
+        declarations = _without_unusable_skill_tools(declarations, catalogue)
     if declarations is not None:
         # Said before the wait, not after: starting a server can take seconds,
         # and a silent pause reads as a hang. Only when something will actually
@@ -276,6 +308,7 @@ def _switch_model(
     attached: "servers.Servers",
     run: Running,
     named: str,
+    catalogue: "skills.Catalogue | None" = None,
 ) -> "Running | object | None":
     """A model change asked for mid-conversation.
 
@@ -314,7 +347,9 @@ def _switch_model(
         # the failure both stories exist to prevent. A near miss is reported
         # and falls through to the list (AC 7, AC 8).
         if named in available:
-            return _switched_to(model_backend, settings, attached, run, named)
+            return _switched_to(
+                model_backend, settings, attached, run, named, catalogue
+            )
         terminal.note_model_missing(named, settings.host)
 
     # Shown even when there is nothing to choose (AC 27) and even when the
@@ -360,7 +395,9 @@ def _switch_model(
             answer.strip() if answer.strip() in available else None
         )
         if chosen is not None:
-            return _switched_to(model_backend, settings, attached, run, chosen)
+            return _switched_to(
+                model_backend, settings, attached, run, chosen, catalogue
+            )
         terminal.refuse_model(answer, len(available), names=True)
 
 
@@ -370,6 +407,7 @@ def _switched_to(
     attached: "servers.Servers",
     run: Running,
     chosen: str,
+    catalogue: "skills.Catalogue | None" = None,
 ) -> "Running | None":
     """Take the switch, remember it, and say what changed.
 
@@ -381,7 +419,7 @@ def _switched_to(
         terminal.note_unchanged(chosen)
         return None
     _remember(chosen, settings.host)
-    fresh = _prepare(model_backend, settings, attached, chosen)
+    fresh = _prepare(model_backend, settings, attached, chosen, catalogue)
     terminal.note_switched(
         fresh.model,
         fresh.context,
@@ -492,7 +530,11 @@ def _chat(
         # unwind and nothing went wrong - status 0, like any other way out.
         return
 
-    run = _prepare(model_backend, settings, attached, model)
+    # Before `_prepare`, because what a model is offered now depends on whether
+    # there is anything to read, delete or invoke.
+    library = skills.Library(skills.DEFAULT_SKILLS_DIRECTORY)
+
+    run = _prepare(model_backend, settings, attached, model, library.catalogue)
     limits = _limits(settings)
 
     terminal.announce(
@@ -513,7 +555,6 @@ def _chat(
     # the run starts: AC 18 promises a skill written mid-session is usable
     # without a restart, and a catalogue that cannot change could not keep that
     # promise.
-    library = skills.Library(skills.DEFAULT_SKILLS_DIRECTORY)
     catalogue = library.catalogue
     # After the server lines rather than inside them. The figure is a fact
     # about the session - what rides in every request before a word is typed -
@@ -538,16 +579,39 @@ def _chat(
     }
 
     def restate_skills() -> None:
-        """Put the current catalogue back into the standing prompt.
+        """Put the current catalogue back into the prompt, and into what is offered.
 
-        Called after a write or a delete. AC 18 and AC 20 are not satisfied by
-        the library alone: the model chooses what to invoke from the catalogue
-        in this prompt, so a skill that exists but is not named here is one it
-        will never reach for. Mutated in place because `to_send` closes over
-        this dict.
+        Called after a write or a delete, and it has two jobs because a skill
+        becomes reachable in two places.
+
+        The prompt is the obvious one: the model chooses what to invoke from the
+        catalogue named there, so a skill that exists but is not listed is one it
+        will never reach for. Mutated in place because `to_send` closes over the
+        dict.
+
+        The declarations are the one that is easy to miss. A session that starts
+        with no skills is not offered `invoke_skill` at all - see
+        `_without_unusable_skill_tools` - so writing the first skill of a project
+        has to bring the tool into existence too, or the model is told about a
+        skill it has no way to call. `replace` rather than assignment to the
+        field: `Running` holds six things that move together, and updating one
+        of six in place is the failure it exists to prevent.
         """
+        nonlocal run
         instructions["content"] = tools.system_prompt(
             limits, skills.catalogue_text(library.catalogue)
+        )
+        if run.declarations is None:
+            return  # tools are off, or this model cannot call them
+        offered = _prepare(
+            model_backend, settings, attached, run.model, library.catalogue
+        ).declarations
+        run = replace(
+            run,
+            declarations=offered,
+            callable_names={
+                declaration["function"]["name"] for declaration in offered or []
+            },
         )
 
     def to_send(history: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -575,6 +639,7 @@ def _chat(
                 attached,
                 run,
                 line[len(MODEL_COMMAND) :].strip(),
+                library.catalogue,
             )
             if switched is _LEAVING:
                 return

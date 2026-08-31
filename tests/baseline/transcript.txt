@@ -1,8 +1,8 @@
 === startup reports the model, host and context ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 --- stderr ---
 
@@ -20,8 +20,8 @@ axiom: qwen2.5:7b at http://localhost:11434 (context: Ollama default, no tools -
 === a normal exchange ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 hi there
 
@@ -33,8 +33,8 @@ hi there
 === a blank line is ignored ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > > > 
 --- stderr ---
 
@@ -43,8 +43,8 @@ axiom: tools cost about 1507 tokens per request, 5% of the window
 === a message too large to send says so, and the session carries on ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 151% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 125% of the window
 > 
 
 > 
@@ -59,8 +59,8 @@ error: this message is about 538 tokens too large to send - try a shorter one
 === the conversation outgrows what is left, so the oldest of it is let go ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 431% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 350 tokens, debug override, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 357% of the window
 > 
 a reply
 
@@ -127,8 +127,8 @@ a reply
 === a context too small for any message at all ends the session ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 1507% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 100 tokens, debug override, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 1250% of the window
 > 
 
 > 
@@ -143,8 +143,8 @@ error: qwen2.5:7b cannot hold even an empty message - the context is too small, 
 === compaction fires and says so ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 151% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 125% of the window
 > 
 a reply
 
@@ -160,8 +160,8 @@ a reply
 === a model error mid-turn ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 
 > 
@@ -173,8 +173,8 @@ error: model not found (status code: -1)
 === the connection drops before any reply arrives ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 
 > 
@@ -186,8 +186,8 @@ error: cannot reach Ollama at http://localhost:11434 (connection refused)
 === the connection drops mid-reply ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 partial 
 > 
@@ -200,8 +200,8 @@ error: reply cut off after 8 characters - lost connection to http://localhost:11
 === Ctrl-C during generation cancels only that reply ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 partial 
 > 
@@ -217,8 +217,8 @@ cancelled after 8 characters
 === Ctrl-C at an idle prompt exits ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 
 --- stderr ---
@@ -228,8 +228,8 @@ axiom: tools cost about 1507 tokens per request, 5% of the window
 === /exit leaves ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 --- stderr ---
 
@@ -238,8 +238,8 @@ axiom: tools cost about 1507 tokens per request, 5% of the window
 === /quit leaves ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 --- stderr ---
 
@@ -248,8 +248,8 @@ axiom: tools cost about 1507 tokens per request, 5% of the window
 === end of input leaves ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 
 --- stderr ---
@@ -259,8 +259,8 @@ axiom: tools cost about 1507 tokens per request, 5% of the window
 === a tool runs and the answer follows ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: read_file(path=<sandbox>\notes.txt)
 axiom: outside the working directory: <sandbox>\notes.txt
@@ -275,8 +275,8 @@ The cat is ginger.
 === a tool fails and the turn carries on ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: read_file(path=<sandbox>\absent.txt)
 axiom: outside the working directory: <sandbox>\absent.txt
@@ -303,8 +303,8 @@ hello to you
 === the summary reaches its bound and facts are let go ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 151% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 1000 tokens, debug override, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 125% of the window
 > 
 a reply
 
@@ -373,8 +373,8 @@ a reply
 === a call the model announced as text, not as a call ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: read_file(path=<sandbox>/notes.txt)
 axiom: outside the working directory: <sandbox>\notes.txt
@@ -401,8 +401,8 @@ hello to you
 === the web switched off, other tools kept ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 12 tools, web off)
-axiom: tools cost about 1275 tokens per request, 4% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 9 tools, web off)
+axiom: tools cost about 1018 tokens per request, 3% of the window
 > 
 hello to you
 
@@ -414,8 +414,8 @@ hello to you
 === a search runs and the answer follows ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: search_web(query=what is teal)
   | Teal
@@ -432,8 +432,8 @@ axiom: found, not read: https://example.invalid/teal
 === the search provider is throttling us ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: search_web(query=throttle me)
   | error: the search provider is throttling us - wait and retry (202 Ratelimit)
@@ -447,8 +447,8 @@ I could not search just now.
 === a page is read ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: fetch_page(url=https://example.invalid/page)
   | Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger. Biscuit the cat is ginger.
@@ -463,8 +463,8 @@ axiom: read: https://example.invalid/page
 === an address that cannot be reached ===
 --- stdout ---
 axiom: using qwen2.5:7b - the only model installed
-axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 14 tools including web)
-axiom: tools cost about 1507 tokens per request, 5% of the window
+axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+axiom: tools cost about 1250 tokens per request, 4% of the window
 > 
 axiom: fetch_page(url=https://unreachable.invalid/x)
   | error: could not reach https://unreachable.invalid/x (connection refused)
