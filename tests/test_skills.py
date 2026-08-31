@@ -969,3 +969,71 @@ def test_the_model_is_told_when_a_skill_it_invoked_will_not_fit(
 
     assert "huge is about" in out.out
     assert "x" * 1000 not in everything_sent(made), "the oversized body was sent"
+
+
+# -- a skill named where the tool belongs -------------------------------------
+
+
+def test_a_skill_named_as_a_tool_becomes_an_invocation(tmp_path):
+    """Measured: five of qwen2.5-coder's ten attempts arrive in this shape.
+
+    Every one of them was the model choosing correctly and reaching through the
+    wrong door, and every one was dropped.
+    """
+    from axiom import backend as backend_module
+
+    got = backend_module.call_from_text(
+        '{"name": "release-checklist", "arguments": {}}',
+        {"read_file", "invoke_skill"},
+        {"release-checklist"},
+    )
+
+    assert got is not None
+    assert got.name == "invoke_skill"
+    assert got.arguments == {"name": "release-checklist"}
+
+
+def test_a_tool_of_the_same_name_still_wins(tmp_path):
+    """The shape this function was written for keeps precedence."""
+    from axiom import backend as backend_module
+
+    got = backend_module.call_from_text(
+        '{"name": "read_file", "arguments": {"path": "x"}}',
+        {"read_file"},
+        {"read_file"},
+    )
+
+    assert got.name == "read_file"
+    assert got.arguments == {"path": "x"}
+
+
+def test_a_name_that_is_neither_a_tool_nor_a_loaded_skill_is_prose(tmp_path):
+    """The guard is unchanged for everything else - this must not claim what it
+    is unsure of."""
+    from axiom import backend as backend_module
+
+    assert (
+        backend_module.call_from_text(
+            '{"name": "not-a-thing", "arguments": {}}', {"read_file"}, {"release"}
+        )
+        is None
+    )
+    assert backend_module.call_from_text('{"name": "release"}', {"read_file"}) is None
+
+
+def test_a_skill_announced_as_text_actually_runs(capsys, monkeypatch, tmp_path):
+    """End to end, at the seam that matters: the instructions reach the model."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d", body="THE-STEPS")
+
+    made, out = run(
+        capsys,
+        monkeypatch,
+        tmp_path,
+        directory,
+        typed=["what do I do"],
+        turns=[['{"name": "one", "arguments": {}}'], ["done"]],
+    )
+
+    assert "THE-STEPS" in everything_sent(made)
+    assert "invoke_skill(name=one)" in out.out

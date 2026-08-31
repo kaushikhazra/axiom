@@ -968,7 +968,11 @@ def _chat(
                     # Server tools are recognised here too, or a model that
                     # announces its calls as text could reach the built-ins
                     # and nothing else.
-                    announced = backend.call_from_text(reply, run.callable_names)
+                    announced = backend.call_from_text(
+                        reply,
+                        run.callable_names,
+                        set(library.catalogue.names) if library else None,
+                    )
                     if announced is not None:
                         calls.append(announced)
                         reply = ""  # the text was the call, not an answer

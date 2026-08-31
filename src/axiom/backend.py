@@ -53,17 +53,42 @@ class Call:
         return {"function": {"name": self.name, "arguments": self.arguments}}
 
 
-def call_from_text(text: str, known: set[str]) -> Call | None:
+def call_from_text(
+    text: str, known: set[str], skills: set[str] | None = None
+) -> Call | None:
     """A call a model announced as text instead of as a structured call.
 
     Some models return the call as bare JSON in the reply, with no structured
-    tool_calls at all - qwen2.5-coder does, and this loop's cycle-7 log has the
+    tool_calls at all - qwen2.5-coder does, and #34's cycle-7 log has the
     captured shape. Recognised by the shape of the reply, never by the name of
     the model: a per-model branch here would be the thing AC 4 and AC 5 forbid.
 
     Returns None when the reply is not a call, and the caller then prints it -
     so this must not claim anything it is unsure of. A reply that merely
     happens to be JSON, or that names no tool we have, is prose.
+
+    `skills` widens that by exactly one shape: a model naming a **skill** where
+    the tool belongs.
+
+        {"name": "release-checklist", "arguments": {}}
+
+    Measured, not guessed. Ten runs of `qwen2.5-coder:7b` against a loaded skill
+    produced five well-formed calls and five of these, and every one of the five
+    was the user's request being silently dropped - the model had chosen
+    correctly and reached through the wrong door. It never once answered from
+    memory.
+
+    Translated rather than passed through: the returned call is `invoke_skill`
+    with the skill as its argument, because `release-checklist` is not a tool
+    and `tools.run` would rightly refuse it. Everything downstream then sees an
+    ordinary invocation and no other code learns this happened.
+
+    **This is a real widening and it is worth naming.** A reply that is exactly
+    a JSON object naming a loaded skill now runs it, so a model *discussing* a
+    skill in that precise shape would be taken as invoking one. The guards that
+    make it narrow are unchanged: the whole reply must be the object, it must
+    parse, and the name must match a skill actually loaded in this run. A tool
+    of the same name wins, since that is the shape this function was written for.
     """
     stripped = text.strip()
     if not (stripped.startswith("{") and stripped.endswith("}")):
@@ -72,11 +97,16 @@ def call_from_text(text: str, known: set[str]) -> Call | None:
         parsed = json.loads(stripped)
     except ValueError:
         return None
-    if not isinstance(parsed, dict) or parsed.get("name") not in known:
+    if not isinstance(parsed, dict):
         return None
-    # Arguments are passed on as they came. If they are unusable, running the
-    # tool reports that - which is a call axiom could not make, not silence.
-    return Call(parsed["name"], parsed.get("arguments"))
+    named = parsed.get("name")
+    if named in known:
+        # Arguments are passed on as they came. If they are unusable, running
+        # the tool reports that - a call axiom could not make, not silence.
+        return Call(named, parsed.get("arguments"))
+    if skills and named in skills:
+        return Call("invoke_skill", {"name": named})
+    return None
 
 
 class ModelBackend(Protocol):
