@@ -29,3 +29,13 @@ packages = ["src/axiom"]
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# Live-model tests are excluded from the default run. They need Ollama, they
+# take minutes rather than milliseconds, and a suite that quietly acquires a
+# network dependency makes every wall-clock measurement in this loop
+# meaningless. Run them with: uv run pytest -m live
+addopts = "-m 'not live'"
+markers = [
+    "live: needs a running Ollama and real models; excluded by default",
+]

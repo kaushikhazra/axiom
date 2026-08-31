@@ -1,44 +1,40 @@
 # Action
 
-**Start AC 15 and AC 16. They are the long pole and everything else can wait.**
+**Re-run the live measurement with the corrected instrument, and record every number.**
 
-Twelve criteria remain and eleven of them are ordinary. These two are not: they need real
-models, real latency and repeated runs, and they cannot be stubbed, asserted or reasoned
-into place. The fail-safe is 21:30. Left any later they will be settled from one lucky run,
-which is exactly what AC 16 exists to forbid.
+Cycle 8's scores came from a test that counted only structured tool calls and so scored
+`qwen2.5-coder:7b` 0/10 for announcing its call as text - the exact case #34 exists to
+handle. `_asked_for_the_skill` now passes the reply through `call_from_text` the way a
+session does. **All six scores were retracted, not just the wrong one**, because an
+instrument found wrong on one input is not trusted on the others.
 
-**AC 15** - asked for something a loaded skill covers, the model invokes it rather than
-answering from memory, evidenced by repeated runs against each installed model, counts
-recorded.
-**AC 16** - where a model cannot do that reliably, the numbers are recorded rather than
-rounded up.
+    uv run pytest -m live -q -s
 
-Do this:
+It takes about seven minutes. Record all six rows in the log, including `gemma2:2b` as
+"no tool support" - AC 16 is met by writing the number down, not by reaching one.
 
-1. **`ollama list`** - find out what is actually installed. Record the list in the log; it
-   is part of the evidence.
-2. **Build the lane.** Live-model tests do not run in the hermetic suite - that has been an
-   assumption since cycle 1 and nothing has enforced it yet. A pytest marker, deselected by
-   default in `pyproject.toml`, is enough. **Prove the default run does not include them**
-   before writing the measurement, or the suite silently acquires a network dependency.
-3. **One skill, one question, N runs per model.** The skill should cover something the model
-   would otherwise answer from memory - that contrast is the measurement. Count invocations
-   out of N. Ten runs per model is the minimum that can distinguish "usually" from "once".
-4. **Record every model's number, including the bad ones.** A model that scores 3/10 is AC
-   16's case and the criterion is met by writing 3/10 down, not by tuning until it improves.
+**Expect `qwen2.5-coder:7b` to land low but not at zero.** Three diagnostic runs showed it
+using two shapes: `{"name": "invoke_skill", "arguments": {"name": "release-checklist"}}`,
+which `call_from_text` recognises, and `{"name": "release-checklist", "arguments": {}}`,
+which it correctly does not - a skill name is not a tool name. **A low score there is a
+real result and goes in as one.** Do not loosen `call_from_text` to make the number better;
+that guard refuses unknown names for #34's reasons and this is not the story that changes
+it.
 
-**The preamble is the only lever, and cycle 2 forbade shortening it on taste.** If a model
-scores badly, that is the moment the wording becomes an empirical question - change it,
-re-measure both models, and keep the change only if it improves one and worsens none. That
-is #68's rule and it applies here for the same reason.
+**If a model scores badly, the preamble is the only lever** - and cycle 2 put it under
+#68's rule: change it, re-measure *every* model, and keep the change only if it improves at
+least one and worsens none. One re-measurement is seven minutes, so at most one attempt this
+cycle. If the first attempt does not clear that bar, revert it and record both sets of
+numbers.
 
-**Working directory: `C:/Projects/.tmp/axiom-tool-sandbox`.** CLAUDE.md's rule holds - a
-live model is asked only for non-destructive work, and a skill it might invoke must not tell
-it to do anything else. Write the skill the test uses; do not let a model improvise one.
+**Then take the cheap remainder**, in this order, as time allows: AC 44 (exit unchanged),
+AC 43 (no skill failure ends the session), AC 40 (an unreadable file reported), AC 31 and
+AC 32 (a skill written or deleted in one run is there or gone in the next), AC 25 (files
+beside SKILL.md are not loaded), AC 14 (the model's invocation shown as a tool call - true
+already, untested).
 
-Leave AC 25, 29, 31, 32, 34, 35, 40, 43 and 44 alone this cycle. They are cheap and they
-will still be cheap at 20:00.
+Leave AC 29, AC 34 and AC 35 last. They touch compaction and the window, and each needs a
+session driven far enough to compact - more setup than the other seven together.
 
-First thing to tackle: **`ollama list`, then the marker and the proof it is deselected** -
-because a live test that accidentally joins the default suite makes every later cycle's
-wall-clock measurement meaningless.
+First thing to tackle: **the re-measurement**, because it is the only thing in the story
+that costs wall-clock time rather than thought, and the fail-safe is 21:30.
