@@ -1,40 +1,48 @@
 # Action
 
-**Re-run the live measurement with the corrected instrument, and record every number.**
+**Take the cheap remainder.** Ten criteria left, seven of them small. No live model time is
+needed again - AC 15 and AC 16 are measured and recorded.
 
-Cycle 8's scores came from a test that counted only structured tool calls and so scored
-`qwen2.5-coder:7b` 0/10 for announcing its call as text - the exact case #34 exists to
-handle. `_asked_for_the_skill` now passes the reply through `call_from_text` the way a
-session does. **All six scores were retracted, not just the wrong one**, because an
-instrument found wrong on one input is not trusted on the others.
+In this order:
 
-    uv run pytest -m live -q -s
+- **AC 44** - `/exit`, `/quit` and end-of-input leave the same way with skills loaded as
+  without, same status. Three ways out, asserted with a skill loaded.
+- **AC 43** - no skill failure ends the session: loading, listing, reading, writing,
+  deleting, invoking. **Cycle 2 found the soft spot** - `_one` raises rather than returning
+  a problem if its guards are ever reordered, and nothing between it and `read()` catches
+  it. Put the guard around the whole of `_one` and prove it with a skill file that cannot be
+  parsed at all.
+- **AC 40** - a skill file that cannot be *read* - a permission error, not a parse error -
+  is reported with the reason and the session continues. Distinct from the parse case that
+  already has a test.
+- **AC 31, AC 32** - a skill written in one run is there in the next; deleted, gone. Two
+  sessions over one directory, which the `run` helper already supports.
+- **AC 25** - files beside `SKILL.md` are not loaded, and the instructions may name one by
+  path for the model to read.
+- **AC 14** - the model's invocation is shown the way a tool call is shown. Already true
+  through `note_tool`; it needs a test, not a change.
 
-It takes about seven minutes. Record all six rows in the log, including `gemma2:2b` as
-"no tool support" - AC 16 is met by writing the number down, not by reaching one.
+**Then the three that touch compaction**, and only then, because each needs a session driven
+far enough to compact:
 
-**Expect `qwen2.5-coder:7b` to land low but not at zero.** Three diagnostic runs showed it
-using two shapes: `{"name": "invoke_skill", "arguments": {"name": "release-checklist"}}`,
-which `call_from_text` recognises, and `{"name": "release-checklist", "arguments": {}}`,
-which it correctly does not - a skill name is not a tool name. **A low score there is a
-real result and goes in as one.** Do not loosen `call_from_text` to make the number better;
-that guard refuses unknown names for #34's reasons and this is not the story that changes
-it.
+- **AC 34** - invoking the same skill twice in one run leaves its instructions in the
+  conversation once.
+- **AC 35** - when compaction lets go of an invoked skill's instructions, that is named the
+  way other forgotten facts already are.
+- **AC 29** - a skill whose instructions cannot fit the model's window is not sent, and the
+  user is told which skill and why.
 
-**If a model scores badly, the preamble is the only lever** - and cycle 2 put it under
-#68's rule: change it, re-measure *every* model, and keep the change only if it improves at
-least one and worsens none. One re-measurement is seven minutes, so at most one attempt this
-cycle. If the first attempt does not clear that bar, revert it and record both sets of
-numbers.
+`--debug-max-context` is how the other compaction tests force a small window; use it rather
+than building a large skill.
 
-**Then take the cheap remainder**, in this order, as time allows: AC 44 (exit unchanged),
-AC 43 (no skill failure ends the session), AC 40 (an unreadable file reported), AC 31 and
-AC 32 (a skill written or deleted in one run is there or gone in the next), AC 25 (files
-beside SKILL.md are not loaded), AC 14 (the model's invocation shown as a tool call - true
-already, untested).
+**Narrow breaks, one thing each.** Cycles 3 and 6 both lost criteria to breaks that took
+several tests down for the wrong reason.
 
-Leave AC 29, AC 34 and AC 35 last. They touch compaction and the window, and each needs a
-session driven far enough to compact - more setup than the other seven together.
+**AC 34 is the one most likely to be quietly false.** Nothing currently prevents a second
+invocation appending the same instructions again - `/skill one` twice would do it, and so
+would a model that re-invokes each turn. If it is not already true, that is a change, not a
+test.
 
-First thing to tackle: **the re-measurement**, because it is the only thing in the story
-that costs wall-clock time rather than thought, and the fail-safe is 21:30.
+First thing to tackle: **AC 43's guard around `_one`**, because cycle 2 recorded that
+criterion as resting on the order of two checks rather than on structure, and it is the only
+item in this list that is a known weakness rather than a missing test.
