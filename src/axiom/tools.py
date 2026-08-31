@@ -17,6 +17,8 @@ import httpx
 import psutil
 import trafilatura
 
+from . import schedule
+
 
 @dataclass(frozen=True)
 class Tool:
@@ -31,6 +33,11 @@ class Tool:
     parameters: dict
     run: Callable[..., str]
     needs_limits: bool = False
+    # The session's schedule, for the three tools that manage it. A separate
+    # flag rather than a field on `Limits`: `Limits` is frozen and holds
+    # settings that belong to the user, and a schedule is mutable session
+    # state. Putting it there would make that dataclass two things.
+    needs_schedule: bool = False
 
 
 @dataclass(frozen=True)
@@ -463,6 +470,60 @@ def run_command(command: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
     return _report(stdout, stderr, process.returncode)
 
 
+def _when(job: "schedule.Job") -> str:
+    """One job, said the way the user needs to read it back.
+
+    Local time, spelled out, because that is what the user asked in and a cron
+    expression is not something anyone reads a date out of (#74 AC 6).
+    """
+    repeats = "repeating" if job.recurring else "once"
+    return (
+        f"{job.id}: {job.prompt!r} on {job.cron} ({repeats}), "
+        f"next at {job.next_run:%Y-%m-%d %H:%M} local"
+    )
+
+
+def schedule_prompt(cron: str, prompt: str, repeating: bool = True, jobs=None) -> str:
+    """Take a job, and say what was taken (#74 AC 3, AC 4, AC 5, AC 7, AC 8)."""
+    if jobs is None:
+        return "error: nothing can be scheduled in this session"
+    first = len(jobs) == 0
+    try:
+        job = jobs.add(cron, prompt, recurring=repeating)
+    except schedule.Invalid as refused:
+        return f"error: {refused}"
+    said = [f"scheduled {_when(job)}"]
+    if first:
+        # AC 7, once per session: axiom has just taken on work that will not
+        # survive the window closing, and the user has no other way to learn it.
+        said.append("schedules last only as long as this session")
+    if job.recurring:
+        said.append(f"a repeating job stops after {schedule.LIFETIME_DAYS} days")
+    return "\n".join(said)
+
+
+def list_schedules(jobs=None) -> str:
+    """What is scheduled, soonest first (#74 AC 14, AC 15)."""
+    if jobs is None:
+        return "error: nothing can be scheduled in this session"
+    held = jobs.jobs()
+    if not held:
+        # AC 15. Said rather than printed as an empty list, or the model has to
+        # guess whether the listing failed or there was nothing in it.
+        return "nothing is scheduled"
+    return "\n".join(_when(job) for job in held)
+
+
+def cancel_schedule(identifier: str, jobs=None) -> str:
+    """Forget a job, or say there was none (#74 AC 16, AC 17)."""
+    if jobs is None:
+        return "error: nothing can be scheduled in this session"
+    gone = jobs.cancel(identifier.strip())
+    if gone is None:
+        return f"error: there is no scheduled job {identifier!r}"
+    return f"cancelled {gone.id}: {gone.prompt!r}"
+
+
 REGISTRY: dict[str, Tool] = {
     tool.name: tool
     for tool in (
@@ -591,6 +652,66 @@ REGISTRY: dict[str, Tool] = {
             run=fetch_page,
             needs_limits=True,
         ),
+        Tool(
+            name="schedule_prompt",
+            description=(
+                "Run a prompt later, once or on a repeating schedule. The "
+                "schedule is a standard five-field cron expression in the "
+                "user's local time: minute hour day-of-month month day-of-week."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "cron": {
+                        "type": "string",
+                        "description": (
+                            "Five fields, local time. '0 9 * * *' is every day "
+                            "at 9am; '*/15 * * * *' is every fifteen minutes."
+                        ),
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "What to ask when the time comes.",
+                    },
+                    "repeating": {
+                        "type": "boolean",
+                        "description": (
+                            "True to run on every match of the schedule, false "
+                            "to run once and forget it. Defaults to true."
+                        ),
+                    },
+                },
+                "required": ["cron", "prompt"],
+            },
+            run=schedule_prompt,
+            needs_schedule=True,
+        ),
+        Tool(
+            name="list_schedules",
+            description="List every prompt scheduled in this session.",
+            parameters={"type": "object", "properties": {}},
+            run=list_schedules,
+            needs_schedule=True,
+        ),
+        Tool(
+            name="cancel_schedule",
+            description="Cancel a scheduled prompt by its identifier.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "identifier": {
+                        "type": "string",
+                        "description": (
+                            "The identifier given when the job was scheduled, "
+                            "or shown by list_schedules."
+                        ),
+                    }
+                },
+                "required": ["identifier"],
+            },
+            run=cancel_schedule,
+            needs_schedule=True,
+        ),
     )
 }
 
@@ -610,12 +731,21 @@ def declarations() -> list[dict]:
     ]
 
 
-def run(name: str, arguments: dict, limits: Limits = DEFAULT_LIMITS) -> str:
+def run(
+    name: str,
+    arguments: dict,
+    limits: Limits = DEFAULT_LIMITS,
+    jobs: "schedule.Schedule | None" = None,
+) -> str:
     """Run a call and return what the model should be told.
 
     A failure is returned rather than raised: the model is the one that has to
     act on it, and a tool that cannot do its job is not a reason to end the
     turn. The session sees a result either way.
+
+    `jobs` is injected the same way `limits` is, and for the same reason: it is
+    the session's, not the model's, and `run` refuses any argument a tool did
+    not declare - so a model cannot reach it by asking.
     """
     tool = REGISTRY.get(name)
     if tool is None:
@@ -635,6 +765,8 @@ def run(name: str, arguments: dict, limits: Limits = DEFAULT_LIMITS) -> str:
     try:
         if tool.needs_limits:
             return tool.run(**arguments, limits=limits)
+        if tool.needs_schedule:
+            return tool.run(**arguments, jobs=jobs)
         return tool.run(**arguments)
     except TypeError as wrong_arguments:
         return f"error: {name} was called wrongly - {wrong_arguments}"

@@ -6,8 +6,10 @@ one module from both talking to a backend and writing to a terminal.
 """
 
 import os
+import queue
 import re
 import sys
+import threading
 
 from .backend import ConnectionLost
 
@@ -425,14 +427,159 @@ def note_servers(
         print(f"{VOICE} {problem}", file=sys.stderr)
 
 
-def read_line() -> str | None:
-    """The next line the user types, or None if they are leaving."""
-    try:
-        return input(PROMPT).strip()
-    except (EOFError, KeyboardInterrupt):
-        # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
+WAITING = object()
+"""Nothing was typed before the timeout ran out. Not a line, and not leaving."""
+
+
+class Typed:
+    """The user's lines, read on a thread so the loop can watch a clock too.
+
+    `input()` blocks until a newline arrives, and that is where a session spends
+    nearly all of its life. A schedule cannot fire from inside it: a user idle at
+    the prompt at 08:59 would get their 09:00 job whenever they next pressed
+    enter, which might be tomorrow (#74 AC 9).
+
+    Reading on a thread and handing lines over a queue lets the main loop wait
+    with a timeout and look at the clock each time one runs out. **Turn execution
+    stays on the main thread** - this thread only ever reads - so a job still
+    cannot begin while a turn is in progress, and two jobs still cannot overlap.
+    AC 10 and AC 11 keep holding for the same reason they did before: there is
+    one place that runs a turn, and it runs one at a time.
+    """
+
+    def __init__(self, read=None) -> None:
+        # `input()` with no prompt string, deliberately. The prompt belongs to
+        # the caller, not to the read - see `show_prompt`. A thread that drew it
+        # would draw it at a moment the main loop cannot predict, and a job
+        # firing would then have to reach into another thread's output.
+        self._read = read or (lambda: input())
+        # One line at a time. `put` blocks until the caller has taken the last
+        # one, so the thread reads exactly as fast as the loop consumes.
+        #
+        # Unbounded, this spins: a reader that returns without blocking - which
+        # a real `input()` never does, and a test's fake always does - fills the
+        # queue as fast as the interpreter allows. Found by the wall clock, not
+        # by a failing test: fourteen tests taking 0.04s each, and the file
+        # taking five seconds.
+        #
+        # Nothing is lost by the bound. A line the user has typed but that has
+        # not been read yet is still sitting in the terminal's own buffer.
+        self._lines: "queue.Queue[str | None]" = queue.Queue(maxsize=1)
+        self._thread: "threading.Thread | None" = None
+
+    def _pump(self) -> None:
+        while True:
+            try:
+                line = self._read()
+            except (EOFError, KeyboardInterrupt):
+                # Ctrl-C and Ctrl-D at an idle prompt both mean leave. The
+                # contract `read_line` has always had, carried across the queue.
+                self._lines.put(None)
+                return
+            self._lines.put(line.strip())
+
+    def next(self, timeout: float) -> "str | None | object":
+        """A line, `None` for leaving, or `WAITING` if the timeout ran out.
+
+        The thread starts on the first call rather than in `__init__`, so
+        constructing one of these costs nothing and a session that never
+        schedules anything never starts a thread at all.
+        """
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._pump, daemon=True)
+            self._thread.start()
+        try:
+            return self._lines.get(timeout=timeout)
+        except queue.Empty:
+            return WAITING
+
+
+_typed: "Typed | None" = None
+
+
+def use_input(read=None) -> None:
+    """Replace the reader behind the timed read, or forget the one in use.
+
+    A module-level singleton is right for a program with one console and wrong
+    for a test suite: without this, the first test to take a timed read leaves a
+    thread reading a `builtins.input` that the next test has already replaced,
+    and the failure shows up as flakiness somewhere unrelated.
+
+    `None` forgets it, so the next timed read builds a fresh one.
+    """
+    global _typed
+    _typed = Typed(read=read) if read is not None else None
+
+
+def read_line(timeout: float | None = None) -> "str | None | object":
+    """The next line the user types, or None if they are leaving.
+
+    With no timeout this is exactly what it has always been - a blocking read on
+    the calling thread. Every existing caller and every existing test takes this
+    path, and none of them can tell that the other one exists.
+
+    With a timeout it returns `WAITING` when nothing was typed in that time, so
+    the caller can look at the clock and come back. That is the only way a
+    scheduled prompt can run while the user sits at an idle prompt rather than
+    after they next press enter.
+    """
+    if timeout is None:
+        try:
+            return input(PROMPT).strip()
+        except (EOFError, KeyboardInterrupt):
+            # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
+            print()
+            return None
+    global _typed
+    if _typed is None:
+        _typed = Typed()
+    got = _typed.next(timeout)
+    if got is None:
         print()
-        return None
+    return got
+
+
+def show_prompt() -> None:
+    """Draw the prompt, for a caller reading with a timeout.
+
+    The untimed `read_line` still draws its own, because `input(PROMPT)` is one
+    call and every existing caller uses it. A timed read cannot: the read is on
+    another thread, and a job firing has to take the prompt back before it draws
+    anything. **One place owns the prompt**, and with a timeout that place is the
+    caller.
+    """
+    print(PROMPT, end="", flush=True)
+
+
+def take_back_prompt() -> None:
+    """Erase the prompt row, because something is about to be drawn over it.
+
+    Measured on the modelled screen rather than chosen. Without it a scheduled
+    turn starts *on* the prompt row and the user reads
+    `> axiom: scheduled - ...`, with their own prompt and axiom's line run
+    together. Leaving the prompt and starting on the next row instead strands a
+    bare `> ` above the turn, which is untidy but not wrong; erasing it is the
+    one that reads correctly.
+
+    Only the row the prompt is on. Nothing already in the scrollback is touched,
+    which is the same promise `_erase` makes for a line being typed.
+    """
+    print("\r\x1b[K", end="", flush=True)
+
+
+def note_scheduled(prompt: str) -> None:
+    """A turn that came from a schedule rather than from the user (#74 AC 13).
+
+    In axiom's own voice, not a fourth one. #60 AC 17 is that axiom's lines stay
+    distinguishable from the model's, and AC 29 is that everything axiom prints
+    which is not the model's reply says what it says today - a scheduled turn is
+    new, so it gets `VOICE` like every other thing axiom says about a turn, and
+    the model's reply below it is untouched.
+
+    The prompt is echoed because the user did not type it and would otherwise be
+    reading an answer to a question they cannot see.
+    """
+    print(f"{VOICE} scheduled - {prompt}")
 
 
 def start_turn() -> None:
