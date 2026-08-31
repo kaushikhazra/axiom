@@ -1406,3 +1406,50 @@ def report_failure(failure: BaseException, reply: str, host: str) -> None:
     if reply or isinstance(failure, KeyboardInterrupt):
         print(file=sys.stderr)
     print(message, file=sys.stderr)
+
+
+def show_skills(listed: list[tuple[str, str]], where: str) -> None:
+    """The skills that loaded, one to a line, name and description (AC 5).
+
+    `where` is said only when there are none. A user with skills already knows
+    where they live; a user with none is the only one who needs telling, and
+    AC 6 asks for both halves of that - that there are none, and where one would
+    go. Saying the path every time would be noise for everyone it cannot help.
+    """
+    if not listed:
+        print(f"{VOICE} no skills loaded. A skill is a folder in {where} with a SKILL.md")
+        return
+    word = "skill" if len(listed) == 1 else "skills"
+    print(f"{VOICE} {len(listed)} {word}:")
+    for name, description in listed:
+        print(f"{VOICE}   {name} - {description}")
+
+
+def note_skill(name: str) -> None:
+    """Which skill is being followed, before the reply begins (AC 11).
+
+    Shaped like `note_tool`, deliberately. AC 14 says a skill the *model*
+    invokes is shown the way a tool call is shown - which it already is, because
+    that path goes through `note_tool` like any other tool. A user typing
+    `/skill` reaches the same behaviour by a different route, and the two should
+    not end up looking like different features.
+    """
+    print(f"{VOICE} skill: {name}")
+
+
+def note_no_skill(name: str, available: tuple[str, ...]) -> None:
+    """No skill by that name, and what there is instead (AC 9, AC 10).
+
+    Two cases, one function: no name typed at all, and a name that matches
+    nothing. Both end the same way - the user needs the list - and splitting
+    them would mean two messages that have to be kept saying the same thing.
+
+    The alternatives are named rather than counted. A user who mistyped one
+    character can fix it from this line; a user told only "no such skill" has to
+    go and run `/skills` to find out what they meant.
+    """
+    listed = ", ".join(available) or "none"
+    if not name:
+        print(f"{VOICE} name a skill: /skill <name>. Available: {listed}")
+        return
+    print(f"{VOICE} there is no skill named {name}. Available: {listed}")

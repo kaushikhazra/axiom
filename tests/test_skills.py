@@ -497,3 +497,100 @@ def test_writing_the_first_skill_brings_invoke_into_existence(
 
     assert "invoke_skill" in offered_names(made), "the skill it just wrote is unreachable"
     assert "fresh" in everything_sent(made), "the new skill never reached the catalogue"
+
+
+# -- the two commands ---------------------------------------------------------
+
+
+def turns_taken(made) -> int:
+    """How many times the model was actually asked anything."""
+    return len(made.streamed)
+
+
+def test_skills_lists_every_loaded_skill_with_its_description(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 5 - one to a line, name and description."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "a", name="alpha", description="The first one")
+    write_skill(directory, "b", name="beta", description="The second one")
+
+    made, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skills"])
+
+    assert "alpha - The first one" in out.out
+    assert "beta - The second one" in out.out
+    assert turns_taken(made) == 0, "listing asked the model something"
+
+
+def test_skills_with_none_loaded_says_so_and_says_where_they_go(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 6 - both halves. The path is the only line telling a new user how to start."""
+    directory = tmp_path / "skills"
+
+    _, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skills"])
+
+    assert "no skills loaded" in out.out
+    assert str(directory) in out.out
+    assert "SKILL.md" in out.out
+
+
+def test_skill_puts_the_instructions_in_and_starts_a_turn(capsys, monkeypatch, tmp_path):
+    """AC 7 - both halves. The break that matters is loading without asking."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d", body="FOLLOW-THESE-STEPS")
+
+    made, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skill one"])
+
+    assert turns_taken(made) == 1, "the instructions were loaded but nothing was asked"
+    assert "FOLLOW-THESE-STEPS" in everything_sent(made)
+    assert "skill: one" in out.out
+
+
+def test_skill_with_trailing_text_takes_it_as_the_request(capsys, monkeypatch, tmp_path):
+    """AC 8 - the skill is context, the trailing text is what was asked."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d", body="THE-INSTRUCTIONS")
+
+    made, _ = run(
+        capsys, monkeypatch, tmp_path, directory, typed=["/skill one cover the parser"]
+    )
+
+    sent = everything_sent(made)
+    assert "THE-INSTRUCTIONS" in sent
+    assert "cover the parser" in sent
+    assert sent.index("THE-INSTRUCTIONS") < sent.index("cover the parser")
+
+
+def test_skill_with_no_name_lists_and_sends_nothing(capsys, monkeypatch, tmp_path):
+    """AC 9 - and the half a screenshot cannot check is the second assertion."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    made, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skill"])
+
+    assert "one" in out.out
+    assert turns_taken(made) == 0, "nothing should have been sent to the model"
+
+
+def test_an_unknown_skill_lists_and_sends_nothing(capsys, monkeypatch, tmp_path):
+    """AC 10 - same shape, and the same half that is easy to miss."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    made, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skill nope"])
+
+    assert "no skill named nope" in out.out
+    assert "one" in out.out
+    assert turns_taken(made) == 0, "nothing should have been sent to the model"
+
+
+def test_skills_is_not_read_as_skill_with_an_argument(capsys, monkeypatch, tmp_path):
+    """The command names overlap, and the wrong order makes /skills unreachable."""
+    directory = tmp_path / "skills"
+    write_skill(directory, "one", name="one", description="d")
+
+    made, out = run(capsys, monkeypatch, tmp_path, directory, typed=["/skills"])
+
+    assert "no skill named s" not in out.out
+    assert turns_taken(made) == 0

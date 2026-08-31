@@ -24,6 +24,14 @@ EXIT_COMMANDS = {"/exit", "/quit"}
 # word: a message that merely contains it is a message (#49 AC 9).
 MODEL_COMMAND = "/model"
 
+# Namespaced rather than `/<name>`, so a skill called `model` or `exit` can
+# never shadow a built-in. `/skills` lists; `/skill <name>` runs one. Order
+# matters where these are matched: `/skills` is tested for equality before
+# `/skill` is tested as a prefix, or `/skills` would be read as `/skill` with
+# an argument of `s`.
+SKILL_COMMAND = "/skill"
+SKILLS_COMMAND = "/skills"
+
 # Returned by a switch when the user ended the session at the list, as opposed
 # to cancelling it. A sentinel rather than a second return value, because the
 # ordinary answers are already "a new Running" and "nothing changed", and
@@ -652,6 +660,36 @@ def _chat(
                 # still runs, so nothing is left unguarded.
                 running_usage = None
             continue
+
+        if line == SKILLS_COMMAND:
+            terminal.show_skills(
+                [(skill.name, skill.description) for skill in library.catalogue.skills],
+                str(library.directory),
+            )
+            continue
+
+        if line == SKILL_COMMAND or line.startswith(SKILL_COMMAND + " "):
+            asked = line[len(SKILL_COMMAND) :].strip()
+            name, _, trailing = asked.partition(" ")
+            found = library.catalogue.find(name) if name else None
+            if found is None:
+                # AC 9 and AC 10. `continue` before anything is appended to
+                # `messages`, so nothing reaches the model - which is the half
+                # of both criteria that a screenshot cannot tell apart from a
+                # command that printed the right thing and then asked anyway.
+                terminal.note_no_skill(name, library.catalogue.names)
+                continue
+            body = skills.instructions(found)
+            if body.startswith("error:"):
+                # AC 41 reaching the user rather than the model: the file went
+                # away between startup and now.
+                terminal.show_tool_result(body)
+                continue
+            terminal.note_skill(found.name)
+            # The instructions become the turn. Trailing text is the request
+            # and goes after them, so a skill reads as context for what was
+            # asked rather than as the thing being asked about (AC 7, AC 8).
+            line = f"{body}\n\n{trailing.strip()}" if trailing.strip() else body
 
         # The user did not type this one, and would otherwise be reading an
         # answer to a question they cannot see (#74 AC 13). Before `start_turn`,
