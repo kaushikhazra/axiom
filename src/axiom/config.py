@@ -47,6 +47,7 @@ class Settings:
     fetch_timeout: float = DEFAULT_FETCH_TIMEOUT
     page_characters: int = DEFAULT_PAGE_CHARACTERS
     web_enabled: bool = True
+    skills_enabled: bool = True
     # Whether a reply is formatted on its way to the screen. Off gives exactly
     # what a redirected run gives - the same path, not a quieter rendering.
     render_enabled: bool = True
@@ -230,6 +231,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--no-skills",
+        action="store_true",
+        default=os.environ.get("AXIOM_SKILLS", "").lower() in OFF_VALUES,
+        help=(
+            "Chat without skills: none are loaded, none are offered, and the "
+            "catalogue costs nothing. Overrides $AXIOM_SKILLS. Default: skills on"
+        ),
+    )
+    parser.add_argument(
         "--no-mcp",
         action="store_true",
         default=os.environ.get("AXIOM_MCP", "").lower() in OFF_VALUES,
@@ -305,6 +315,11 @@ def resolve(argv: list[str] | None = None) -> Settings:
         # --no-tools takes everything, web included: switching off tools and
         # leaving the web on would be the clever answer, not the obvious one.
         web_enabled=not args.no_web and not args.no_tools,
+        # --no-tools takes skills too, for the same reason it takes the web.
+        # Three of the four skill tools are how a model reaches a skill at all,
+        # and a catalogue offered to a model that cannot call anything is a
+        # paragraph of prompt with nothing behind it.
+        skills_enabled=not args.no_skills and not args.no_tools,
         # Deliberately not tied to --no-tools. Rendering is about reading the
         # answer, and someone who wants a session without tools has said
         # nothing about how they want to read it.

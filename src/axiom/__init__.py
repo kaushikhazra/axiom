@@ -2,7 +2,7 @@
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import (
     backend,
@@ -12,6 +12,7 @@ from . import (
     models,
     schedule,
     servers,
+    skills,
     terminal,
     tools,
 )
@@ -22,6 +23,14 @@ EXIT_COMMANDS = {"/exit", "/quit"}
 # The third command, and the first that is not an exit. Matched as a whole
 # word: a message that merely contains it is a message (#49 AC 9).
 MODEL_COMMAND = "/model"
+
+# Namespaced rather than `/<name>`, so a skill called `model` or `exit` can
+# never shadow a built-in. `/skills` lists; `/skill <name>` runs one. Order
+# matters where these are matched: `/skills` is tested for equality before
+# `/skill` is tested as a prefix, or `/skills` would be read as `/skill` with
+# an argument of `s`.
+SKILL_COMMAND = "/skill"
+SKILLS_COMMAND = "/skills"
 
 # Returned by a switch when the user ended the session at the list, as opposed
 # to cancelling it. A sentinel rather than a second return value, because the
@@ -217,11 +226,53 @@ class Running:
         )
 
 
+def _without_unusable_skill_tools(
+    declarations: list[dict],
+    catalogue: "skills.Catalogue | None",
+    enabled: bool = True,
+) -> list[dict]:
+    """Drop the skill tools that can do nothing against this catalogue.
+
+    Measured reason (#75, cycle 3): the four skill tools cost 396 tokens on
+    every request, taking the total from 1111 to 1507 - 87% above what `master`
+    paid before #74. A project with no skills was buying all four and could use
+    none of them, which is not what AC 1 means by starting as it does today.
+
+    `write_skill` is always offered. Writing the first skill is how a catalogue
+    stops being empty, so gating it on a non-empty catalogue would make the
+    feature unreachable from a fresh project - the one state every project
+    starts in.
+
+    The other three are offered only once there is something to read, delete or
+    invoke. This is the same shape as `--no-web` dropping `WEB_TOOLS`: what a
+    model is offered varies with what the run can actually do.
+    """
+    # `is not None` rather than truthiness: `Catalogue` defines `__len__`, so an
+    # empty one is falsy, and `catalogue or ...` would silently swap a real
+    # empty catalogue for a different empty catalogue. Harmless here and a trap
+    # anywhere it is copied.
+    # Off means all four go, `write_skill` included. Empty means three go and
+    # `write_skill` stays, because writing the first skill is how a catalogue
+    # stops being empty - but a user who said `--no-skills` is not waiting for
+    # that, they have said they do not want the feature at all.
+    if not enabled:
+        return [
+            tool
+            for tool in declarations
+            if tool["function"]["name"] not in tools.SKILL_TOOLS
+        ]
+    if catalogue is not None and catalogue.skills:
+        return declarations
+    unusable = tools.SKILL_TOOLS - {"write_skill"}
+    return [tool for tool in declarations if tool["function"]["name"] not in unusable]
+
+
 def _prepare(
     model_backend: ModelBackend,
     settings: config.Settings,
     attached: "servers.Servers",
     model: str,
+    catalogue: "skills.Catalogue | None" = None,
 ) -> Running:
     """What this model can do, and how much room it has.
 
@@ -244,6 +295,10 @@ def _prepare(
             for tool in declarations
             if tool["function"]["name"] not in tools.WEB_TOOLS
         ]
+    if declarations is not None:
+        declarations = _without_unusable_skill_tools(
+            declarations, catalogue, settings.skills_enabled
+        )
     if declarations is not None:
         # Said before the wait, not after: starting a server can take seconds,
         # and a silent pause reads as a hang. Only when something will actually
@@ -275,6 +330,7 @@ def _switch_model(
     attached: "servers.Servers",
     run: Running,
     named: str,
+    catalogue: "skills.Catalogue | None" = None,
 ) -> "Running | object | None":
     """A model change asked for mid-conversation.
 
@@ -313,7 +369,9 @@ def _switch_model(
         # the failure both stories exist to prevent. A near miss is reported
         # and falls through to the list (AC 7, AC 8).
         if named in available:
-            return _switched_to(model_backend, settings, attached, run, named)
+            return _switched_to(
+                model_backend, settings, attached, run, named, catalogue
+            )
         terminal.note_model_missing(named, settings.host)
 
     # Shown even when there is nothing to choose (AC 27) and even when the
@@ -359,7 +417,9 @@ def _switch_model(
             answer.strip() if answer.strip() in available else None
         )
         if chosen is not None:
-            return _switched_to(model_backend, settings, attached, run, chosen)
+            return _switched_to(
+                model_backend, settings, attached, run, chosen, catalogue
+            )
         terminal.refuse_model(answer, len(available), names=True)
 
 
@@ -369,6 +429,7 @@ def _switched_to(
     attached: "servers.Servers",
     run: Running,
     chosen: str,
+    catalogue: "skills.Catalogue | None" = None,
 ) -> "Running | None":
     """Take the switch, remember it, and say what changed.
 
@@ -380,7 +441,7 @@ def _switched_to(
         terminal.note_unchanged(chosen)
         return None
     _remember(chosen, settings.host)
-    fresh = _prepare(model_backend, settings, attached, chosen)
+    fresh = _prepare(model_backend, settings, attached, chosen, catalogue)
     terminal.note_switched(
         fresh.model,
         fresh.context,
@@ -414,7 +475,11 @@ def _limits(settings: config.Settings) -> "tools.Limits":
     )
 
 
-def _tool_cost(run: Running, settings: config.Settings) -> int | None:
+def _tool_cost(
+    run: Running,
+    settings: config.Settings,
+    catalogue: "skills.Catalogue | None" = None,
+) -> int | None:
     """What rides in every request before the conversation starts. None if nothing does.
 
     The declarations **and the standing prompt**. The prompt is the easy one to
@@ -441,9 +506,65 @@ def _tool_cost(run: Running, settings: config.Settings) -> int | None:
                 {"role": "system", "content": json.dumps(declaration)}
                 for declaration in run.declarations
             ),
-            {"role": "system", "content": tools.system_prompt(_limits(settings))},
+            {
+                "role": "system",
+                "content": tools.system_prompt(
+                    _limits(settings),
+                    skills.catalogue_text(catalogue or skills.Catalogue()),
+                ),
+            },
         ]
     )
+
+
+def _will_not_fit(body: str, context: int | None, overhead: int) -> int | None:
+    """How many tokens a skill is over by, or None if it fits (AC 29).
+
+    The same arithmetic as `compaction.what_will_not_fit`'s MESSAGE_TOO_LARGE
+    branch, deliberately: a skill that this lets through and that then trips the
+    oversized-turn check would be refused twice, with two different messages,
+    one of which tells the user to type less.
+
+    None when the window is unknown - a refusal computed against an unknown
+    bound is a guess, and this one costs the user their skill.
+    """
+    if context is None:
+        return None
+    would_be = (overhead + len(body)) // compaction.SAFE_CHARS_PER_TOKEN
+    return would_be - context if would_be > context else None
+
+
+def _skills_cost(
+    settings: config.Settings, catalogue: "skills.Catalogue"
+) -> int | None:
+    """What the catalogue alone adds to every request, in tokens (AC 3).
+
+    A difference, not an absolute: the prompt weighed with the catalogue less
+    the same prompt weighed without it. Measured through
+    `compaction.estimated_tokens` for the reason `_tool_cost` gives - a figure
+    computed a second way would disagree with the compaction it is describing,
+    and being consistent matters more here than being accurate.
+
+    None when there is nothing to report, so the caller stays silent rather than
+    saying a cost of zero, which is a number and reads like one.
+    """
+    if not catalogue.skills:
+        return None
+    limits = _limits(settings)
+    with_them = compaction.estimated_tokens(
+        [
+            {
+                "role": "system",
+                "content": tools.system_prompt(
+                    limits, skills.catalogue_text(catalogue)
+                ),
+            }
+        ]
+    )
+    without = compaction.estimated_tokens(
+        [{"role": "system", "content": tools.system_prompt(limits)}]
+    )
+    return with_them - without
 
 
 def _remember(chosen: str, host: str) -> None:
@@ -481,7 +602,20 @@ def _chat(
         # unwind and nothing went wrong - status 0, like any other way out.
         return
 
-    run = _prepare(model_backend, settings, attached, model)
+    # Before `_prepare`, because what a model is offered now depends on whether
+    # there is anything to read, delete or invoke.
+    #
+    # Switched off, the directory is never read at all - not read and then
+    # ignored. AC 38 says nothing about any skill reaches the model, and the
+    # cheapest way to keep that promise is for there to be nothing to leak.
+    library = (
+        skills.Library(skills.DEFAULT_SKILLS_DIRECTORY)
+        if settings.skills_enabled
+        else None
+    )
+    catalogue_now = library.catalogue if library else skills.Catalogue()
+
+    run = _prepare(model_backend, settings, attached, model, catalogue_now)
     limits = _limits(settings)
 
     terminal.announce(
@@ -497,6 +631,12 @@ def _chat(
         [*settings.mcp_problems, *attached.failures],
         bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
     )
+    # Read once, before the cost is reported, and refreshed whenever a skill is
+    # written or deleted. Not on `Settings`, which is frozen and settled before
+    # the run starts: AC 18 promises a skill written mid-session is usable
+    # without a restart, and a catalogue that cannot change could not keep that
+    # promise.
+    catalogue = catalogue_now
     # After the server lines rather than inside them. The figure is a fact
     # about the session - what rides in every request before a word is typed -
     # and it lived inside `note_servers`, which returns early when nothing is
@@ -505,7 +645,20 @@ def _chat(
     #
     # Last of the startup lines, deliberately: the server counts above explain
     # where part of it comes from, so the total reads as their sum.
-    terminal.note_tool_cost(_tool_cost(run, settings), run.context)
+    terminal.note_tool_cost(_tool_cost(run, settings, catalogue), run.context)
+    # After the total, so the skills' share reads as part of it rather than as a
+    # separate bill. AC 2, AC 3 and AC 4's startup half.
+    terminal.note_skills(
+        len(catalogue),
+        list(catalogue.problems),
+        _skills_cost(settings, catalogue),
+        # `--no-tools` already says everything is off, and the web does not
+        # announce itself separately under it either. A second line naming
+        # skills would be repeating a fact the user has already been given, for
+        # a feature they did not mention. Only a run that switched skills off
+        # *specifically* is told so.
+        enabled=settings.skills_enabled or not settings.tools_enabled,
+    )
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a
     # leading system message as a carried-forward summary: a prompt at index 0
@@ -514,7 +667,51 @@ def _chat(
     # forget the middle of the string rather than the front. Kept outside, none
     # of that is true and the model has its limits on every turn rather than
     # until the first compaction.
-    instructions = {"role": "system", "content": tools.system_prompt(limits)}
+    instructions = {
+        "role": "system",
+        "content": tools.system_prompt(limits, skills.catalogue_text(catalogue)),
+    }
+
+    def restate_skills() -> None:
+        """Put the current catalogue back into the prompt, and into what is offered.
+
+        Called after a write or a delete, and it has two jobs because a skill
+        becomes reachable in two places.
+
+        The prompt is the obvious one: the model chooses what to invoke from the
+        catalogue named there, so a skill that exists but is not listed is one it
+        will never reach for. Mutated in place because `to_send` closes over the
+        dict.
+
+        The declarations are the one that is easy to miss. A session that starts
+        with no skills is not offered `invoke_skill` at all - see
+        `_without_unusable_skill_tools` - so writing the first skill of a project
+        has to bring the tool into existence too, or the model is told about a
+        skill it has no way to call. `replace` rather than assignment to the
+        field: `Running` holds six things that move together, and updating one
+        of six in place is the failure it exists to prevent.
+        """
+        nonlocal run
+        instructions["content"] = tools.system_prompt(
+            limits,
+            skills.catalogue_text(library.catalogue if library else skills.Catalogue()),
+        )
+        if run.declarations is None:
+            return  # tools are off, or this model cannot call them
+        offered = _prepare(
+            model_backend,
+            settings,
+            attached,
+            run.model,
+            library.catalogue if library else skills.Catalogue(),
+        ).declarations
+        run = replace(
+            run,
+            declarations=offered,
+            callable_names={
+                declaration["function"]["name"] for declaration in offered or []
+            },
+        )
 
     def to_send(history: list[dict[str, str]]) -> list[dict[str, str]]:
         """What actually goes to the model - and what the size checks must weigh."""
@@ -541,6 +738,7 @@ def _chat(
                 attached,
                 run,
                 line[len(MODEL_COMMAND) :].strip(),
+                library.catalogue if library else skills.Catalogue(),
             )
             if switched is _LEAVING:
                 return
@@ -553,6 +751,61 @@ def _chat(
                 # still runs, so nothing is left unguarded.
                 running_usage = None
             continue
+
+        if (
+            line == SKILLS_COMMAND
+            or line == SKILL_COMMAND
+            or line.startswith(SKILL_COMMAND + " ")
+        ):
+            # Both commands, one gate. AC 38 asks that they say skills are off
+            # rather than behave as though there simply are none - "no skills
+            # loaded" would send a user off to write one that would never be
+            # read.
+            if library is None:
+                terminal.note_skills_off()
+                continue
+
+        if line == SKILLS_COMMAND:
+            terminal.show_skills(
+                [(skill.name, skill.description) for skill in library.catalogue.skills],
+                str(library.directory),
+            )
+            continue
+
+        if line == SKILL_COMMAND or line.startswith(SKILL_COMMAND + " "):
+            asked = line[len(SKILL_COMMAND) :].strip()
+            name, _, trailing = asked.partition(" ")
+            found = library.catalogue.find(name) if name else None
+            if found is None:
+                # AC 9 and AC 10. `continue` before anything is appended to
+                # `messages`, so nothing reaches the model - which is the half
+                # of both criteria that a screenshot cannot tell apart from a
+                # command that printed the right thing and then asked anyway.
+                terminal.note_no_skill(name, library.catalogue.names)
+                continue
+            # Through the library, not `skills.instructions`, so a user typing
+            # `/skill one` twice and a model invoking it twice are the same
+            # thing to AC 34. Two routes to one behaviour is how the second one
+            # quietly stops obeying the rule.
+            body = library.invoke(found.name)
+            over = _will_not_fit(body, run.context, len(instructions["content"]))
+            if over is not None:
+                # Not sent, and named. `continue` before `messages` is touched,
+                # so nothing reaches the model - the same shape as AC 9 and
+                # AC 10, and for the same reason.
+                terminal.note_skill_too_large(found.name, over)
+                library.forgotten()  # it never arrived, so it is not "above"
+                continue
+            if body.startswith("error:"):
+                # AC 41 reaching the user rather than the model: the file went
+                # away between startup and now.
+                terminal.show_tool_result(body)
+                continue
+            terminal.note_skill(found.name)
+            # The instructions become the turn. Trailing text is the request
+            # and goes after them, so a skill reads as context for what was
+            # asked rather than as the thing being asked about (AC 7, AC 8).
+            line = f"{body}\n\n{trailing.strip()}" if trailing.strip() else body
 
         # The user did not type this one, and would otherwise be reading an
         # answer to a question they cannot see (#74 AC 13). Before `start_turn`,
@@ -569,6 +822,17 @@ def _chat(
         )
         if kept_pairs is not None:
             terminal.note_compaction(kept_pairs)
+            # AC 35. An invoked skill's instructions are ordinary turns and are
+            # let go like any others, and `note_facts_forgotten` already names
+            # what went - so the user is told by the mechanism that already
+            # exists rather than by a second one invented for skills.
+            #
+            # What must not survive is the library's belief that the
+            # instructions are still up there: `invoke` answers a repeat with
+            # "already in this conversation", and after a compaction that can be
+            # false. Clearing it makes the skill sendable again.
+            if library is not None:
+                library.forgotten()
         if forgotten:
             terminal.note_facts_forgotten(forgotten)
 
@@ -704,7 +968,11 @@ def _chat(
                     # Server tools are recognised here too, or a model that
                     # announces its calls as text could reach the built-ins
                     # and nothing else.
-                    announced = backend.call_from_text(reply, run.callable_names)
+                    announced = backend.call_from_text(
+                        reply,
+                        run.callable_names,
+                        set(library.catalogue.names) if library else None,
+                    )
                     if announced is not None:
                         calls.append(announced)
                         reply = ""  # the text was the call, not an answer
@@ -747,7 +1015,35 @@ def _chat(
                         # loop knows the difference.
                         result = attached.run(call.name, arguments)
                     else:
-                        result = tools.run(call.name, call.arguments, limits, jobs)
+                        result = tools.run(
+                            call.name, call.arguments, limits, jobs, library
+                        )
+                        # The catalogue in the standing prompt is now stale.
+                        # Restated here rather than inside the library, because
+                        # the prompt belongs to the session and the library does
+                        # not know it exists.
+                        if call.name in ("write_skill", "delete_skill"):
+                            restate_skills()
+                        # AC 29 on the model's route. Without this a skill too
+                        # large for the window arrives as a tool result, is
+                        # appended, and the turn is cut by Ollama with the model
+                        # answering from a fragment - the failure #42 exists to
+                        # prevent, reached by a door #42 does not watch.
+                        if call.name == "invoke_skill":
+                            over = _will_not_fit(
+                                result, run.context, len(instructions["content"])
+                            )
+                            if over is not None:
+                                terminal.note_skill_too_large(
+                                    str(arguments.get("name")), over
+                                )
+                                result = (
+                                    f"error: that skill is about {over} tokens too "
+                                    f"large for this model's window and was not "
+                                    f"loaded. Answer without it, or say it will not fit."
+                                )
+                                if library is not None:
+                                    library.forgotten()
                         kind = tools.failure_kind(result)
                         if command is not None and kind:
                             failures.setdefault(command, []).append(kind)

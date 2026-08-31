@@ -1406,3 +1406,117 @@ def report_failure(failure: BaseException, reply: str, host: str) -> None:
     if reply or isinstance(failure, KeyboardInterrupt):
         print(file=sys.stderr)
     print(message, file=sys.stderr)
+
+
+def show_skills(listed: list[tuple[str, str]], where: str) -> None:
+    """The skills that loaded, one to a line, name and description (AC 5).
+
+    `where` is said only when there are none. A user with skills already knows
+    where they live; a user with none is the only one who needs telling, and
+    AC 6 asks for both halves of that - that there are none, and where one would
+    go. Saying the path every time would be noise for everyone it cannot help.
+    """
+    if not listed:
+        print(
+            f"{VOICE} no skills loaded. A skill is a folder in {where} with a SKILL.md"
+        )
+        return
+    word = "skill" if len(listed) == 1 else "skills"
+    print(f"{VOICE} {len(listed)} {word}:")
+    for name, description in listed:
+        print(f"{VOICE}   {name} - {description}")
+
+
+def note_skill(name: str) -> None:
+    """Which skill is being followed, before the reply begins (AC 11).
+
+    Shaped like `note_tool`, deliberately. AC 14 says a skill the *model*
+    invokes is shown the way a tool call is shown - which it already is, because
+    that path goes through `note_tool` like any other tool. A user typing
+    `/skill` reaches the same behaviour by a different route, and the two should
+    not end up looking like different features.
+    """
+    print(f"{VOICE} skill: {name}")
+
+
+def note_no_skill(name: str, available: tuple[str, ...]) -> None:
+    """No skill by that name, and what there is instead (AC 9, AC 10).
+
+    Two cases, one function: no name typed at all, and a name that matches
+    nothing. Both end the same way - the user needs the list - and splitting
+    them would mean two messages that have to be kept saying the same thing.
+
+    The alternatives are named rather than counted. A user who mistyped one
+    character can fix it from this line; a user told only "no such skill" has to
+    go and run `/skills` to find out what they meant.
+    """
+    listed = ", ".join(available) or "none"
+    if not name:
+        print(f"{VOICE} name a skill: /skill <name>. Available: {listed}")
+        return
+    print(f"{VOICE} there is no skill named {name}. Available: {listed}")
+
+
+def note_skills_off() -> None:
+    """Skills were switched off for this run (AC 38).
+
+    Distinct from "no skills loaded", deliberately. That message tells a user
+    where to put one; this one would be a lie if it did, because a skill written
+    into that folder would not be read. The difference is between having none
+    and having asked for none.
+    """
+    print(f"{VOICE} skills are off for this run (--no-skills or $AXIOM_SKILLS)")
+
+
+def note_skills(
+    loaded: int,
+    problems: list[str],
+    cost: int | None = None,
+    enabled: bool = True,
+) -> None:
+    """How many skills loaded, what they cost, and anything that did not (AC 2, 3, 4).
+
+    Said only when there is something to say. A run with no skills directory is
+    a run that looks exactly as it did before skills existed, which is AC 1 - so
+    zero loaded and nothing wrong produces no line at all.
+
+    Problems are named one by one rather than counted, the same reasoning as
+    `note_servers`: each is fixed by a different action - adding a description,
+    creating the SKILL.md, renaming one of two that clash - and a count says
+    none of that.
+
+    The cost is the skills' own share, not the total. `note_tool_cost` already
+    reports what every request carries; what a user cannot get from that is
+    whether the skills are the expensive part, which is the question AC 3 exists
+    to answer.
+    """
+    # Off is said; empty is not. AC 39 asks the user be told whether skills are
+    # on, and a run that was told to switch them off should confirm it did.
+    # A run with skills on and no directory says nothing at all, which is AC 1 -
+    # the two states are different and only one of them was asked for.
+    if not enabled:
+        print(f"{VOICE} skills off")
+        return
+    if not loaded and not problems:
+        return
+    if loaded:
+        word = "skill" if loaded == 1 else "skills"
+        share = f", about {cost} tokens per request" if cost else ""
+        print(f"{VOICE} {loaded} {word} loaded{share}")
+    for problem in problems:
+        print(f"{VOICE} skill not loaded - {problem}")
+
+
+def note_skill_too_large(name: str, over: int) -> None:
+    """A skill that cannot fit the window is not sent, and is named (AC 29).
+
+    Named, because "this message is too large" sends a user looking at what they
+    typed - and they typed `/skill release-checklist`, which is nineteen
+    characters. The thing that is too large is the file behind it, and only this
+    line says so.
+    """
+    print(
+        f"{VOICE} {name} is about {over} tokens too large for this model's "
+        f"window - not sent. Shorten the skill, or switch to a model with more "
+        f"room with /model."
+    )

@@ -17,7 +17,7 @@ import httpx
 import psutil
 import trafilatura
 
-from . import schedule
+from . import schedule, skills
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,10 @@ class Tool:
     # settings that belong to the user, and a schedule is mutable session
     # state. Putting it there would make that dataclass two things.
     needs_schedule: bool = False
+    # The session's skills, for the four tools that manage them. Same reasoning
+    # as `needs_schedule`: session state, not user settings, and not something
+    # a model can reach by naming it in a call.
+    needs_library: bool = False
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,14 @@ DEFAULT_LIMITS = Limits()
 # The tools that reach the network. Named here so a caller can leave them out
 # without knowing how they are implemented.
 WEB_TOOLS = frozenset({"search_web", "fetch_page"})
+
+# The tools that manage skills. Named here so a caller can leave them out
+# without knowing how they are implemented, exactly as WEB_TOOLS is.
+SKILL_TOOLS = frozenset({"read_skill", "write_skill", "delete_skill", "invoke_skill"})
+
+# What a skill tool says when the session has no library. Not a crash and not
+# silence: a model that asked has to be told why nothing happened.
+NO_SKILLS = "error: skills are not available in this session"
 
 
 def working_directory(limits: "Limits") -> Path:
@@ -115,7 +127,7 @@ def outside(arguments: dict, limits: "Limits") -> list[str]:
     return found
 
 
-def system_prompt(limits: "Limits") -> str:
+def system_prompt(limits: "Limits", skills: str = "") -> str:
     """What the model is told before it does anything.
 
     Built from the same `Limits` the tools are handed, so what the model is
@@ -131,6 +143,12 @@ def system_prompt(limits: "Limits") -> str:
     qwen2.5:7b answered from the prompt; asked what directory it was working
     in, from the same list, it called `read_file` instead. A duration reads as
     a fact and a path reads as something to go and look up.
+
+    `skills` is the catalogue - one line per skill, name and description only,
+    never a skill's instructions. It arrives as text rather than as a list of
+    skills so that this module does not have to know what a skill is; and it is
+    appended here rather than sent as a second system message so that there is
+    exactly one thing to weigh when the cost of a request is being reported.
     """
     return (
         "You are axiom, a terminal assistant.\n"
@@ -148,7 +166,7 @@ def system_prompt(limits: "Limits") -> str:
         "\n"
         "These are facts about how you are running, not settings. Neither you "
         "nor the user can change them during this run. If a request needs more "
-        "than one of them allows, say so rather than trying anyway."
+        "than one of them allows, say so rather than trying anyway." + skills
     )
 
 
@@ -483,6 +501,39 @@ def _when(job: "schedule.Job") -> str:
     )
 
 
+def read_skill(name: str, library=None) -> str:  # noqa: ANN001
+    """A skill exactly as it is written, so a model can edit it (AC 17)."""
+    if library is None:
+        return NO_SKILLS
+    return library.source(name)
+
+
+def write_skill(name: str, content: str, library=None) -> str:  # noqa: ANN001
+    """Create or replace a skill (AC 18, AC 19), or refuse it (AC 21, AC 42)."""
+    if library is None:
+        return NO_SKILLS
+    return library.write(name, content)
+
+
+def delete_skill(name: str, library=None) -> str:  # noqa: ANN001
+    """Remove a skill; it leaves the catalogue at once (AC 20)."""
+    if library is None:
+        return NO_SKILLS
+    return library.delete(name)
+
+
+def invoke_skill(name: str, library=None) -> str:  # noqa: ANN001
+    """The skill's instructions, and nothing else (AC 13).
+
+    This is the only route by which a skill's body reaches a model. Everything
+    else about a skill - its name, its description - rides in the catalogue;
+    the instructions travel exactly once, when this is called.
+    """
+    if library is None:
+        return NO_SKILLS
+    return library.invoke(name)
+
+
 def schedule_prompt(cron: str, prompt: str, repeating: bool = True, jobs=None) -> str:
     """Take a job, and say what was taken (#74 AC 3, AC 4, AC 5, AC 7, AC 8)."""
     if jobs is None:
@@ -712,6 +763,81 @@ REGISTRY: dict[str, Tool] = {
             run=cancel_schedule,
             needs_schedule=True,
         ),
+        Tool(
+            name="invoke_skill",
+            description=(
+                "Get the instructions of one of the skills listed for you, and "
+                "follow them. Use this whenever a listed skill fits what is "
+                "being asked, before answering from memory."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the skill, as listed.",
+                    }
+                },
+                "required": ["name"],
+            },
+            run=invoke_skill,
+            needs_library=True,
+        ),
+        Tool(
+            name="read_skill",
+            description=(
+                "Read a skill's file exactly as written, frontmatter included. "
+                "Use this to see how a skill is defined before changing it; use "
+                "invoke_skill to actually follow one."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The skill's name."}
+                },
+                "required": ["name"],
+            },
+            run=read_skill,
+            needs_library=True,
+        ),
+        Tool(
+            name="write_skill",
+            description=(
+                "Create a skill, or replace one entirely. The content must be "
+                "markdown behind YAML frontmatter carrying a name and a "
+                "description, and instructions after it. It is available "
+                "immediately, without restarting."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The skill's name."},
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "The whole file: --- then name and description, "
+                            "then --- then the instructions."
+                        ),
+                    },
+                },
+                "required": ["name", "content"],
+            },
+            run=write_skill,
+            needs_library=True,
+        ),
+        Tool(
+            name="delete_skill",
+            description="Delete a skill. It stops being available immediately.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The skill's name."}
+                },
+                "required": ["name"],
+            },
+            run=delete_skill,
+            needs_library=True,
+        ),
     )
 }
 
@@ -736,6 +862,7 @@ def run(
     arguments: dict,
     limits: Limits = DEFAULT_LIMITS,
     jobs: "schedule.Schedule | None" = None,
+    library: "skills.Library | None" = None,
 ) -> str:
     """Run a call and return what the model should be told.
 
@@ -767,6 +894,8 @@ def run(
             return tool.run(**arguments, limits=limits)
         if tool.needs_schedule:
             return tool.run(**arguments, jobs=jobs)
+        if tool.needs_library:
+            return tool.run(**arguments, library=library)
         return tool.run(**arguments)
     except TypeError as wrong_arguments:
         return f"error: {name} was called wrongly - {wrong_arguments}"

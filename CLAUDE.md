@@ -139,5 +139,33 @@ AC 26 and AC 27 are where the shortcut will be tempting, because pointing at a r
 server is the fastest way to get a process to kill. That is the moment to write the
 script instead.
 
+**Issue #75 adds a third exposure, and it is the one that persists.** A skill is
+instructions written to disk that a model will later follow, and #75 lets the model write
+them. The first two exposures are bounded by the turn: a command runs and finishes, a
+server dies when axiom exits. A skill outlives both - written in one run, loaded at the
+start of the next, before anyone has typed anything.
+
+The path that matters is `fetch_page` to `write_file` to a skill invoked tomorrow. Nothing
+in axiom inspects what a skill says, the catalogue is built by reading the folder, and a
+skill's instructions can ask for `run_command`. A page that talks a model into writing a
+skill has written a standing instruction, not a one-off.
+
+- **A test never lets a live model write a skill from fetched content.** Live models are
+  asked to write skills only from text the test supplied inline. AC 18 to AC 22 are about
+  the writing path working, not about where the words came from.
+- **Skills a test creates live under the sandbox**, the same
+  `C:/Projects/.tmp/axiom-tool-sandbox` the tool tests use - never `.axiom/skills/` in this
+  repo. A loop that improvises its way to `write_skill` must not be able to leave something
+  behind that the next session loads.
+- **AC 21 and AC 42 - a refused write leaving the previous version untouched - are settled
+  with a stub client**, like AC 12. A deterministic malformed skill, written by the test,
+  inside `tmp_path`. A live model is not asked to improvise its way to a bad file.
+- **Deleting is stub-only too.** AC 20 and AC 32 remove a skill the test created in the
+  sandbox, and nothing else.
+
+The tempting shortcut here is pointing the loop at this repo's own `.axiom/skills/` because
+that is where the feature actually reads from. That is the moment to set the working
+directory instead.
+
 This holds until the security stories land. When they do, revisit it - do not delete
 it silently.

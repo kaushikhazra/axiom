@@ -14,7 +14,7 @@ import builtins
 
 import pytest
 
-from axiom import models
+from axiom import models, skills
 from axiom.backend import Call, Piece
 
 
@@ -49,6 +49,27 @@ def isolate_remembered_choice(monkeypatch, tmp_path):
     monkeypatch.setattr(
         models, "DEFAULT_CHOICE_FILE", tmp_path / ".axiom" / "model.json"
     )
+
+
+@pytest.fixture(autouse=True)
+def isolate_skills(monkeypatch, tmp_path):
+    """No test reads or writes this repository's own `.axiom/skills/`.
+
+    The same hazard as the remembered choice above, and a worse one. The path
+    is relative to the working directory, and the working directory during a
+    test run is this checkout - so without this, a test that writes a skill
+    leaves instructions behind that the *next session axiom runs here* would
+    load and offer to a model.
+
+    That is the exposure CLAUDE.md names for #75: a skill outlives the run that
+    wrote it. Every other tool axiom has is bounded by its turn. This one is
+    not, so the isolation is structural rather than remembered - autouse, so a
+    test cannot forget it.
+
+    Tests that are *about* loading point at their own directory explicitly and
+    are unaffected.
+    """
+    monkeypatch.setattr(skills, "DEFAULT_SKILLS_DIRECTORY", tmp_path / "no-skills")
 
 
 class StubBackend:
