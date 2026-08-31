@@ -1,67 +1,27 @@
-# Handoff — formal testing of three finished loops
+# Handoff — skills shipped, four stories waiting on a testing pass
 
-Rewritten 2026-08-28 at the end of the session that ran #72, #73 and #74. The previous
-version pointed at manual testing; **that happened, it found two defects, and both are now
-fixed on branches.** What is left is a formal pass over the result.
+Rewritten 2026-08-31 at the end of the session that built #75. The previous version pointed
+at formal testing of #72, #73 and #74; **that has not happened.** What changed is that all
+four stories are now merged and pushed, so the testing pass covers one build instead of
+three.
 
-**The next session picks up here: formal testing, then merging.**
+**The next session picks up here: formal testing, then two decisions.**
 
 ## Where things stand
 
-`master` is untouched by all of this - **617 tests, exactly as it was.** Everything below is
-on three local branches. **Nothing is pushed and no PR is open.**
+`master` is **836 tests plus one deselected**, everything pushed, no open PR, nothing
+scheduled. `origin/master` is level with local.
 
-| issue | what it is | branch | criteria | tests |
-|---|---|---|---|---|
-| [#73](https://github.com/kaushikhazra/axiom/issues/73) nested lists | a sub-item drawn as a sub-item | merged into #72's | **13 / 13** converged | — |
-| [#72](https://github.com/kaushikhazra/axiom/issues/72) wide lines | a quote or list item wraps instead of cropping | `feature/72-wide-lines` | **21 / 21**, loop stopped unconverged | 687 |
-| [#74](https://github.com/kaushikhazra/axiom/issues/74) scheduled prompts | run a prompt later, once or repeatedly | `feature/74-scheduled-prompts` | **33 / 33** converged | 705 |
+| issue | what it is | state |
+|---|---|---|
+| [#75](https://github.com/kaushikhazra/axiom/issues/75) skills | 44/44 criteria, break-proven | **closed**, merged |
+| [#74](https://github.com/kaushikhazra/axiom/issues/74) scheduled prompts | 33/33, converged | open, merged, untested formally |
+| [#73](https://github.com/kaushikhazra/axiom/issues/73) nested lists | 13/13, converged | open, merged, untested formally |
+| [#72](https://github.com/kaushikhazra/axiom/issues/72) wide lines | 21/21, loop stopped unconverged | open, merged, untested formally |
+| [#68](https://github.com/kaushikhazra/axiom/issues/68) summary across models | not started | open |
 
-#73 is already merged into #72's branch - AC 7 needed both, because a nested item wrapping to
-its own indent needs #73's depth and #72's wrapping and neither alone satisfies it.
-
-**#72's loop stopped deliberately rather than converging.** All 21 criteria hold; the loop's
-other condition - characters lost at zero - does not, and the reason is below.
-
-## Two decisions waiting
-
-**1. The indented-code defect.** A line indented four spaces that is *not* a list item still
-crops - 41 characters lost at width 40. It belongs to neither #72 nor #73, and #73 converged
-after being handed it, which is how it slipped: two parallel loops each measured only their
-own criteria.
-
-A drafted issue with 13 criteria **and the measurement** is at `.tmp/issue-indented-code.md`
-(gitignored, still on disk). The short version: a one-line change takes the loss to zero and
-keeps the suite green, but renders a three-line block as three blocks over eleven rows -
-because an indented code block has **no closing delimiter**, so a line-at-a-time renderer only
-learns it ended afterwards. Fixing it properly needs the held-lines exemption that only tables
-have. That is a design decision, not a regex.
-
-**New story, or scope on #72?** Kaushik's call.
-
-**2. Whether to merge before testing.** Two branches means two builds. Merging #74 into #72's
-branch (or both to `master`) first would make tomorrow exercise one thing.
-
-## What manual testing already established
-
-**The two defects that started this were both found by using axiom, not by reading it** - a
-quote losing its tail, and a nested list arriving flat. Neither was visible to 617 green tests.
-
-**The scheduler was driven live on 2026-08-28** and works: asked to schedule `PING` every
-minute, it fired twice with nothing typed, the prompt was taken back cleanly, and both
-one-off notes were said once. Two things came out of that hour:
-
-- **What gets scheduled is the model's paraphrase**, not the user's words. Asked to schedule
-  "say the word PING and nothing else", qwen2.5:7b scheduled `PING`. Check the echo before
-  walking away from something where the wording matters.
-- **There is no way to cancel a job except by asking the model to.** No slash command. If a
-  model will not call `cancel_schedule`, the only way out of a job firing every minute is to
-  end the session. Not a violation of any criterion - AC 16 says cancelling by identifier
-  works, and it does - but it is a real gap, found by needing it.
-
-Still unobserved: **whether Ctrl-D exits immediately with jobs scheduled.** There is a reader
-thread parked inside `input()` that cannot be interrupted, and the only thing making exit
-instant is that thread being a daemon. Proved structurally, never watched.
+The three open merged ones stay open **because their code shipping is not the same as their
+behaviour being checked by a person.** Do not close them on the strength of a green suite.
 
 ## Start here
 
@@ -71,47 +31,97 @@ uv run --project C:/Projects/axiom axiom
 ```
 
 **`--project`, not `--directory`.** `--directory` moves the working directory into the repo,
-which is what CLAUDE.md's tool-testing rule forbids, and then needs `--working-directory` to
-undo. `--project` leaves cwd where you are.
+which CLAUDE.md's tool-testing rule forbids, and then needs `--working-directory` to undo.
 
-**Check the startup line tells you which build you are on.** `feature/74-scheduled-prompts`
-says **`10 tools`** and **`about 1111 tokens`**; `master` and `feature/72-wide-lines` say
-`7 tools` and `807`. Adding three scheduling tools costs **38% more on every request**,
-whether or not anything is ever scheduled. That is #61's line doing its job, and it is a trade
-worth revisiting.
+Startup now says **`11 tools including web`** and **`about 1250 tokens`** with no skills
+configured. `--no-web` gives 9 tools and 1018.
 
-## What the loops learned that a reader should know
+## Three decisions waiting
 
-Three cycles' worth of process findings, all earned the hard way:
+**1. The indented-code defect.** A line indented four spaces that is *not* a list item still
+crops - 41 characters lost at width 40. It belongs to neither #72 nor #73, and #73 converged
+after being handed it. A drafted issue with 13 criteria and the measurement is at
+`.tmp/issue-indented-code.md` (gitignored, still on disk). A one-line change takes the loss
+to zero and renders a three-line block as three blocks over eleven rows, because an indented
+code block has **no closing delimiter**. Fixing it properly needs the held-lines exemption
+that only tables have. **New story, or scope on #72?**
 
-> **A vacuous test is normal, not exceptional.** Eleven tests written in one cycle, three of
-> them passed with the feature removed. One filtered blank rows out before counting, and a
-> code block's padding rows *are* blank - it filtered away the defect it was named for.
-> Assume the same rate and run the break every time.
+**2. What every request now costs.** 807 tokens before #74, 1111 after it, 1250 after #75 -
+**55% up on two stories**, before a single skill or scheduled job exists. #75 gave 257 back
+by declaring only the skill tools an empty catalogue can use, and the residual 139 is
+`write_skill`, which cannot be dropped without making the feature unreachable from a fresh
+project. `--no-skills` and `--no-mcp` take it to zero for a user who wants that. **Worth
+revisiting whether the scheduler's three tools earn their 304.**
 
-> **The wall clock finds what a green suite cannot.** Three times. A spinning thread, because
-> fourteen tests at 0.04s took five seconds. A vacuous test, because a break made the file
-> *seventeen times faster* - a test doing less, not going quicker. A gate that never opened,
-> because one test took exactly 5.00s against its neighbours' 0.03s.
+**3. One thing in `master` that was never measured end to end.** `call_from_text` now
+translates a skill named where a tool belongs into `invoke_skill` - Kaushik's call, made
+after the loop converged. It rests on a census showing five of qwen2.5-coder's ten attempts
+arrive in that shape and were being dropped. **The confirming live run was not taken**, so
+"worsens no model" is a structural argument, not numbers. Six minutes closes it:
 
-> **A test that ends the session early passes everything it was going to assert afterwards.**
-> Twice. Nothing about it is visible in a green run.
+```
+uv run pytest -m live -q -s
+```
 
-> **A merge can delete a test silently.** Two branches defined the same test name; Python took
-> the later one, the earlier pair vanished, and pytest reported green. Only the count caught
-> it - 680 where the arithmetic said 682.
+Recorded in `.claude/loop/75-skills/iteration-1/logs/after-convergence.md`.
 
-> **`sed -i` rewrites this repo's line endings**, turning a two-line change into a 2440-line
-> diff. Use the Edit tool for source. And the formatter strips imports a break makes unused,
-> so re-establish green *between* a revert and the next break.
+## What skills are, in one paragraph
+
+A skill is a folder under `.axiom/skills/` holding a `SKILL.md`: markdown instructions
+behind frontmatter carrying a name and a description. Only the name and description ride on
+a request; the instructions are read from disk at the moment of invocation, so editing one
+mid-session takes effect without a restart. `/skills` lists them, `/skill <name> [text]` runs
+one, and the model gets four tools - read, write, delete, invoke. A `SKILL.md` written for
+another agent loads unchanged; fields axiom does not use are ignored.
+
+## What the live lane is
+
+`tests/test_skills_live.py`, marked `live` and **deselected by default** through
+`pyproject.toml`. It needs Ollama and takes six minutes. `uv run pytest` never runs it, which
+is what keeps the wall-clock readings in the loop logs meaningful.
+
+Per-model counts from it, ten runs each: gemma4 10/10, ornith 10/10, qwen2.5 10/10, qwen3.5
+9/10, qwen2.5-coder 2/10, gemma2 no tool support. **The noise floor is plus or minus one** -
+two runs of the same measurement with no code change moved two models by one each.
+
+## What #75's loop learned that a reader should know
+
+Eleven cycles' worth, all earned:
+
+> **A break big enough to be easy to write takes several tests with it and proves nothing
+> about the one it was aimed at.** Three separate cycles lost a criterion this way and had
+> to re-run a narrow break to earn it. A test that goes red for the wrong reason has not
+> been proven.
+
+> **A score below the pack is a question about the measurement before it is an answer about
+> the model.** qwen2.5-coder scored 0/10, then 2/10. The first was the instrument counting
+> only structured calls; the second was axiom failing to route a correct intention. Neither
+> was the model, and both looked exactly like it. **0/10 is why it got caught** - at 3/10 it
+> would have read as a plausibly weak model and stood.
+
+> **A scripted break that reports nothing did not run.** Twice: once printing no summary
+> line at all, once `NO MATCH`. Both would have been read as "no test noticed", which is the
+> opposite of true. Anything with a backslash escape goes through the Edit tool.
+
+> **Grep the criteria numbers out of the tests and diff against the issue.** One command. It
+> caught two criteria that were genuinely asserted but cited nowhere - covered by accident
+> rather than on purpose, which is one step from believed-covered and not.
+
+> **"Already true, just needs a test" is a claim to check, not to act on.** AC 14 was that
+> and held. AC 34 was assumed the same way and was false - invoking a skill twice duplicated
+> its instructions.
+
+> **Read the baseline diff rather than accepting it.** Regenerating it once produced a
+> correct-but-noisy line; narrowing the code let the baseline be *restored* instead of
+> updated, leaving observable behaviour byte-identical.
 
 ## Loop records
 
-`.claude/loop/72-wide-lines/`, `73-nested-lists/`, `74-scheduled-prompts/` - each with its
-`goal.md`, `observe.md`, `assumption.md` and a `logs/cycle-N.md` per cycle. The logs carry the
-measurements, the breaks and what each cycle got wrong. #72 ran 5 cycles, #73 3, #74 7.
+`.claude/loop/72-wide-lines/`, `73-nested-lists/`, `74-scheduled-prompts/`, `75-skills/` -
+each with `goal.md`, `observe.md`, `assumption.md` and a `logs/cycle-N.md` per cycle. #72 ran
+5 cycles, #73 3, #74 7, #75 11.
 
-**Note on timestamps:** several early logs carry times taken from an assumed clock rather than
-a read one, running up to an hour ahead. Nothing was decided by a timestamp.
+**Note on timestamps:** several early logs in #72, #73 and #74 carry times from an assumed
+clock, running up to an hour ahead. #75's are read. Nothing was decided by a timestamp.
 
-**Nothing is scheduled.** All three crons were deleted as their loops ended.
+**Nothing is scheduled.** Every cron was deleted as its loop ended.
