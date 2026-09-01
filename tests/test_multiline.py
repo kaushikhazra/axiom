@@ -22,6 +22,7 @@ What is left touches the reader only through the `use_compose` hook or through
 """
 
 import builtins
+from datetime import datetime
 
 import pytest
 
@@ -167,13 +168,19 @@ def test_the_hook_is_not_consulted_without_a_terminal(capsys, monkeypatch, choic
 
 
 def test_a_continuation_line_is_marked_as_still_being_written(monkeypatch):
-    """#80 AC 23, and AC 4 and AC 24 with it.
+    """#80 AC 23, and **only** AC 23.
 
     prompt_toolkit's default continuation is `prompt_width` spaces, which lines
     the text up and marks nothing - a message part way through then looks exactly
     like one that has been sent and answered. What is asserted is that axiom
     supplies a continuation of its own, and that it is drawn in the voice's grey
     rather than at the answer's weight.
+
+    **This used to claim AC 4 and AC 24 as well, and it never proved either.**
+    AC 4 is "the user can see every line the message contains" and AC 24 is "the
+    user can tell how many lines it has" - both are about what is on a screen, and
+    this asserts that a callable returns a grey marker. Those two are on
+    `manual-pass.md` where they belong.
 
     Asserted on the callable rather than on a screen, because rendering it needs
     a console. What it *looks* like is the manual pass's, and is on that list.
@@ -239,17 +246,30 @@ def test_the_hint_says_both_halves(capsys, monkeypatch):
 # --- #80 AC 11 to 14: a composed message that opens with a slash -------------
 
 
-def sent_to(monkeypatch, capsys, typed_message: str) -> list:
-    """What the model was asked, for a message composed rather than typed."""
+def composing(monkeypatch, capsys, *messages) -> StubBackend:
+    """The backend, after a session that composed each of `messages` in turn.
+
+    Returned rather than unpacked because three criteria ask three different
+    questions of the same run: what the model was *sent* (AC 15), how many
+    entries the conversation *holds* (AC 16), and how many requests it *cost*
+    (AC 17). Only the last of those is a question about `stub.streamed`'s length,
+    and it is invisible to a helper that flattens it away.
+    """
     at_a_terminal(monkeypatch)
-    stub = StubBackend(models=INSTALLED, turns=[["an answer"]])
-    supply = iter([typed_message, "/exit"])
+    stub = StubBackend(models=INSTALLED, turns=[["an answer"]] * len(messages))
+    supply = iter([*messages, "/exit"])
     terminal.use_compose(lambda: next(supply))
     try:
         main([], using=stub)
     finally:
         terminal.use_compose(None)
     capsys.readouterr()
+    return stub
+
+
+def sent_to(monkeypatch, capsys, typed_message: str) -> list:
+    """What the model was asked, for a message composed rather than typed."""
+    stub = composing(monkeypatch, capsys, typed_message)
     return [
         message["content"]
         for sent in stub.streamed
@@ -290,7 +310,7 @@ def test_a_typed_command_on_one_line_still_works(capsys, monkeypatch, choice):
     """#80 AC 13, which pulls directly against AC 11 and AC 14.
 
     Same characters, different meaning, told apart only by whether there is a
-    second line. A fix for AC 10 that broke this would have met neither.
+    second line. A fix for AC 11 or AC 14 that broke this would have met neither.
     """
     at_a_terminal(monkeypatch)
     supply = iter(["/skills", "/exit"])
@@ -464,3 +484,180 @@ def test_leaving_with_a_message_part_composed_sends_nothing(
     capsys.readouterr()
 
     assert stub.streamed == [], "a part-composed message was sent on the way out"
+
+
+# --- #80 AC 15 to 17: what reaches the model, and what it costs --------------
+
+
+def test_the_model_receives_one_message_with_its_line_breaks(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 15, and the criterion that says the bug is actually fixed.
+
+    The bug was three lines arriving as three turns. What is asserted is the
+    opposite end of it: one entry, with the newlines still in it. Equality
+    rather than `in`, because "contains the words" is exactly the vacuous shape
+    the queue's Standing warns about - the plain echo puts them in the stream
+    whatever the reader did.
+    """
+    asked = sent_to(monkeypatch, capsys, "first\nsecond\nthird")
+
+    assert asked == ["first\nsecond\nthird"], f"the model was sent {asked!r}"
+
+
+def test_the_conversation_holds_one_entry_per_message_not_one_per_line(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 16. Two messages of three lines each are two entries, not six.
+
+    Read from the *second* request, because that is the first one whose history
+    could be wrong: a single-turn session sends one entry however it split the
+    message, and would pass for an implementation that had learnt nothing.
+    """
+    stub = composing(monkeypatch, capsys, "one\ntwo\nthree", "four\nfive\nsix")
+
+    assert len(stub.streamed) == 2, "two messages were not two turns"
+    said = [m["content"] for m in stub.streamed[-1] if m.get("role") == "user"]
+    assert said == ["one\ntwo\nthree", "four\nfive\nsix"], f"history held {said!r}"
+
+
+def test_a_message_of_many_lines_costs_one_request(capsys, monkeypatch, choice):
+    """#80 AC 17. Six lines, one request - the thing the bug was charging for.
+
+    The measured cost of the defect: three pasted lines were three requests and
+    three useless answers. This is that, stated as arithmetic.
+
+    **The count alone was vacuous, and the break proved it.** Written first as
+    `len(stub.streamed) == 1` and nothing else, it stayed green against a reader
+    that threw away every line but the first - which is one request, and is also
+    the feature doing nothing. One request *carrying all six lines* is the
+    criterion; the number on its own is satisfied by losing five of them.
+    """
+    stub = composing(monkeypatch, capsys, "a\nb\nc\nd\ne\nf")
+
+    assert len(stub.streamed) == 1, f"six lines cost {len(stub.streamed)} requests"
+    said = [m["content"] for m in stub.streamed[0] if m.get("role") == "user"]
+    assert said == ["a\nb\nc\nd\ne\nf"], f"the one request carried {said!r}"
+
+
+# --- #80 AC 22: wider than the window ----------------------------------------
+
+
+def test_a_line_wider_than_the_window_is_read_in_full(monkeypatch):
+    """#80 AC 22, at the reader - #72 owns what happens when it is *drawn*.
+
+    Rebuilt at the hook. The version deleted in `32daf51` fed 500 characters to
+    a real `prompt_toolkit` session, which was never what the criterion needed:
+    what is at stake is whether anything between the composer and the caller
+    shortens the message, and the composer is reachable through `use_compose`.
+    """
+    long_line = "x" * 500
+
+    assert read_with(monkeypatch, long_line) == long_line
+
+
+def test_every_line_of_an_over_wide_message_survives(monkeypatch):
+    """#80 AC 22 with more than one line, which is where a cut would hide.
+
+    A truncation that took the message to one window's width would still pass
+    the single-line check above if the window were wide enough. Three lines of
+    300 characters cannot fit any terminal, so nothing but "unchanged" passes.
+    """
+    wide = "\n".join(["a" * 300, "b" * 300, "c" * 300])
+
+    assert read_with(monkeypatch, wide) == wide
+
+
+# --- #80 AC 14: a command is a command, and never a first line ---------------
+
+
+def test_a_command_does_not_wait_for_a_second_line(capsys, monkeypatch, choice):
+    """#80 AC 14, given a test of its own at last.
+
+    Cycle 7 found this riding on a test that cited the pre-renumber AC 10 and
+    actually proved AC 11. The distinct claim here is the *negative* one: typing
+    `/exit` must not put axiom into composing a longer message. Proved by
+    supplying exactly one line - a reader that came back for a second would hit
+    `StopIteration` and fail loudly rather than passing quietly.
+    """
+    at_a_terminal(monkeypatch)
+    stub = StubBackend(models=INSTALLED)
+    supply = iter(["/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=stub)
+    finally:
+        terminal.use_compose(None)
+    capsys.readouterr()
+
+    assert stub.streamed == [], "a command reached the model"
+    assert next(supply, "spent") == "spent", "the command asked for another line"
+
+
+# --- #80 AC 32: a prompt that arrives from a schedule ------------------------
+
+
+def test_a_scheduled_prompt_of_many_lines_arrives_whole(monkeypatch):
+    """#80 AC 32. A job's prompt is a string; it never touches the reader.
+
+    Structural, and asserted anyway: `_next_line` returns the job's own text and
+    the composer is never consulted, so a schedule cannot lose a line break. The
+    composer here raises if called, which is what would catch one creeping into
+    this path.
+    """
+    import axiom
+    from axiom import schedule
+
+    def never() -> str:
+        raise AssertionError("the composer was consulted for a scheduled prompt")
+
+    jobs = schedule.Schedule(clock=lambda: datetime(2026, 8, 31, 18, 47))
+    jobs.add("*/15 * * * *", "look at this\nand this\n\nand this too")
+    jobs._clock = lambda: datetime(2026, 8, 31, 19, 30)
+    monkeypatch.setattr(terminal, "read_line", lambda timeout=None: terminal.WAITING)
+    monkeypatch.setattr(terminal, "show_prompt", lambda: None)
+    monkeypatch.setattr(terminal, "take_back_prompt", lambda: None)
+    terminal.use_compose(never)
+    try:
+        line, from_a_job = axiom._next_line(jobs)
+    finally:
+        terminal.use_compose(None)
+
+    assert from_a_job is True
+    assert line == "look at this\nand this\n\nand this too"
+
+
+# --- #80 AC 28, 29: there is nothing to configure ----------------------------
+
+
+def test_composing_works_on_a_first_run_with_no_flags(capsys, monkeypatch, choice):
+    """#80 AC 28. No flag, no file, no environment variable.
+
+    `choice` points the remembered-model file at an empty `tmp_path`, so this is
+    a first run in the only sense axiom has one. `main([])` is the whole
+    configuration.
+    """
+    asked = sent_to(monkeypatch, capsys, "two\nlines")
+
+    assert asked == ["two\nlines"], "a first run did not compose"
+
+
+def test_nothing_switches_composing_on_or_off_by_itself(monkeypatch):
+    """#80 AC 29, attacked rather than confirmed.
+
+    The criterion is not "there is no switch" - `--no-render` is one, and it has
+    to be, because a piped run must not read keys. It is that no switch leaves
+    *single-line* messages behaving differently from today. So what is asserted
+    is that the gate has exactly two inputs, rendering and a terminal, and that
+    no setting of any other name reaches it: a `--compose`, an `AXIOM_MULTILINE`
+    or a `multiline:` config key would each be a way to end up with two different
+    single-line behaviours.
+    """
+    from axiom import config
+
+    settings = config.resolve([])
+    named = " ".join(vars(settings)).lower()
+
+    assert "compose" not in named, "a setting configures composing"
+    assert "multiline" not in named, "a setting configures multi-line messages"
+    assert "line" not in named, "a setting configures how a line is read"
