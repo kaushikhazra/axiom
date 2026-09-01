@@ -1,59 +1,66 @@
-# Action — cycle 3
+# Action — cycle 4
 
-Stage 2 of the build order: **the model chooser.** AC 1 to 6.
+Stage 3, first half: **the session's facts as a panel, and the clear before it.**
+AC 7 to 16.
 
-The accent constant, the theme seam and the `NO_COLOR` path are settled and proved
-by stage 1. This stage draws a panel with them.
+This is the expensive stage. Split it: the panel and the clear this cycle, then
+the voice, the tool summary and the prompt in cycle 5. Doing all of AC 7 to 33 in
+one pass puts the whole 78-line baseline diff behind a single green light.
+
+## Read first
+
+- `.tmp/mock_startup.py` — the agreed design. `--static` draws all eight states.
+- `logs/cycle-3.md` — three of six tests were hollow last cycle and the reasons
+  generalise: a break that does not violate the criterion; a boundary that is not
+  at the boundary; a check that reads correct behaviour as failure.
 
 ## Do these in order
 
-1. **Read `.tmp/mock_chooser.py` before writing.** It is the agreed design and it
-   already resolves the things that are easy to get wrong: the panel geometry,
-   right-aligned numbers, the `tools` annotation only on a mixed host, and
-   `"dim default"` rather than `"dim"` on anything inside a panel — a bare `dim`
-   inherits the border's accent and comes out tinted.
+1. **The info panel** replacing `note_settled`, `announce`, `note_tool_cost`,
+   `note_servers` and `note_skills`. A row exists only where today's code prints
+   a line — that is AC 12 and it is what keeps a bare run bare.
 
-2. **Rewrite `list_models` in `terminal.py` to draw a panel.** The title carries
-   **`models on <host>` whole** — not a `models` title with the host as a subtitle.
-   Ten assertions match that phrase and four of them are negatives that go quiet
-   rather than red if it is shortened. Leave a comment saying so, at the title.
+2. **`console.clear(home=True)` when the model is settled**, before the panel.
+   AC 7, and AC 10 says once and never again. Prove AC 10 by running a session
+   with several turns and counting the clears, not by reading the call site.
 
-3. **Align the columns.** Names pad to the longest, so `tools` and `(default)`
-   line up down the list. This is the decision that costs 11 assertions, and it
-   is Kaushik's, already taken — do not re-open it.
+3. **AC 9 — scrollback survives.** `clear(home=True)` does not touch it. Assert
+   on the escape actually emitted rather than on Rich's promise: a clear that
+   sends `\x1b[3J` wipes scrollback and looks identical in every other way.
 
-4. **Re-point the 11 adjacency assertions** in `test_models.py`, `test_switch.py`
-   and `test_tools_first.py`. They match `"gemma4:e2b  tools  (default)"` and
-   friends by exact spacing. Re-point them; do not loosen them into
-   `"gemma4:e2b" in out` — a test that stops caring where the marker sits is not
-   a re-pointed test, it is a deleted one.
+4. **The failures outside the box** — AC 16. They go to stderr today; keep them
+   there and keep them visibly not part of the facts.
 
-5. **`ask_model` keeps its wording.** `which model? (enter for the default)`.
-   Seven assertions match it and the design does not change it.
+## The baseline
 
-## Prove, do not claim
+**78 of 477 lines change here.** Read the diff, line by line, and summarise it in
+the log. `AXIOM_WRITE_BASELINE=1` exists; using it to clear a red is the one thing
+that defeats the file.
 
-For each of AC 1 to 6: **break it and watch the test go red.** `.tmp/break_stage1.py`
-is the harness — copy its shape, it applies each break to a copy of the file and
-restores it.
+Before regenerating, ask the question #75 asked and got right: **can the code be
+narrowed so the baseline is restored rather than updated?** The transcript captures
+a non-tty run, and a non-tty run has no reason to draw a box. If the panel is drawn
+only at a terminal — which the chooser already does, `force_terminal=sys.stdout.isatty()`
+— then **the baseline may not need to change at all**, and 78 lines of diff become
+zero. Check that before anything else. It also decides AC 33.
 
-**AC 6 — a window too narrow still shows every model's name in full — is the one
-that will pass while testing nothing.** Two cycles running, a first-time pass on a
-boundary criterion has been hollow. A panel has a border and padding, so the text
-gets less room than the window; write the case that would crop and check the name
-survives it.
+## Watch for
 
-**AC 4 needs all three hosts**, not one: some models capable, all capable, none
-capable. The middle and the last are where a marker appears that should not.
+- **AC 12 will pass vacuously.** "A fact axiom does not have is left out" is true
+  of a panel that leaves out everything. Assert both directions: absent when
+  unknown, present when known.
+- **AC 15** — the settle reason on the model's row — is the one criterion in this
+  group that is not already true in some form. Do not let it ride on AC 11's test.
+- **The four negatives** in `test_models.py` and `test_switch.py` still lean on the
+  phrase `models on`. Stage 3 does not touch the chooser, so they should be
+  untouched; if one changes, something reached further than intended.
 
 ## Do not
 
-- Touch the info panel, the voice, the tool summary or the prompt. That is stage 3.
-- Touch `tests/baseline/transcript.txt`. The chooser is not in it. **If it moves,
-  that is the finding.**
-- Add a second accent constant. `terminal.ACCENT` exists.
+- Touch the voice, the tool summary or the prompt. Cycle 5.
+- Regenerate the baseline to clear a failure.
 
 ## Record
 
-`logs/cycle-3.md`, per `observe.md`. Criteria met out of 37, the suite count and
-wall-clock, and whether the baseline is untouched.
+`logs/cycle-4.md`, per `observe.md`. Criteria met out of 37, the suite count and
+wall-clock, and the baseline's state — untouched, or the diff summarised.
