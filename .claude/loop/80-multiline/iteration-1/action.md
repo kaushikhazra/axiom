@@ -1,55 +1,56 @@
-# Action — cycle 7
+# Action — cycle 8
 
-**The boundaries.** AC 19, 20, 21, 36 — then 6, 11, 14, 15, 16, 17, 27, 28, 29, 31.
+**The five that are nearly true, then the one that is not.**
 
-Twenty of thirty-six hold. What is left is mostly edges, and one of them has a real trap.
+## Before anything else, two checks
 
-## Before anything else
+1. **`git status`** — a break-proof killed mid-run leaves the break in the file. Three
+   times in this loop.
+2. **The citation grep.** Cycle 7 found eleven mis-numbered citations, and the count had
+   been wrong for four cycles because of it:
 
-**Check `git diff` for a break left behind.** A break-proof that is killed - a timeout, a
-SIGTERM, a machine going down - never runs its `finally`, and leaves the break in the real
-file. That has happened three times in this loop. The symptom is a red suite for a reason
-that has nothing to do with the code.
+       grep -rhoE "#80 AC [0-9]+" tests/*.py src/axiom/*.py | grep -oE "[0-9]+" | sort -n -u
+
+   Diff against `gh issue view 80`. Do this at the **start**, not only at the end.
 
 ## Do these in order
 
-1. **AC 19 and AC 20 — trailing and empty.**
-   - Blank lines at the end of a message do not become a message of their own.
-   - A message that is *only* blank lines sends nothing and leaves the prompt where it is.
-   - `read_line` already calls `.strip()` on what the composer returns, so part of this may
-     hold already. **Check before building**, and if it holds, prove it rather than counting
-     it.
+1. **AC 19, AC 20 — trailing and empty.** Measured in cycle 7 and both already hold, but
+   at the `read_line` level rather than in `compose`: the composer returns `'hello\n\n'`
+   and `read_line` strips it. **Prove them where they are true**, which means through
+   `read_line` or `main`, not through `compose` — a test at the wrong level would pass for
+   the wrong reason.
 
-2. **AC 36 — leaving with a message part-composed exits rather than sending it.**
-   Ctrl-d with text in the buffer. prompt_toolkit raises `EOFError`, which `read_line`
-   already turns into "leave". The question is whether the half-written text goes anywhere,
-   and it must not.
+2. **AC 36 — leaving with a message part-composed.** Ctrl-d with text in the buffer raises
+   `EOFError`, which `read_line` already turns into "leave". Measured; needs a test and a
+   break saying the half-written text goes nowhere.
 
-3. **AC 21 — an oversized paste is refused with a reason, never silently shortened.**
-   **This is the trap.** #42 exists because of a truncation on the other side of this
-   conversation, and a half-built version of this is worse than none. The refusal has to
-   say what happened and roughly by how much, the way `note_skill_too_large` does. If it
-   cannot be done properly in one cycle, do the cheaper criteria and leave this whole.
+3. **AC 32 — a scheduled prompt is unaffected.** A scheduled prompt is a string that never
+   touches the reader, so this should be true already. One test, and a break that would
+   catch a composer creeping into `_next_line`'s path.
 
-4. **The remainder** — 6, 11, 14, 15, 16, 17, 27, 28, 29, 31 — are mostly already true and
-   need proving rather than building. AC 31 is the schedule path: a scheduled prompt is a
-   string that never touches the reader, so it should be untouched, and one test says so.
+4. **AC 22 — a message whose lines are wider than the window is sent in full.** The
+   *reader's* side, not the renderer's: a pasted line of 500 characters arrives whole. #72
+   owns what happens when it is drawn; this owns what happens when it is read.
 
-## Watch for
+5. **AC 21 — an oversized paste refused with a reason, never silently shortened.**
+   **The trap.** #42 exists because of a truncation on the other side of this conversation.
+   The refusal must say what happened and roughly by how much, as `note_skill_too_large`
+   does. **If it will not fit in this cycle, leave it whole** — a half-built refusal is
+   worse than none, because it looks like a feature.
 
-- **AC 27, 28, 29 are the "nothing to configure" group.** They are easy to claim and the
-  proof is that a fresh run works without a flag, not that a flag exists.
-- **AC 14 pulls against AC 10 again** - a command is never the first line of a longer
-  message. That is the guard added in cycle 5; it needs its own citation and break here
-  rather than riding on AC 10's.
+## Still not started after that
+
+AC 6, 15, 16, 17, 28, 29. Mostly "already true, needs proving": 15 to 17 are what reaches
+the model and what it costs, and 28 to 29 are the nothing-to-configure group, whose proof is
+that a fresh run works without a flag.
 
 ## Do not
 
-- Regenerate the baseline. Twelve cycles.
-- Use a heredoc for anything containing a backslash escape. Four times this session.
-- Leave a break in the file. Check `git diff` before finishing, not just before starting.
+- Regenerate the baseline. Thirteen cycles.
+- Use a heredoc for anything containing a backslash escape.
+- Leave a break in the file. Check `git diff` before finishing.
 
 ## Record
 
-`logs/cycle-7.md`, per `observe.md`. Criteria out of 36, suite count and wall-clock, the
-baseline's state, and the running list of what only a person can confirm.
+`logs/cycle-8.md`, per `observe.md`.
