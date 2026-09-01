@@ -1,58 +1,59 @@
-# Action — cycle 2
+# Action — cycle 3
 
-Stage 1 of the build order: **the reply's palette, and the unlexed fence.** AC 17 to 21.
+Stage 2 of the build order: **the model chooser.** AC 1 to 6.
 
-Cycle 1 found the guard for AC 31 is blind to the colour being added, so that is fixed
-*first* — a palette landing behind a guard that cannot see it is how a wrong hue ships
-looking covered.
+The accent constant, the theme seam and the `NO_COLOR` path are settled and proved
+by stage 1. This stage draws a panel with them.
 
 ## Do these in order
 
-1. **Widen the NO_COLOR guard before adding any colour.**
-   `test_rendering.py:679` searches `\x1b\[[0-9;]*3[0-7]m`, which catches 16-colour and
-   misses both `38;2;r;g;b` and `38;5;n`. Widen it, then **prove the widening** by
-   asserting it catches all three forms directly — a regex fix nobody watched work is the
-   same hole one layer down.
+1. **Read `.tmp/mock_chooser.py` before writing.** It is the agreed design and it
+   already resolves the things that are easy to get wrong: the panel geometry,
+   right-aligned numbers, the `tools` annotation only on a mixed host, and
+   `"dim default"` rather than `"dim"` on anything inside a panel — a bare `dim`
+   inherits the border's accent and comes out tinted.
 
-2. **Add the accent as a module-level constant in `terminal.py`,** with the voice grey
-   beside it. Values are in `assumption.md`; do not re-derive them.
+2. **Rewrite `list_models` in `terminal.py` to draw a panel.** The title carries
+   **`models on <host>` whole** — not a `models` title with the host as a subtitle.
+   Ten assertions match that phrase and four of them are negatives that go quiet
+   rather than red if it is shortened. Leave a comment saying so, at the title.
 
-3. **Add a module-level Rich `Theme`** and reference it inside `_as_markdown`'s Console.
-   No signature change — cycle 1 established the seam. The full style map is in
-   `.tmp/mock_reply.py` as `LOUD`; copy it rather than reinventing it, including the two
-   comments explaining why `markdown.code_block` and `_highlighted` are left alone.
+3. **Align the columns.** Names pad to the longest, so `tools` and `(default)`
+   line up down the list. This is the decision that costs 11 assertions, and it
+   is Kaushik's, already taken — do not re-open it.
 
-4. **Make the unlexed fence plain.** terminal.py:918 becomes `return line`.
-   Then **delete `_colourless()`** — cycle 1 confirmed it has no other caller.
+4. **Re-point the 11 adjacency assertions** in `test_models.py`, `test_switch.py`
+   and `test_tools_first.py`. They match `"gemma4:e2b  tools  (default)"` and
+   friends by exact spacing. Re-point them; do not loosen them into
+   `"gemma4:e2b" in out` — a test that stops caring where the marker sits is not
+   a re-pointed test, it is a deleted one.
 
-5. **Settle the recorded decision this deletes.** `NO_COLOR=` with nothing after it counts,
-   and that opinion lived only in `_colourless()` and the test at line 718. Either write a
-   test that asserts the presence-semantics against Rich directly, or state in the commit
-   that axiom defers to the renderer. **Do not let it lapse silently.**
-
-6. **Re-point the cyan assertions** at test_rendering.py 287, 328, 693, 701, 718. Three of
-   them go vacuous rather than red — 693, 718 and 287 — so they must be rewritten, not
-   deleted and not left passing. 701 and 328 will fail honestly.
+5. **`ask_model` keeps its wording.** `which model? (enter for the default)`.
+   Seven assertions match it and the design does not change it.
 
 ## Prove, do not claim
 
-For each of AC 17, 18, 19, 20, 21 and 31: **break it and watch the test go red.** Narrow
-breaks - cycle 1's own reading found three separate loops that lost a criterion to a break
-too wide to attribute.
+For each of AC 1 to 6: **break it and watch the test go red.** `.tmp/break_stage1.py`
+is the harness — copy its shape, it applies each break to a copy of the file and
+restores it.
 
-AC 34 gets its guard here too, since this is the cycle that could violate it: render a
-reply through `Rendered` before and after, compare the screen text, and **normalise Rich's
-OSC-8 link ids first** or a reply containing a link compares unequal to itself. That gap
-is in `tests/screen.py` and is described in `assumption.md`.
+**AC 6 — a window too narrow still shows every model's name in full — is the one
+that will pass while testing nothing.** Two cycles running, a first-time pass on a
+boundary criterion has been hollow. A panel has a border and padding, so the text
+gets less room than the window; write the case that would crop and check the name
+survives it.
+
+**AC 4 needs all three hosts**, not one: some models capable, all capable, none
+capable. The middle and the last are where a marker appears that should not.
 
 ## Do not
 
-- Touch the chooser or the info panel. That is stages 2 and 3.
-- Touch `tests/baseline/transcript.txt`. Stage 1 cannot reach it — rendering is gated on
-  `isatty` and the transcript captures a non-tty. **If the baseline moves this cycle,
-  something is wrong and that is the finding.**
+- Touch the info panel, the voice, the tool summary or the prompt. That is stage 3.
+- Touch `tests/baseline/transcript.txt`. The chooser is not in it. **If it moves,
+  that is the finding.**
+- Add a second accent constant. `terminal.ACCENT` exists.
 
 ## Record
 
-`logs/cycle-2.md`, per `observe.md`. Criteria met out of 37, the suite count and
+`logs/cycle-3.md`, per `observe.md`. Criteria met out of 37, the suite count and
 wall-clock, and whether the baseline is untouched.
