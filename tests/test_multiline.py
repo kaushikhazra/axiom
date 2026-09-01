@@ -293,3 +293,154 @@ def test_the_hint_says_both_halves(capsys, monkeypatch):
 
     assert "sends" in said[0], "the hint never says how to send"
     assert "another line" in said[0], "the hint never says how to add a line"
+
+
+# --- #80 AC 7 to 10: paste, which is why this is a bug -----------------------
+
+PASTE_START = "\x1b[200~"
+PASTE_END = "\x1b[201~"
+
+
+def pasted(text: str, then: str = ENTER) -> str:
+    """What `compose` returns when `text` arrives as a paste.
+
+    A terminal brackets a paste - `\x1b[200~` before, `\x1b[201~` after - so the
+    program can tell "the user pressed these keys" from "the user pasted this".
+    Windows consoles do not send those markers at all; prompt_toolkit infers a
+    paste instead, from a batch of keys arriving together containing a newline
+    and at least one character. Either way it becomes one `BracketedPaste` event.
+
+    Which means **this test proves the reader, not the console**. That a real
+    paste in a real terminal is recognised as one is on the manual pass's list.
+    """
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    terminal.use_rendering(True)
+    with create_pipe_input() as pipe:
+        pipe.send_text(PASTE_START + text + PASTE_END + then)
+        pipe.close()
+        return terminal.compose(source=pipe, sink=DummyOutput())
+
+
+def test_pasting_several_lines_gives_one_message():
+    """#80 AC 7. The defect this issue exists for.
+
+    Measured before any of this was built: three lines pasted became three turns,
+    three requests, and three confused answers, and the message the user meant was
+    never assembled.
+    """
+    assert pasted("line one\nline two\nline three") == "line one\nline two\nline three"
+
+
+def test_every_pasted_line_is_there_in_the_order_pasted():
+    """#80 AC 8. Cheap-looking, and the cheapest place for an off-by-one to hide."""
+    lines = [f"line {n}" for n in range(1, 13)]
+
+    assert pasted("\n".join(lines)) == "\n".join(lines)
+
+
+def test_nothing_is_sent_while_a_paste_is_still_arriving():
+    """#80 AC 9, and the assertion that separates fixed from nearly fixed.
+
+    **A test that only checks the paste came back passes for an implementation
+    that sent line one and returned lines two and three.** That is precisely the
+    old behaviour with a smaller number, so what is asserted is that the *first*
+    line is still in the message rather than gone ahead of it.
+    """
+    got = pasted("first\nsecond\nthird")
+
+    assert got.startswith("first"), "the first line was sent before the rest arrived"
+    assert got.count("\n") == 2, "the paste was broken into pieces"
+
+
+def test_a_paste_whose_last_line_has_no_newline_is_still_complete():
+    """#80 AC 9's boundary. Most pastes end without a trailing newline."""
+    assert pasted("alpha\nbravo") == "alpha\nbravo"
+
+
+def test_blank_lines_inside_a_paste_survive():
+    """#80 AC 18, on the paste path rather than the typed one.
+
+    A stack trace and a config file both carry blank lines, and they are most of
+    what anyone pastes into a coding assistant.
+    """
+    assert pasted("alpha\n\nbravo\n\n\ncharlie") == "alpha\n\nbravo\n\n\ncharlie"
+
+
+def test_a_pasted_line_beginning_with_a_slash_is_text():
+    """#80 AC 10, at the reader.
+
+    The reader returns text either way; whether a `/exit` is a command is settled
+    above it. What must not happen here is the paste being cut at that line, or
+    the reader treating it as anything but characters.
+    """
+    assert pasted("/exit\nand more") == "/exit\nand more"
+    assert pasted("run this:\n/skill deploy\nthen stop") == (
+        "run this:\n/skill deploy\nthen stop"
+    )
+
+
+def sent_to(monkeypatch, capsys, typed_message: str) -> list:
+    """What the model was asked, for a message composed rather than typed."""
+    at_a_terminal(monkeypatch)
+    stub = StubBackend(models=INSTALLED, turns=[["an answer"]])
+    supply = iter([typed_message, "/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=stub)
+    finally:
+        terminal.use_compose(None)
+    capsys.readouterr()
+    return [
+        message["content"]
+        for sent in stub.streamed
+        for message in sent
+        if message.get("role") == "user"
+    ]
+
+
+def test_a_multi_line_message_beginning_with_a_command_is_a_message(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 10, above the reader, where it is actually decided.
+
+    `/exit` was already safe - it is matched by equality, and a message with more
+    lines is not equal to it. **`/model` and `/skill` were not**: both used
+    `startswith`, so a stack trace pasted with `/model` on its first line was
+    swallowed as a switch and the rest of it thrown away. Found by reading the
+    matching rather than by a failing test, because nothing composed a message
+    before this issue.
+    """
+    asked = sent_to(monkeypatch, capsys, "/model something\nand the rest of it")
+
+    assert asked, "the message never reached the model"
+    assert "and the rest of it" in asked[-1], "the rest of the message was lost"
+
+
+def test_a_multi_line_message_beginning_with_slash_skill_is_a_message(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 10. The same hole, the other command."""
+    asked = sent_to(monkeypatch, capsys, "/skill deploy\nplus a second line")
+
+    assert asked, "the message never reached the model"
+    assert "plus a second line" in asked[-1]
+
+
+def test_a_typed_command_on_one_line_still_works(capsys, monkeypatch, choice):
+    """#80 AC 13, which pulls directly against AC 10.
+
+    Same characters, different meaning, told apart only by whether there is a
+    second line. A fix for AC 10 that broke this would have met neither.
+    """
+    at_a_terminal(monkeypatch)
+    supply = iter(["/skills", "/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=StubBackend(models=INSTALLED))
+    finally:
+        terminal.use_compose(None)
+
+    printed = capsys.readouterr().out
+    assert "skill" in printed.lower(), "a typed command stopped being a command"

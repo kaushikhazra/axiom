@@ -733,7 +733,19 @@ def _chat(
         if not line:
             continue
 
-        if line == MODEL_COMMAND or line.startswith(MODEL_COMMAND + " "):
+        # A command is a message of **one line** (#80 AC 10, AC 13). Since a
+        # message can now have several, `startswith` is no longer enough on its
+        # own: a stack trace pasted with `/model` on its first line would have
+        # been swallowed as a switch, and the rest of it thrown away. `/exit`
+        # was already safe because it is matched by equality; `/model` and
+        # `/skill` were not.
+        #
+        # Typed commands are untouched - they have no newline in them - so AC 13
+        # costs nothing here. What changes is only what a *pasted* first line
+        # can do, and the answer is now nothing.
+        command = line if "\n" not in line else ""
+
+        if command == MODEL_COMMAND or command.startswith(MODEL_COMMAND + " "):
             switched = _switch_model(
                 model_backend,
                 settings,
@@ -755,9 +767,9 @@ def _chat(
             continue
 
         if (
-            line == SKILLS_COMMAND
-            or line == SKILL_COMMAND
-            or line.startswith(SKILL_COMMAND + " ")
+            command == SKILLS_COMMAND
+            or command == SKILL_COMMAND
+            or command.startswith(SKILL_COMMAND + " ")
         ):
             # Both commands, one gate. AC 38 asks that they say skills are off
             # rather than behave as though there simply are none - "no skills
@@ -767,15 +779,15 @@ def _chat(
                 terminal.note_skills_off()
                 continue
 
-        if line == SKILLS_COMMAND:
+        if command == SKILLS_COMMAND:
             terminal.show_skills(
                 [(skill.name, skill.description) for skill in library.catalogue.skills],
                 str(library.directory),
             )
             continue
 
-        if line == SKILL_COMMAND or line.startswith(SKILL_COMMAND + " "):
-            asked = line[len(SKILL_COMMAND) :].strip()
+        if command == SKILL_COMMAND or command.startswith(SKILL_COMMAND + " "):
+            asked = command[len(SKILL_COMMAND) :].strip()
             name, _, trailing = asked.partition(" ")
             found = library.catalogue.find(name) if name else None
             if found is None:
