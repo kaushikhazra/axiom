@@ -133,8 +133,12 @@ def main(argv: list[str] | None = None, using: ModelBackend | None = None) -> No
 
 def _settle_model(
     model_backend: ModelBackend, settings: config.Settings, interactive: bool
-) -> str | None:
-    """Which model this run uses. None means the user left before choosing.
+) -> "tuple[str | None, str]":
+    """Which model this run uses, and why. None means the user left before choosing.
+
+    The reason travels with the model because #77 AC 15 shows it beside the model
+    in the facts panel rather than as a statement of its own, and this is the only
+    place that knows it. One caller, so returning a pair costs nothing.
 
     Everything here happens before a server is started or a tool is declared
     (AC 1). Two conditions end the run outright - a host that cannot be reached
@@ -172,7 +176,7 @@ def _settle_model(
         terminal.note_choice_forgotten(decision.forgotten, settings.host)
     if decision.model is not None:
         terminal.note_settled(decision.model, decision.reason)
-        return decision.model
+        return decision.model, decision.reason
 
     # Only a pick made here is remembered (AC 14). Everything above this line
     # settled without the user choosing anything - a flag, the single-model
@@ -186,11 +190,13 @@ def _settle_model(
         except (EOFError, KeyboardInterrupt):
             # Both mean leave. Nothing has started, so there is no session to
             # return to and no difference between the two worth drawing.
-            return None
+            return None, ""
         chosen = models.picked(answer, decision.installed, decision.default)
         if chosen is not None:
             _remember(chosen, settings.host)
-            return chosen
+            # No reason: the user chose it themselves, and a panel row saying so
+            # would explain a choice that needs no explaining.
+            return chosen, ""
         terminal.refuse_model(answer, len(decision.installed))
 
 
@@ -596,7 +602,7 @@ def _chat(
 ) -> None:
     model_backend = using or backend.OllamaBackend(settings.host)
     interactive = sys.stdin.isatty()
-    model = _settle_model(model_backend, settings, interactive)
+    model, reason = _settle_model(model_backend, settings, interactive)
     if model is None:
         # Left at the list. Nothing has started yet, so there is nothing to
         # unwind and nothing went wrong - status 0, like any other way out.
@@ -618,46 +624,42 @@ def _chat(
     run = _prepare(model_backend, settings, attached, model, catalogue_now)
     limits = _limits(settings)
 
-    terminal.announce(
-        run.model,
-        settings.host,
-        run.context,
-        overridden=settings.debug_max_context is not None,
-        tools=run.offered,
-        web=settings.web_enabled,
-    )
-    terminal.note_servers(
-        attached.connected,
-        [*settings.mcp_problems, *attached.failures],
-        bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
-    )
     # Read once, before the cost is reported, and refreshed whenever a skill is
     # written or deleted. Not on `Settings`, which is frozen and settled before
     # the run starts: AC 18 promises a skill written mid-session is usable
     # without a restart, and a catalogue that cannot change could not keep that
     # promise.
     catalogue = catalogue_now
-    # After the server lines rather than inside them. The figure is a fact
-    # about the session - what rides in every request before a word is typed -
-    # and it lived inside `note_servers`, which returns early when nothing is
-    # attached. So a user with no MCP was told `7 tools including web` and
-    # never that those seven were eating 40% of a small window (#61).
+    # One call where there were four (#77). The order they were said in is kept
+    # inside `show_facts` for the plain path, and the reasons still hold:
     #
-    # Last of the startup lines, deliberately: the server counts above explain
-    # where part of it comes from, so the total reads as their sum.
-    terminal.note_tool_cost(_tool_cost(run, settings, catalogue), run.context)
-    # After the total, so the skills' share reads as part of it rather than as a
-    # separate bill. AC 2, AC 3 and AC 4's startup half.
-    terminal.note_skills(
-        len(catalogue),
-        list(catalogue.problems),
-        _skills_cost(settings, catalogue),
-        # `--no-tools` already says everything is off, and the web does not
-        # announce itself separately under it either. A second line naming
-        # skills would be repeating a fact the user has already been given, for
-        # a feature they did not mention. Only a run that switched skills off
-        # *specifically* is told so.
-        enabled=settings.skills_enabled or not settings.tools_enabled,
+    # - the tool cost comes after the server lines, not inside them, because it
+    #   is a fact about the session rather than about MCP - it lived inside
+    #   `note_servers`, which returns early when nothing is attached, so a user
+    #   with no MCP was told `7 tools including web` and never that those seven
+    #   were eating 40% of a small window (#61)
+    # - the skills' share comes after the total, so it reads as part of it
+    #   rather than as a separate bill
+    #
+    # `--no-tools` already says everything is off, and the web does not announce
+    # itself separately under it either, so only a run that switched skills off
+    # *specifically* is told so.
+    terminal.show_facts(
+        model=run.model,
+        host=settings.host,
+        context=run.context,
+        overridden=settings.debug_max_context is not None,
+        tools=run.offered,
+        web=settings.web_enabled,
+        cost=_tool_cost(run, settings, catalogue),
+        connected=attached.connected,
+        problems=[*settings.mcp_problems, *attached.failures],
+        bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
+        skills_loaded=len(catalogue),
+        skill_problems=list(catalogue.problems),
+        skills_cost=_skills_cost(settings, catalogue),
+        skills_enabled=settings.skills_enabled or not settings.tools_enabled,
+        reason=reason,
     )
 
     # Held here rather than in `messages`, deliberately. `compaction` treats a

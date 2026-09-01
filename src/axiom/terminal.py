@@ -224,6 +224,20 @@ def note_choice_unreadable(path: str) -> None:
     )
 
 
+def settled_because(reason: str) -> str | None:
+    """Why axiom chose this model, in words, or None if the user chose it.
+
+    One function because the phrase is now said in two places - the line below
+    and the facts panel's model row (#77 AC 15) - and two copies of a sentence
+    are two sentences the moment one of them is edited.
+    """
+    return {
+        "only": "the only model installed",
+        "remembered": "your last choice here",
+        "first": "first installed, nothing was chosen",
+    }.get(reason)
+
+
 def note_settled(model: str, reason: str) -> None:
     """A model settled without asking, and why.
 
@@ -232,12 +246,9 @@ def note_settled(model: str, reason: str) -> None:
     it. The other two are axiom choosing on the user's behalf, and AC 22 is
     that this never happens invisibly.
     """
-    if reason == "only":
-        print(f"{VOICE} using {model} - the only model installed")
-    elif reason == "remembered":
-        print(f"{VOICE} using {model} - your last choice here")
-    elif reason == "first":
-        print(f"{VOICE} using {model} - first installed, nothing was chosen")
+    because = settled_because(reason)
+    if because:
+        print(f"{VOICE} using {model} - {because}")
 
 
 def note_choice_saved(problem: str | None, path: str) -> None:
@@ -1680,3 +1691,192 @@ def note_skill_too_large(name: str, over: int) -> None:
         f"window - not sent. Shorten the skill, or switch to a model with more "
         f"room with /model."
     )
+
+
+# --- #77: the session's facts ----------------------------------------------
+
+
+def show_facts(
+    *,
+    model: str,
+    host: str,
+    context: "int | None",
+    overridden: bool,
+    tools: "int | None",
+    web: bool,
+    cost: "int | None",
+    connected: dict,
+    problems: list,
+    bounds: "tuple[float, float] | None",
+    skills_loaded: int,
+    skill_problems: list,
+    skills_cost: "int | None",
+    skills_enabled: bool,
+    reason: str = "",
+) -> None:
+    """What this session is: the model, the host, the room, the cost (#77 AC 11).
+
+    **Two renderers, one set of facts, and the split is not cosmetic.** AC 33
+    requires redirected and piped output to be unchanged byte for byte, and the
+    golden transcript is captured from a `StringIO` - not a terminal. So the
+    panel is drawn only at a terminal and a redirected run takes exactly the path
+    it took before #77 existed.
+
+    That is the same shape `use_rendering` already chose for replies: one plain
+    path, which is the one the transcript records, and a rendered path on top of
+    it. It also means **the 78 baseline lines this issue was expected to rewrite
+    do not change at all** - the narrowing #75 asks for, found by asking whether
+    the code could be shaped so the baseline is restored rather than updated.
+
+    The plain path calls the four functions in the order they were called in
+    before, and they are unchanged. Nothing is duplicated: the panel reads the
+    same arguments rather than a second set of sentences.
+    """
+    if not sys.stdout.isatty():
+        announce(model, host, context, overridden=overridden, tools=tools, web=web)
+        note_servers(connected, problems, bounds=bounds)
+        note_tool_cost(cost, context)
+        note_skills(skills_loaded, skill_problems, skills_cost, enabled=skills_enabled)
+        return
+
+    _clear_screen()
+    _facts_panel(
+        model=model,
+        host=host,
+        context=context,
+        overridden=overridden,
+        tools=tools,
+        web=web,
+        cost=cost,
+        connected=connected,
+        bounds=bounds,
+        skills_loaded=skills_loaded,
+        skills_cost=skills_cost,
+        skills_enabled=skills_enabled,
+        reason=reason,
+    )
+    # Outside the box, on the streams they already used (#77 AC 16). A border
+    # around a failure makes it look like part of the report rather than
+    # something to do, and each of these is fixed by a different action.
+    for problem in problems:
+        print(f"{VOICE} {problem}", file=sys.stderr)
+    for problem in skill_problems:
+        print(f"{VOICE} skill not loaded - {problem}")
+
+
+def _clear_screen() -> None:
+    """The screen, not the scrollback (#77 AC 7, AC 9).
+
+    `\x1b[2J\x1b[H` - erase the display and home the cursor. Deliberately not
+    `\x1b[3J`, which also empties the scrollback buffer: a user who scrolls up
+    after choosing a model should still find what was there. The two look
+    identical the moment they are run and differ only in what is recoverable,
+    which is exactly the kind of difference that needs asserting on the bytes.
+    """
+    print("\x1b[2J\x1b[H", end="")
+
+
+def _facts_panel(
+    *,
+    model: str,
+    host: str,
+    context: "int | None",
+    overridden: bool,
+    tools: "int | None",
+    web: bool,
+    cost: "int | None",
+    connected: dict,
+    bounds: "tuple[float, float] | None",
+    skills_loaded: int,
+    skills_cost: "int | None",
+    skills_enabled: bool,
+    reason: str,
+) -> None:
+    """The facts as a label/value grid, in the same border as the model list.
+
+    **A row exists only where the plain path prints a line** (#77 AC 12). That is
+    the whole rule, and it is what keeps a bare run bare: no skills directory
+    means no skills row, exactly as `note_skills` says nothing at all in that
+    case, and an unknown cost is left out rather than shown as zero - a zero is a
+    number and reads like one.
+    """
+    try:
+        from rich.box import ROUNDED
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(justify="right", style=f"dim default {VOICE_GREY}")
+        grid.add_column()
+
+        def row(label: str, value: Text) -> None:
+            grid.add_row(Text(label, style=VOICE_GREY), value)
+
+        name = Text(model, style=f"bold {ACCENT}")
+        because = settled_because(reason)
+        if because:
+            # On the model's row rather than as a statement of its own: it
+            # explains that value, and is not a fact beside it (#77 AC 15).
+            name.append(f"   {because}", style=VOICE_GREY)
+        row("model", name)
+        row("host", Text(host, style=VOICE_GREY))
+
+        room = Text(_room(context, overridden))
+        row("context", room)
+
+        row("tools", Text(_can_do(tools, web)))
+
+        if cost is not None:
+            share = f", {100 * cost / context:.0f}% of the window" if context else ""
+            spend = Text(f"~{cost} tokens")
+            spend.append(f" per request{share}", style=VOICE_GREY)
+            row("cost", spend)
+
+        first = True
+        for server, count in (connected or {}).items():
+            word = "tool" if count == 1 else "tools"
+            line = Text(server)
+            line.append(f"  {count} {word}", style=VOICE_GREY)
+            row("servers" if first else "", line)
+            first = False
+        if connected and bounds:
+            start, call = bounds
+            row(
+                "",
+                Text(
+                    f"start limit {start:g}s, call limit {call:g}s", style=VOICE_GREY
+                ),
+            )
+
+        if not skills_enabled:
+            row("skills", Text("off", style=VOICE_GREY))
+        elif skills_loaded:
+            word = "skill" if skills_loaded == 1 else "skills"
+            loaded = Text(f"{skills_loaded} {word}")
+            if skills_cost:
+                loaded.append(f"  ~{skills_cost} tokens per request", style=VOICE_GREY)
+            row("skills", loaded)
+
+        Console(
+            force_terminal=True,
+            legacy_windows=False,
+            no_color=_colourless(),
+            width=_width(),
+        ).print(
+            Panel(
+                grid,
+                title=Text("axiom", style=f"bold {ACCENT}"),
+                title_align="left",
+                border_style=ACCENT,
+                box=ROUNDED,
+                padding=(1, 2),
+                expand=False,
+            )
+        )
+    except Exception:
+        # The same trade every other renderer here makes: formatting is what a
+        # failure costs, never the facts.
+        announce(model, host, context, overridden=overridden, tools=tools, web=web)
+        note_tool_cost(cost, context)
