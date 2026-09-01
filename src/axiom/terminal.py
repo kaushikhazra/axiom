@@ -753,16 +753,37 @@ def end_turn() -> None:
     turn passes through this function, and a count that survived one would be
     added to the next turn's.
     """
-    global _tool_runs, _tool_failures
+    global _tool_runs, _tool_failures, _tools_summarised
     _stop_working()
-    if _tool_runs and _rendering and sys.stdout.isatty():
+    # Normally already drawn, above the answer, by `show_piece`. This is the
+    # turn that never produced another word - out of rounds, or interrupted -
+    # where without it the tools that ran would go unmentioned entirely.
+    _summarise_tools()
+    _tool_runs, _tool_failures, _tools_summarised = 0, 0, False
+    print()
+
+
+def _summarise_tools() -> None:
+    """The turn's tools, in one line, once (#77 AC 24, AC 25, AC 26).
+
+    Guarded by a flag rather than by where it is called from: two callers reach
+    it - the first fragment of the answer, and the end of a turn that produced no
+    answer - and a turn must not be able to get two lines out of them.
+    """
+    global _tools_summarised
+    if _tools_summarised or not _tool_runs:
         # AC 25: nothing at all for a turn that called none, which is what makes
         # the line mean something when it does appear.
-        word = "tool" if _tool_runs == 1 else "tools"
-        failed = f", {_tool_failures} failed" if _tool_failures else ""
-        print(_grey(f"  ·  {_tool_runs} {word}{failed}"))
-    _tool_runs, _tool_failures = 0, 0
-    print()
+        return
+    if not _rendering or not sys.stdout.isatty():
+        return
+    _tools_summarised = True
+    word = "tool" if _tool_runs == 1 else "tools"
+    failed = f", {_tool_failures} failed" if _tool_failures else ""
+    print(_grey(f"  ·  {_tool_runs} {word}{failed}"))
+
+
+_tools_summarised = False
 
 
 # Lines of a fenced block kept as context for highlighting the next one. See
@@ -1439,6 +1460,22 @@ def show_piece(text: str) -> None:
     if not _rendering or not sys.stdout.isatty():
         print(text, end="", flush=True)
         return
+    # #77 AC 24: the turn's tools are accounted for **before** the answer they
+    # produced, not after it.
+    #
+    # It used to be drawn in `end_turn`, which put it below the answer and
+    # between two blank lines - so it read as belonging to the next prompt, and
+    # you learned what the answer rested on only after you had read it. Driven by
+    # hand on 2026-09-01: a turn that ran one tool and answered "I do not have a
+    # tool available" showed `·  1 tool` underneath, and nothing on screen
+    # resolved the contradiction until you scrolled back to look at it again.
+    #
+    # Here rather than at the end of the tool rounds because a turn can go
+    # model -> tool -> model -> tool: this fires on the first fragment of reply
+    # that follows any tool call, which is one line per turn wherever the rounds
+    # fall. `end_turn` still draws it if a turn ended without another word - out
+    # of rounds, or interrupted - so it is never simply lost.
+    _summarise_tools()
     if _reply is None:
         _reply = Rendered()
     _reply.feed(text)

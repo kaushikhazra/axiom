@@ -473,3 +473,63 @@ def test_a_failure_is_dressed_unlike_both(capsys, monkeypatch, choice):
     # Not on the same stream as the answer, which is what sets it apart from
     # both without needing a third colour.
     assert "an answer" not in got.err
+
+
+def test_the_summary_comes_before_the_answer_it_explains(capsys, monkeypatch, choice):
+    """#77 AC 24's placement, found by driving it by hand on 2026-09-01.
+
+    It used to be drawn at the end of the turn, which put it *below* the answer
+    and between two blank lines - so it read as belonging to the next prompt, and
+    you learned what the answer rested on only after reading it. A real session
+    showed `·  1 tool` under an answer that said "I do not have a tool available",
+    with nothing on screen to resolve the two.
+
+    Asserted on the rows in order, not on presence: presence was already true of
+    the version this replaces.
+    """
+    at_a_terminal(monkeypatch)
+    terminal.note_tool("read_file", {"path": "notes.txt"})
+    terminal.show_tool_result("ok")
+    terminal.show_piece("the answer\n")
+    terminal.end_reply()
+    terminal.end_turn()
+
+    rows = screen_of(capsys.readouterr().out).splitlines()
+    where_summary = next(i for i, row in enumerate(rows) if "1 tool" in row)
+    where_answer = next(i for i, row in enumerate(rows) if "the answer" in row)
+
+    assert where_summary < where_answer, "the summary is still under the answer"
+
+
+def test_a_turn_gets_one_summary_and_not_two(capsys, monkeypatch, choice):
+    """#77 AC 24. Two callers reach the summary now, so it can be said twice.
+
+    `show_piece` draws it before the answer and `end_turn` draws it for a turn
+    that never produced one. A turn that does produce an answer passes through
+    both, and without the guard would be summarised twice.
+    """
+    at_a_terminal(monkeypatch)
+    terminal.note_tool("read_file", {"path": "notes.txt"})
+    terminal.show_tool_result("ok")
+    terminal.show_piece("the answer\n")
+    terminal.end_reply()
+    terminal.end_turn()
+
+    assert screen_of(capsys.readouterr().out).count("1 tool") == 1
+
+
+def test_a_turn_that_never_answers_still_accounts_for_its_tools(
+    capsys, monkeypatch, choice
+):
+    """#77 AC 24's other half. Out of rounds, or interrupted.
+
+    Without `end_turn`'s copy, a turn that called tools and then said nothing
+    would leave them unmentioned entirely - the case where a user most wants to
+    know something ran.
+    """
+    at_a_terminal(monkeypatch)
+    terminal.note_tool("read_file", {"path": "notes.txt"})
+    terminal.show_tool_result("ok")
+    terminal.end_turn()
+
+    assert "1 tool" in screen_of(capsys.readouterr().out)
