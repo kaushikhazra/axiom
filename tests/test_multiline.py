@@ -114,13 +114,24 @@ def test_the_composing_reader_can_be_replaced(capsys, monkeypatch, choice):
 def test_forgetting_the_composing_reader_returns_to_the_real_one(
     capsys, monkeypatch, choice
 ):
-    """The other half. A hook that cannot be released leaks into the next test."""
+    """The other half. A hook that cannot be released leaks into the next test.
+
+    **Written in cycle 2 asserting it fell back to `builtins.input`, and that was
+    right at the time** - there was no real composer yet, so a terminal with no
+    substitute read a plain line. Cycle 3 built one, and this failed loudly
+    rather than drifting, which is what it was for.
+
+    What it claims now is the same claim against the new truth: releasing the
+    hook returns the *real* composer. Asserted on which callable comes back,
+    because building a real one needs a console that a test process does not
+    have.
+    """
     at_a_terminal(monkeypatch)
     terminal.use_compose(lambda: "substituted")
-    terminal.use_compose(None)
+    assert terminal._composer() is not terminal.compose
 
-    feed(monkeypatch, ["typed"])
-    assert terminal.read_line() == "typed"
+    terminal.use_compose(None)
+    assert terminal._composer() is terminal.compose
 
 
 def test_the_hook_is_not_consulted_without_a_terminal(capsys, monkeypatch, choice):
@@ -136,3 +147,80 @@ def test_the_hook_is_not_consulted_without_a_terminal(capsys, monkeypatch, choic
         assert terminal.read_line() == "typed"
     finally:
         terminal.use_compose(None)
+
+
+# --- the reader --------------------------------------------------------------
+
+CTRL_ENTER = "\x1b\n"  # escape then line feed - see terminal.compose
+ENTER = "\r"
+
+
+def composed(typed: str) -> str:
+    """What `compose` returns for a run of key presses.
+
+    `create_pipe_input` delivers keys without a terminal, so this proves what
+    axiom does **with** a key. That this console delivers ctrl+enter as a
+    distinct key is a separate claim, measured once by hand and recorded in
+    `assumption.md`; no test can make it.
+    """
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    terminal.use_rendering(True)
+    with create_pipe_input() as pipe:
+        pipe.send_text(typed)
+        # **Close it.** Without this, a reader whose accept binding is broken
+        # waits forever for a key that never comes - and a hanging test is worse
+        # than a failing one twice over: it hangs the suite, and it hangs the
+        # break-proof, which then gets killed before it can put the file back.
+        # That happened, and left terminal.py holding a break.
+        # Closed, an unaccepted buffer ends in EOF and the test fails in
+        # milliseconds, which is what a break should look like.
+        pipe.close()
+        return terminal.compose(source=pipe, sink=DummyOutput())
+
+
+def test_enter_sends_the_message():
+    """#80 AC 3."""
+    assert composed("hello" + ENTER) == "hello"
+
+
+def test_ctrl_enter_starts_a_new_line_and_does_not_send():
+    """#80 AC 1, AC 2.
+
+    Both halves in one assertion: the message has two lines, which means the key
+    inserted one, and it arrived as a single return, which means it did not send.
+    """
+    assert composed("one" + CTRL_ENTER + "two" + ENTER) == "one\ntwo"
+
+
+def test_a_message_can_have_many_lines():
+    """#80 AC 1, past the two-line case that a special case would satisfy."""
+    typed = CTRL_ENTER.join(["alpha", "bravo", "charlie", "delta"]) + ENTER
+
+    assert composed(typed) == "alpha\nbravo\ncharlie\ndelta"
+
+
+def test_a_blank_line_inside_a_message_is_kept():
+    """#80 AC 18. Two ctrl+enters in a row are a blank line, not a no-op."""
+    assert (
+        composed("alpha" + CTRL_ENTER + CTRL_ENTER + "bravo" + ENTER)
+        == "alpha\n\nbravo"
+    )
+
+
+def test_a_single_line_message_is_unchanged_by_any_of_this():
+    """#80 AC 12. The whole feature is invisible to someone who never uses it."""
+    assert composed("just one line" + ENTER) == "just one line"
+
+
+def test_a_line_beginning_with_a_slash_is_still_what_was_typed():
+    """#80 AC 13's half that lives in the reader.
+
+    The reader returns text; whether a `/exit` is a command is settled above it.
+    What must not happen here is the reader treating it as anything special.
+    """
+    assert composed("/exit" + ENTER) == "/exit"
+    assert composed("/skill one" + CTRL_ENTER + "second line" + ENTER) == (
+        "/skill one\nsecond line"
+    )

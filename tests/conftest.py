@@ -52,6 +52,35 @@ def isolate_remembered_choice(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def compose_reads_a_line(monkeypatch):
+    """In tests, composing a message reads one line through `input` (#80).
+
+    A test process is not a console. The real composer reads keys, and
+    prompt_toolkit refuses to build against anything that is not a real Windows
+    console - so every test that forces `sys.stdout.isatty` in order to exercise
+    the *renderer* would otherwise die on a reader it is not testing. Fourteen
+    did the moment the composer was wired.
+
+    So the default here is the behaviour those tests were written against: one
+    line, from `builtins.input`, which is what `feed` substitutes.
+
+    **This does not hide the feature from its own tests.** #80's tests call
+    `terminal.compose` directly with a `create_pipe_input`, which is the only way
+    to deliver a key press without a terminal, and the wiring between
+    `read_line` and the composer is asserted separately in `test_multiline.py`.
+    """
+    from axiom import terminal
+
+    # `_prompt()`, not `PROMPT`: the accented one, which is what the real path
+    # draws at a terminal. Using the plain string here made #77's AC 30 test
+    # report that the prompt had lost its accent, when what it had lost was this
+    # fixture's attention.
+    terminal.use_compose(lambda: input(terminal._prompt()))
+    yield
+    terminal.use_compose(None)
+
+
+@pytest.fixture(autouse=True)
 def isolate_skills(monkeypatch, tmp_path):
     """No test reads or writes this repository's own `.axiom/skills/`.
 

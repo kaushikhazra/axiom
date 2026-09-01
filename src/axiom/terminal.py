@@ -635,6 +635,64 @@ def use_input(read=None) -> None:
     _typed = Typed(read=read) if read is not None else None
 
 
+def compose(source=None, sink=None) -> str:
+    """A message, however many lines it has (#80 AC 1, AC 2, AC 3).
+
+        enter        c-m            send it
+        ctrl+enter   escape, c-j    start another line
+
+    **`"c-enter"` is not a key, and binding it finds nothing.** On Windows
+    ctrl+enter arrives as a line feed with the control state set, and
+    prompt_toolkit turns that into escape-then-ControlJ - the VT100 convention
+    for a meta-modified key. It maps carriage return to ControlM and line feed
+    to ControlJ, then prefixes ControlJ with Escape when either control key is
+    down. Read out of `prompt_toolkit/input/win32.py`; quoted in full in
+    `.claude/loop/80-multiline/iteration-1/logs/cycle-1.md`.
+
+    A consequence worth knowing rather than discovering: **ctrl+enter and
+    ctrl+J are the same bytes to the console**, so they are the same key to
+    anything reading it. Nothing can separate them. Ctrl+J is not otherwise
+    used here, so the collision costs nothing - but it is a decision, not an
+    accident.
+
+    `multiline=True` is what lets the buffer hold a second line at all. With
+    it, prompt_toolkit's own default is the opposite of this - enter inserts
+    and escape-enter accepts - so both bindings are stated rather than one.
+
+    `source` and `sink` exist for tests. prompt_toolkit's `create_pipe_input`
+    delivers key presses without a terminal, which proves what axiom does with
+    a key - **not** that this console delivers it. That second half is the
+    manual pass's, and it is why AC 2 and AC 3 stay off the proved list.
+
+    Imported here rather than at module scope: a piped run must not pay to
+    load a library it never reaches.
+    """
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.formatted_text import ANSI
+    from prompt_toolkit.key_binding import KeyBindings
+
+    keys = KeyBindings()
+
+    @keys.add("c-m")
+    def _send(event) -> None:
+        event.current_buffer.validate_and_handle()
+
+    @keys.add("escape", "c-j")
+    def _newline(event) -> None:
+        event.current_buffer.insert_text("\n")
+
+    session = PromptSession(
+        multiline=True,
+        key_bindings=keys,
+        input=source,
+        output=sink,
+    )
+    # `ANSI(...)`, not the bare string: prompt_toolkit measures a prompt to
+    # place the cursor, and escape sequences handed to it as text are counted as
+    # visible columns and printed literally. #77 put the accent in there.
+    return session.prompt(ANSI(_prompt()))
+
+
 _compose = None
 
 
@@ -667,7 +725,7 @@ def _composer():
     """
     if not _rendering or not sys.stdout.isatty():
         return None
-    return _compose
+    return _compose or compose
 
 
 def read_line(timeout: float | None = None) -> "str | None | object":
