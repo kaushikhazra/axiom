@@ -1,66 +1,62 @@
-# Action — cycle 4
+# Action — cycle 5
 
-Stage 3, first half: **the session's facts as a panel, and the clear before it.**
-AC 7 to 16.
+Stage 3, second half: **the voice, the tool summary and the prompt.**
+AC 22 to 30, and the guards 32, 35, 36, 37.
 
-This is the expensive stage. Split it: the panel and the clear this cycle, then
-the voice, the tool summary and the prompt in cycle 5. Doing all of AC 7 to 33 in
-one pass puts the whole 78-line baseline diff behind a single green light.
+Thirteen criteria left. This is the last block of new behaviour.
 
 ## Read first
 
-- `.tmp/mock_startup.py` — the agreed design. `--static` draws all eight states.
-- `logs/cycle-3.md` — three of six tests were hollow last cycle and the reasons
-  generalise: a break that does not violate the criterion; a boundary that is not
-  at the boundary; a check that reads correct behaviour as failure.
+- `.tmp/mock_quiet_turn.py` — variant **D** is the agreed design: nothing per
+  call, one grey line after the turn, `·  4 tools, 2 failed`.
+- `.tmp/mock_turn.py` — the greys and the one-line forms.
+- `logs/cycle-4.md` — the terminal-only split is the shape to reuse. Anything that
+  changes what a redirected run prints will move the baseline, and the baseline
+  has not moved once in four cycles.
 
 ## Do these in order
 
-1. **The info panel** replacing `note_settled`, `announce`, `note_tool_cost`,
-   `note_servers` and `note_skills`. A row exists only where today's code prints
-   a line — that is AC 12 and it is what keeps a bare run bare.
+1. **The tool summary.** `note_tool` currently prints a line per call plus an
+   `outside the working directory` line. On a terminal: nothing per call, a
+   transient progress line while one runs, and one grey summary after the turn.
+   Not at a terminal: **unchanged**, or the baseline moves — it holds seven
+   `axiom: read_file(...)` lines and they are the transcript's record of #34.
 
-2. **`console.clear(home=True)` when the model is settled**, before the panel.
-   AC 7, and AC 10 says once and never again. Prove AC 10 by running a session
-   with several turns and counting the clears, not by reading the call site.
+2. **The voice in grey**, `terminal.VOICE_GREY`, and the `axiom:` prefix dropped
+   in favour of `·` — AC 27, AC 28. Terminal-only again. `VOICE` stays for the
+   plain path.
 
-3. **AC 9 — scrollback survives.** `clear(home=True)` does not touch it. Assert
-   on the escape actually emitted rather than on Rich's promise: a clear that
-   sends `\x1b[3J` wipes scrollback and looks identical in every other way.
+3. **The prompt** — AC 30. A single `>` in the accent, the typed line at the
+   terminal's own foreground.
 
-4. **The failures outside the box** — AC 16. They go to stderr today; keep them
-   there and keep them visibly not part of the facts.
+## The two that will be got wrong
 
-## The baseline
+- **AC 22 and AC 26 — nothing per call remains on screen.** The failure mode is a
+  transient line written and never erased: fine in a fast test, a trail of
+  spinners in a real terminal. **Assert on what is on the screen at the end**,
+  through `tests/screen.py`, not on what was written. A test that greps the byte
+  stream for absence will pass on output that is still sitting there.
 
-**78 of 477 lines change here.** Read the diff, line by line, and summarise it in
-the log. `AXIOM_WRITE_BASELINE=1` exists; using it to clear a red is the one thing
-that defeats the file.
+- **AC 35 — a bare run says no more than before.** A redesign is when a quiet path
+  grows chatty. Compare a no-tools, no-servers, no-skills run against the
+  baseline's own bare-run sections, and count lines rather than reading them.
 
-Before regenerating, ask the question #75 asked and got right: **can the code be
-narrowed so the baseline is restored rather than updated?** The transcript captures
-a non-tty run, and a non-tty run has no reason to draw a box. If the panel is drawn
-only at a terminal — which the chooser already does, `force_terminal=sys.stdout.isatty()`
-— then **the baseline may not need to change at all**, and 78 lines of diff become
-zero. Check that before anything else. It also decides AC 33.
+## Also
 
-## Watch for
-
-- **AC 12 will pass vacuously.** "A fact axiom does not have is left out" is true
-  of a panel that leaves out everything. Assert both directions: absent when
-  unknown, present when known.
-- **AC 15** — the settle reason on the model's row — is the one criterion in this
-  group that is not already true in some form. Do not let it ride on AC 11's test.
-- **The four negatives** in `test_models.py` and `test_switch.py` still lean on the
-  phrase `models on`. Stage 3 does not touch the chooser, so they should be
-  untouched; if one changes, something reached further than intended.
+- AC 23 needs the user to see *something* while a tool runs. A test cannot watch
+  a spinner; assert that something is written before the tool returns, with a
+  stub tool that blocks until released.
+- AC 25 — a turn calling no tools shows no summary line — is the boundary that
+  makes AC 24 mean anything. Both, or neither counts.
+- AC 36's second half is "counted in the summary line", which needs a turn with
+  one failing and one succeeding call.
 
 ## Do not
 
-- Touch the voice, the tool summary or the prompt. Cycle 5.
-- Regenerate the baseline to clear a failure.
+- Regenerate the baseline. Four cycles, zero lines. If it moves, the terminal-only
+  split has been broken somewhere.
 
 ## Record
 
-`logs/cycle-4.md`, per `observe.md`. Criteria met out of 37, the suite count and
-wall-clock, and the baseline's state — untouched, or the diff summarised.
+`logs/cycle-5.md`, per `observe.md`. If all 37 land, say so and stop the loop:
+delete the cron, and say that too.
