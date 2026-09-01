@@ -1,67 +1,87 @@
-# Action — cycle 1
+# Action — cycle 2
 
-**Read and record. Do not write code.**
+**The wrapping. That is the bug and everything else is arrangement.**
 
-The renderer already exists and works for twelve other constructs. A cycle that starts editing
-it before anyone has looked at what an indented block actually does today is guessing, and the
-guess will be "four spaces means code", which undoes #73.
+Cycle 1 measured it: an indented line longer than the window less two is **cut**, not wrapped.
+`"    def settle(host, named, installed, remembered):"` — 51 characters — comes out as 39
+columns on a 40-column screen. Twelve characters gone, silently.
 
-## Before anything else, two checks
+## Before anything else, three checks
 
-1. **`git status`** and **`git branch --show-current`** — this must be
-   `feature/76-indented-code`. A cycle that wakes on `master` switches and does not commit.
-2. **`gh issue view 76`** — the criteria, read before the code and before this file's
-   assumptions.
+1. **`git status`** and **`git branch --show-current`** — must be `feature/76-indented-code`.
+2. **`gh issue view 76`** — the criteria, before the diff and before cycle 1's log.
+3. **`uv run --no-sync python .claude/loop/cited.py tests/test_indented_code.py`** — what this
+   row's tests claim so far. Should say AC 4 only.
 
-## 1 — Capture what happens today
+## 1 — Build the wrapping (AC 1, AC 2)
 
-Through `tests/screen.py`, not by reading `_styled`. Write a throwaway under `.tmp/` that
-feeds a reply through the rendering path and prints what the screen holds. Four cases at
-minimum:
+**Reach for `_nested`, not for a new pattern.** #72 solved the identical problem for a nested
+list item: a terminal wraps to column zero, so `_nested` measures the room left beside the
+marker and draws the text into it, pushing every row after the first out to where the first
+row's text began. An indented block is the same shape with a different lead.
 
-- a block of three lines indented four spaces, each **wider than the window**;
-- the same block with each line **narrower** than the window;
-- a nested list four spaces deep — **this must still be a list** (AC 4, #73's behaviour);
-- a fenced block, for the comparison AC 3 and AC 5 are about.
+Where it goes: `_styled`, **after** the fence check and **after** `self._nested(line)` — cycle
+1 proved that putting it before takes four of #73's tests with it, and both AC 4 pins go red.
 
-**Record what you see, verbatim, in the log.** The issue says lines are lost; that is a report,
-not a measurement. Find out whether they are truncated, wrapped to column zero, padded, or
-something else, and at exactly which column it goes wrong. Every later cycle's fix is aimed at
-whatever this finds.
+What the recognition rule must be, given AC 4:
 
-## 2 — Pin AC 4 before anything can break it
+- four or more leading spaces, **and**
+- `self._nested(line)` returned `None`, **and**
+- no list is currently open — `self._levels` is what already tracks that.
 
-One test, from #73's own behaviour: a list item indented four spaces is a list item at its
-depth and is not code. It should pass today. **Break it anyway** — a rule that says "four
-leading spaces is code" placed ahead of the list check — and watch it go red. That break is
-what every later cycle is protected from.
+## 2 — Prove it with breaks, not with a screenshot
 
-## 3 — Establish the baseline numbers
+Two tests through `tests/screen.py`, and one break each:
 
-- `uv run pytest` — count, pass, wall-clock. Expect **876 passed, 1 deselected, ~89s**.
-- `tests/baseline/transcript.txt` — record that it is untouched. It has not moved in fifteen
-  cycles across three issues.
-- `uv run --no-sync python .claude/loop/cited.py tests/test_rendering.py` (or whichever file
-  holds #60's and #73's tests) — see what is already claimed, so this row does not write a
-  second test for something already covered.
+- **AC 1** — a block of three lines, each longer than the window, and every character present.
+  Break: restore the cut, `[: _width() - 2]`.
+- **AC 2** — the same at a **narrow** window, 20 columns, where the wrap has to happen twice.
+  Break: wrap at a fixed 80 rather than at `_width()`.
 
-## 4 — Name the design question, do not answer it
+**Assert on the joined screen text, not on the byte stream.** The plain echo puts the
+characters in the stream whatever the renderer did — that is the shape of all six of #60's
+vacuous tests, and the queue's Standing names it.
 
-`assumption.md` states the tension: AC 10 wants many lines shown as one block, and #60 AC 8 and
-AC 10 forbid holding lines back. The likely shape is **state rather than a buffer** — the
-classifier remembering a block is open, exactly as `self._fence` already does. **Write down
-what the measurement in step 1 implies about that**, and leave the decision to cycle 2, which
-starts with the evidence in hand.
+## 3 — Then AC 3, which is a decision
+
+> It is set apart from the prose around it, **the way a fenced block is**.
+
+Cycle 1 found the two are set apart *differently*: an indented block gets Rich's hardcoded
+`48;5;235` grey background across the full width; a fenced block gets no background at all and
+is marked by its dim fence markers. They cannot both be right.
+
+**Decide it in the cycle and record the reasoning** — the queue's Standing says a loop decides
+rather than asking. The reversible, least-surprising reading is that AC 3 asks for the *same*
+treatment a fenced block gets, since that is what it says, and `_MARKDOWN_STYLES`' comment
+already records #77's position that a block with no lexer carries no styling at all. Note that
+this also closes the crack cycle 1 found in #77 AC 20.
+
+## 4 — Re-measure AC 7 and AC 8 afterwards
+
+Both are boundaries against the window, and both were measured against a block whose indent had
+been collapsed to one column. **Once the wrapping lands, measure them again from scratch.**
+
+AC 8 is currently violated because the collapse bought three columns back. **Do not amend the
+criterion to match whatever the implementation then does** — that is the failure #48 and #49
+were caught by. Measure, then meet it.
+
+## 5 — AC 10, with cycle 1's evidence
+
+Rich emits a background-only row above and below **each line's** block. Three consecutive lines
+showed no gap today, but the fix changes what is emitted. **Check it again after the wrapping
+lands**, and if a gap appears, the answer is state — `self._fence` already does exactly this
+job — and not a buffer. Holding lines back is barred by #60 AC 8 and AC 10.
 
 ## Do not
 
-- Write or change any code in `src/`.
-- Add a rule that treats leading spaces as code without the list check ahead of it.
+- Put the indent check ahead of `self._nested`. Four of #73's tests and both AC 4 pins.
+- Amend a criterion to match what the code does.
+- Assert that text is present in the byte stream and call it a screen check.
 - Regenerate the baseline.
 - Use a heredoc for anything containing a backslash escape.
+- Leave a break in the file. Check `git diff` before finishing.
 - Merge.
 
 ## Record
 
-`logs/cycle-1.md`, per `observe.md`. Then write `action.md` for cycle 2 from what the
-measurement showed.
+`logs/cycle-2.md`, per `observe.md`. Then write cycle 3's action from what is left.
