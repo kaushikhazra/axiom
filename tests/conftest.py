@@ -64,10 +64,11 @@ def compose_reads_a_line(monkeypatch):
     So the default here is the behaviour those tests were written against: one
     line, from `builtins.input`, which is what `feed` substitutes.
 
-    **This does not hide the feature from its own tests.** #80's tests call
-    `terminal.compose` directly with a `create_pipe_input`, which is the only way
-    to deliver a key press without a terminal, and the wiring between
-    `read_line` and the composer is asserted separately in `test_multiline.py`.
+    **This is now the only path any test takes.** It used to say that #80's own
+    tests reached the real composer through a `create_pipe_input`; they did, and
+    those tests are gone - see `test_multiline.py` for why, and do not write
+    another one. The wiring between `read_line` and the composer is still
+    asserted there; what a key press does is settled by hand at a real terminal.
     """
     from axiom import terminal
 

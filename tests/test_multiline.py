@@ -5,6 +5,20 @@ be **terminal-only**: the golden transcript is 477 lines captured from a
 `StringIO`, and every one of the other 876 tests drives axiom by substituting
 `builtins.input`. If a piped run can reach the new reader, all of that changes
 meaning at once.
+
+**What is not here, and why.** Every test that built a real `prompt_toolkit`
+session - the enter/ctrl+enter bindings, the six paste tests, the abandon tests,
+the over-wide line - has been removed. Kaushik's machine crashed twice while they
+ran, and the escape is understood: `_say_how_to_send` calls `run_in_terminal`,
+which writes to the *real* console rather than to the `DummyOutput` the test
+supplied, so a test that fed `ctrl+enter` reached out of pytest and into the
+session that launched it. **Do not reintroduce a test that constructs a
+`PromptSession`, a pipe input, or a key processor.** Those criteria are verified by
+hand instead - a person types into a real terminal, which is where they were always
+going to be settled.
+
+What is left touches the reader only through the `use_compose` hook or through
+`builtins.input`, and is safe to run.
 """
 
 import builtins
@@ -151,83 +165,6 @@ def test_the_hook_is_not_consulted_without_a_terminal(capsys, monkeypatch, choic
 
 # --- the reader --------------------------------------------------------------
 
-CTRL_ENTER = "\x1b\n"  # escape then line feed - see terminal.compose
-ENTER = "\r"
-
-
-def composed(typed: str) -> str:
-    """What `compose` returns for a run of key presses.
-
-    `create_pipe_input` delivers keys without a terminal, so this proves what
-    axiom does **with** a key. That this console delivers ctrl+enter as a
-    distinct key is a separate claim, measured once by hand and recorded in
-    `assumption.md`; no test can make it.
-    """
-    from prompt_toolkit.input import create_pipe_input
-    from prompt_toolkit.output import DummyOutput
-
-    terminal.use_rendering(True)
-    with create_pipe_input() as pipe:
-        pipe.send_text(typed)
-        # **Close it.** Without this, a reader whose accept binding is broken
-        # waits forever for a key that never comes - and a hanging test is worse
-        # than a failing one twice over: it hangs the suite, and it hangs the
-        # break-proof, which then gets killed before it can put the file back.
-        # That happened, and left terminal.py holding a break.
-        # Closed, an unaccepted buffer ends in EOF and the test fails in
-        # milliseconds, which is what a break should look like.
-        pipe.close()
-        return terminal.compose(source=pipe, sink=DummyOutput())
-
-
-def test_enter_sends_the_message():
-    """#80 AC 3."""
-    assert composed("hello" + ENTER) == "hello"
-
-
-def test_ctrl_enter_starts_a_new_line_and_does_not_send():
-    """#80 AC 1, AC 2.
-
-    Both halves in one assertion: the message has two lines, which means the key
-    inserted one, and it arrived as a single return, which means it did not send.
-    """
-    assert composed("one" + CTRL_ENTER + "two" + ENTER) == "one\ntwo"
-
-
-def test_a_message_can_have_many_lines():
-    """#80 AC 1, past the two-line case that a special case would satisfy."""
-    typed = CTRL_ENTER.join(["alpha", "bravo", "charlie", "delta"]) + ENTER
-
-    assert composed(typed) == "alpha\nbravo\ncharlie\ndelta"
-
-
-def test_a_blank_line_inside_a_message_is_kept():
-    """#80 AC 18. Two ctrl+enters in a row are a blank line, not a no-op."""
-    assert (
-        composed("alpha" + CTRL_ENTER + CTRL_ENTER + "bravo" + ENTER)
-        == "alpha\n\nbravo"
-    )
-
-
-def test_a_single_line_message_is_unchanged_by_any_of_this():
-    """#80 AC 12. The whole feature is invisible to someone who never uses it."""
-    assert composed("just one line" + ENTER) == "just one line"
-
-
-def test_a_line_beginning_with_a_slash_is_still_what_was_typed():
-    """#80 AC 13's half that lives in the reader.
-
-    The reader returns text; whether a `/exit` is a command is settled above it.
-    What must not happen here is the reader treating it as anything special.
-    """
-    assert composed("/exit" + ENTER) == "/exit"
-    assert composed("/skill one" + CTRL_ENTER + "second line" + ENTER) == (
-        "/skill one\nsecond line"
-    )
-
-
-# --- #80 AC 4, 5, 22, 23: what the user sees while composing -----------------
-
 
 def test_a_continuation_line_is_marked_as_still_being_written(monkeypatch):
     """#80 AC 23, and AC 4 and AC 24 with it.
@@ -299,90 +236,7 @@ def test_the_hint_says_both_halves(capsys, monkeypatch):
     assert "another line" in said[0], "the hint never says how to add a line"
 
 
-# --- #80 AC 7 to 10: paste, which is why this is a bug -----------------------
-
-PASTE_START = "\x1b[200~"
-PASTE_END = "\x1b[201~"
-
-
-def pasted(text: str, then: str = ENTER) -> str:
-    """What `compose` returns when `text` arrives as a paste.
-
-    A terminal brackets a paste - `\x1b[200~` before, `\x1b[201~` after - so the
-    program can tell "the user pressed these keys" from "the user pasted this".
-    Windows consoles do not send those markers at all; prompt_toolkit infers a
-    paste instead, from a batch of keys arriving together containing a newline
-    and at least one character. Either way it becomes one `BracketedPaste` event.
-
-    Which means **this test proves the reader, not the console**. That a real
-    paste in a real terminal is recognised as one is on the manual pass's list.
-    """
-    from prompt_toolkit.input import create_pipe_input
-    from prompt_toolkit.output import DummyOutput
-
-    terminal.use_rendering(True)
-    with create_pipe_input() as pipe:
-        pipe.send_text(PASTE_START + text + PASTE_END + then)
-        pipe.close()
-        return terminal.compose(source=pipe, sink=DummyOutput())
-
-
-def test_pasting_several_lines_gives_one_message():
-    """#80 AC 7. The defect this issue exists for.
-
-    Measured before any of this was built: three lines pasted became three turns,
-    three requests, and three confused answers, and the message the user meant was
-    never assembled.
-    """
-    assert pasted("line one\nline two\nline three") == "line one\nline two\nline three"
-
-
-def test_every_pasted_line_is_there_in_the_order_pasted():
-    """#80 AC 8. Cheap-looking, and the cheapest place for an off-by-one to hide."""
-    lines = [f"line {n}" for n in range(1, 13)]
-
-    assert pasted("\n".join(lines)) == "\n".join(lines)
-
-
-def test_nothing_is_sent_while_a_paste_is_still_arriving():
-    """#80 AC 9, and the assertion that separates fixed from nearly fixed.
-
-    **A test that only checks the paste came back passes for an implementation
-    that sent line one and returned lines two and three.** That is precisely the
-    old behaviour with a smaller number, so what is asserted is that the *first*
-    line is still in the message rather than gone ahead of it.
-    """
-    got = pasted("first\nsecond\nthird")
-
-    assert got.startswith("first"), "the first line was sent before the rest arrived"
-    assert got.count("\n") == 2, "the paste was broken into pieces"
-
-
-def test_a_paste_whose_last_line_has_no_newline_is_still_complete():
-    """#80 AC 10. Most pastes end without a trailing newline."""
-    assert pasted("alpha\nbravo") == "alpha\nbravo"
-
-
-def test_blank_lines_inside_a_paste_survive():
-    """#80 AC 18, on the paste path rather than the typed one.
-
-    A stack trace and a config file both carry blank lines, and they are most of
-    what anyone pastes into a coding assistant.
-    """
-    assert pasted("alpha\n\nbravo\n\n\ncharlie") == "alpha\n\nbravo\n\n\ncharlie"
-
-
-def test_a_pasted_line_beginning_with_a_slash_is_text():
-    """#80 AC 11, at the reader.
-
-    The reader returns text either way; whether a `/exit` is a command is settled
-    above it. What must not happen here is the paste being cut at that line, or
-    the reader treating it as anything but characters.
-    """
-    assert pasted("/exit\nand more") == "/exit\nand more"
-    assert pasted("run this:\n/skill deploy\nthen stop") == (
-        "run this:\n/skill deploy\nthen stop"
-    )
+# --- #80 AC 11 to 14: a composed message that opens with a slash -------------
 
 
 def sent_to(monkeypatch, capsys, typed_message: str) -> list:
@@ -450,49 +304,7 @@ def test_a_typed_command_on_one_line_still_works(capsys, monkeypatch, choice):
     assert "skill" in printed.lower(), "a typed command stopped being a command"
 
 
-# --- #80 AC 24 to 26: changing your mind -------------------------------------
-
-ABANDON = "\x03"  # ctrl+c
-
-
-def test_abandoning_clears_the_message_and_keeps_the_prompt():
-    """#80 AC 25. Sends nothing, and returns to an empty prompt."""
-    assert composed("throw this away" + ABANDON + "kept this" + ENTER) == "kept this"
-
-
-def test_abandoning_a_multi_line_message_clears_all_of_it():
-    """#80 AC 25. Not just the line the cursor is on.
-
-    The failure this excludes is an abandon that clears one line of four and
-    leaves the rest, which reads as a bug rather than as a cancel.
-    """
-    half_written = "first" + CTRL_ENTER + "second" + CTRL_ENTER + "third"
-
-    assert composed(half_written + ABANDON + "fresh" + ENTER) == "fresh"
-
-
-def test_abandoning_does_not_end_the_session():
-    """#80 AC 26, and the trap in it.
-
-    ctrl+c has always meant "leave" at an idle prompt, and that was right when a
-    prompt held one line. With a message part-written it is wrong - the user
-    means *not that*, not goodbye - and ending the session would take the
-    conversation with it.
-
-    Proved by the reader returning a later message at all: had the interrupt
-    escaped, there would be no return value to assert on.
-    """
-    assert composed("half a thought" + ABANDON + "a whole one" + ENTER) == "a whole one"
-
-
-def test_an_interrupt_at_an_empty_prompt_still_leaves():
-    """#80 AC 26's other half, and AC 35's neighbour.
-
-    The fix for AC 25 must not swallow a real ctrl+c. Empty, the interrupt goes
-    up exactly as it did before #80 - which is what ends the session.
-    """
-    with pytest.raises(KeyboardInterrupt):
-        composed(ABANDON)
+# --- #80 AC 27: changing your mind reaches nothing ---------------------------
 
 
 def test_an_abandoned_message_never_reaches_the_model(capsys, monkeypatch, choice):
@@ -584,3 +396,71 @@ def test_end_of_input_at_an_empty_prompt_exits(capsys, monkeypatch, choice):
         terminal.use_compose(None)
 
     capsys.readouterr()  # exiting on end of input is not an error
+
+
+# --- #80 AC 19, 20, 36: the edges --------------------------------------------
+
+
+def read_with(monkeypatch, composed_text):
+    """What `read_line` makes of what the composer returned.
+
+    **At this level deliberately.** `compose` returns the buffer as typed - it
+    does not strip - and `read_line` is where trailing whitespace goes. A test
+    written against `compose` would assert the wrong thing about the right
+    behaviour and pass for a build that had broken it.
+    """
+    at_a_terminal(monkeypatch)
+    terminal.use_compose(lambda: composed_text)
+    try:
+        return terminal.read_line()
+    finally:
+        terminal.use_compose(None)
+
+
+def test_blank_lines_at_the_end_do_not_become_a_message_of_their_own(monkeypatch):
+    """#80 AC 19."""
+    assert read_with(monkeypatch, "hello\n\n\n") == "hello"
+
+
+def test_a_message_of_only_blank_lines_sends_nothing(capsys, monkeypatch, choice):
+    """#80 AC 20. Sends nothing, and leaves the prompt where it was.
+
+    Driven through `main` rather than `read_line`, because "sends nothing" is a
+    claim about the model being asked, not about a string being empty.
+    """
+    at_a_terminal(monkeypatch)
+    stub = StubBackend(models=INSTALLED, turns=[["should never be reached"]])
+    supply = iter(["\n\n\n", "/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=stub)
+    finally:
+        terminal.use_compose(None)
+    capsys.readouterr()
+
+    assert stub.streamed == [], "a message of blank lines was sent to the model"
+
+
+def test_leaving_with_a_message_part_composed_sends_nothing(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 36.
+
+    Ctrl-d with text in the buffer raises `EOFError`, which `read_line` already
+    turns into "leave". What this asserts is the half that matters: the
+    half-written text goes nowhere at all.
+    """
+    at_a_terminal(monkeypatch)
+    stub = StubBackend(models=INSTALLED, turns=[["should never be reached"]])
+
+    def leaves_mid_message():
+        raise EOFError
+
+    terminal.use_compose(leaves_mid_message)
+    try:
+        main([], using=stub)
+    finally:
+        terminal.use_compose(None)
+    capsys.readouterr()
+
+    assert stub.streamed == [], "a part-composed message was sent on the way out"
