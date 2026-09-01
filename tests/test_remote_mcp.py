@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from axiom import config, servers, tools
+from axiom import config, servers, terminal, tools
 from axiom.config import ServerSpec
 from conftest import StubBackend, feed
 
@@ -415,9 +415,9 @@ def listening():
 
     started = []
 
-    def start(name: str = "far"):
+    def start(name: str = "far", wait: float = 0.0):
         process = subprocess.Popen(
-            [sys.executable, str(HERE / "mcp_server.py"), "--http"],
+            [sys.executable, str(HERE / "mcp_server.py"), "--http", str(wait)],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -425,7 +425,8 @@ def listening():
         started.append(process)
         line = process.stdout.readline().strip()
         assert line.isdigit(), f"the server did not report a port, it said {line!r}"
-        return ServerSpec(name=name, address=f"http://127.0.0.1:{line}/mcp")
+        spec = ServerSpec(name=name, address=f"http://127.0.0.1:{line}/mcp")
+        return spec, process
 
     yield start
 
@@ -445,7 +446,7 @@ def test_a_remote_server_offers_its_tools_like_any_other(running, listening):
     arrived in some other shape would still show up in `connected` and would be
     invisible to a test that only counted.
     """
-    attached = running((listening(),))
+    attached = running((listening()[0],))
 
     assert attached.connected == {"far": 4}, (
         f"the server did not answer: {attached.failures}"
@@ -463,7 +464,7 @@ def test_a_remote_tool_is_called_and_answers(running, listening):
     Two tools, because `ping` takes no arguments and would pass for a call that
     dropped them. `shout` proves an argument arrived and came back changed.
     """
-    attached = running((listening(),))
+    attached = running((listening()[0],))
 
     assert attached.run("far__ping", {}) == "pong"
     assert attached.run("far__shout", {"text": "quietly"}) == "QUIETLY"
@@ -476,7 +477,7 @@ def test_both_kinds_work_in_one_session(running, listening):
     subprocess and one address in the same `Servers`, both answering, and each
     routed to the right one.
     """
-    attached = running((ours(), listening()))
+    attached = running((ours(), listening()[0]))
 
     assert attached.connected == {"tiny": 4, "far": 4}, (
         f"one kind did not answer: {attached.failures}"
@@ -493,7 +494,7 @@ def test_two_servers_offering_the_same_tool_stay_apart(running, listening):
     prefix as both the collision guarantee and the routing key - one mechanism -
     and this is that mechanism meeting a kind of server it did not exist for.
     """
-    attached = running((ours(), listening()))
+    attached = running((ours(), listening()[0]))
 
     from_stdio = attached.run("tiny__read_file", {"path": "one"})
     from_remote = attached.run("far__read_file", {"path": "two"})
@@ -519,7 +520,317 @@ def test_a_remote_server_whose_name_holds_the_separator(running, listening):
     once, so a name that contains it breaks both halves. A remote name goes
     through exactly the same rule, and this is the test that says so.
     """
-    attached = running((listening("odd__name"),))
+    attached = running((listening("odd__name")[0],))
 
     assert attached.connected == {"odd__name": 4}, f"{attached.failures}"
     assert attached.run("odd__name__ping", {}) == "pong"
+
+
+# --- #81 AC 9 to 15, 25: every way it goes wrong -----------------------------
+
+
+def nothing_listening(name: str = "gone") -> ServerSpec:
+    """An address guaranteed to refuse a connection.
+
+    A port bound and immediately released. Nothing can be listening there, which
+    makes "cannot be reached" deterministic rather than a guess about the
+    network - and it needs no server, so nothing has to be cleaned up.
+
+    The reverse of the `listening` fixture's rule and for the same reason: a port
+    picked out of the air might have someone on it, and the test would then be
+    checking a stranger.
+    """
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as free:
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+    return ServerSpec(name=name, address=f"http://127.0.0.1:{port}/mcp")
+
+
+def test_the_user_is_told_which_remote_servers_answered(capsys, running, listening):
+    """#81 AC 9. The same line a stdio server gets, and that is the point.
+
+    `note_servers` already draws "name: N tools" and knows nothing about
+    transports. What is asserted is that a remote server reaches it identically -
+    if a remote count needed a line of its own, AC 6's "indistinguishable in use"
+    would be false at the only place the user actually looks.
+
+    **The count comes from a server that really answered.** Written first as
+    `note_servers({spec.name: 4}, [])` with the four typed in by hand, which
+    tested `note_servers` and nothing else - a `_open` that counted a remote
+    server's tools wrongly, or not at all, would have sailed through it.
+    """
+    spec, _ = listening()
+    attached = running((spec,))
+    terminal.note_servers(attached.connected, attached.failures)
+    said = capsys.readouterr()
+
+    assert "far: 4 tools" in said.out, f"the count was not reported: {said.out!r}"
+
+
+def test_a_server_that_cannot_be_reached_is_named_with_a_reason(running):
+    """#81 AC 10. Named, with the reason, and the session carries on.
+
+    Three claims and all three are asserted. A failure that named the server and
+    not the reason would send the user to a working config file; one that gave
+    the reason without the name is useless with six servers configured.
+    """
+    attached = running((nothing_listening(),))
+
+    assert attached.connected == {}, "an unreachable server reported tools"
+    assert len(attached.failures) == 1, f"expected one failure: {attached.failures}"
+    assert attached.failures[0].startswith("gone:"), attached.failures[0]
+    assert attached.failures[0] != "gone:", "named, but with no reason given"
+    assert attached.started, "the session did not carry on"
+
+
+def test_a_run_that_reaches_none_of_its_servers_still_works(capsys, monkeypatch):
+    """#81 AC 25. Driven through `main`, because "usable" is about the session.
+
+    A `Servers` that reports failures and a session that still answers are two
+    different claims, and only the second is what a user cares about. This asks
+    for a turn after the failure and reads the answer.
+    """
+    from axiom import main
+
+    monkeypatch.setattr(
+        config,
+        "read_servers",
+        lambda path: ((nothing_listening(),), ()),
+    )
+    feed(monkeypatch, ["hello", "/exit"])
+    stub = StubBackend(models=["solo:1b"], turns=[["an answer anyway"]])
+
+    main([], using=stub)
+    shown = capsys.readouterr()
+
+    assert "an answer anyway" in shown.out, "the session was not usable"
+    assert "gone" in shown.err, f"the unreachable server was not named: {shown.err!r}"
+
+
+def test_a_slow_server_does_not_hold_the_session_past_the_start_limit(listening):
+    """#81 AC 11, and the race is removed rather than shrunk.
+
+    **Slow to accept, not slow to answer.** The server binds and listens, so the
+    connection completes, and then sleeps thirty seconds before uvicorn reads
+    anything. A tool that merely slept before replying would race the bound - and
+    #43's cycle 4 watched exactly that coin toss, a 1 ms timeout against a server
+    answering in about a millisecond.
+
+    Asserted on the clock as well as the outcome: a start bound that was ignored
+    would still fail eventually, and "it failed" is not the criterion.
+    """
+    import time
+
+    spec, _ = listening(wait=30.0)
+    attached = servers.Servers((spec,), start_timeout=1.0)
+    began = time.monotonic()
+    try:
+        attached.start()
+        took = time.monotonic() - began
+
+        assert attached.connected == {}, "a server that never answered reported tools"
+        # Against the bound, not against the server's thirty seconds. `< 15`
+        # was the first threshold and it is halfway to meaningless: the two
+        # guards give up after about one second each, so anything under five is
+        # the bound working and anything over is it not.
+        assert took < 5.0, f"the start bound did not hold: {took:.1f}s"
+    finally:
+        attached.stop()
+
+
+def test_a_call_past_the_call_limit_is_abandoned_and_says_so(listening):
+    """#81 AC 15. The `slow` tool exists for this and #43 uses it the same way.
+
+    A real wait rather than a tiny bound, for the reason above. And the session
+    has to survive it, or "abandoned" would mean "ended".
+    """
+    spec, _ = listening()
+    attached = servers.Servers((spec,), call_timeout=1.0)
+    try:
+        attached.start()
+        answer = attached.run("far__slow", {"seconds": 30})
+
+        assert answer.startswith("error:"), f"a call past its bound returned {answer!r}"
+        assert "far__slow" in answer or "far" in answer, (
+            f"the failure does not say which tool: {answer!r}"
+        )
+    finally:
+        attached.stop()
+
+
+def test_a_server_that_stops_answering_is_reported_when_called(running, listening):
+    """#81 AC 13 and AC 14 together, and AC 14 is the half that matters.
+
+    The server is killed between two calls. What is asserted is not only that the
+    dead one fails politely, but that **everything else still works** - another
+    server's tool and a built-in, in the same session, after the failure. A turn
+    that ended would satisfy "was reported" and fail the user.
+    """
+    spec, process = listening()
+    attached = running((ours(), spec))
+    assert attached.run("far__ping", {}) == "pong", "the server never answered"
+
+    process.terminate()
+    process.wait(timeout=10)
+
+    answer = attached.run("far__ping", {})
+    assert answer.startswith("error:"), f"a dead server answered {answer!r}"
+    assert "far" in answer, f"the failure does not say which server: {answer!r}"
+
+    assert attached.run("tiny__ping", {}) == "pong", "the other server went with it"
+    assert tools.run("read_file", {"path": str(HERE / "mcp_server.py")}).startswith(
+        '"""A tiny MCP server'
+    ), "a built-in went with it"
+
+
+def test_a_run_with_no_remote_servers_says_nothing_about_them(capsys, running):
+    """#81 AC 12. Configured servers, none of them remote, and no remote word.
+
+    Not AC 22's test with a different name: that run configured nothing at all.
+    This one has a server, gets a line about it, and the line must carry no
+    vocabulary that only exists because remote servers do.
+    """
+    attached = running((ours(),))
+    terminal.note_servers(attached.connected, attached.failures)
+    said = capsys.readouterr()
+
+    assert "tiny: 4 tools" in said.out, (
+        f"the stdio server was not reported: {said.out!r}"
+    )
+    for word in ("remote", "address", "http", "url"):
+        assert word not in said.out.lower(), f"a stdio-only run said {word!r}"
+
+
+# --- #81 AC 19, 20: what is left behind --------------------------------------
+
+
+def test_nothing_about_a_remote_server_is_written_to_disk(running, listening, tmp_path):
+    """#81 AC 19. Scoped to the working directory, which is where axiom writes.
+
+    A claim about absence needs a place to be absent from. The remembered-model
+    file and the skills directory are both already redirected into `tmp_path` by
+    `conftest`, so anything axiom wrote about a server would land there.
+    """
+    import os
+
+    was = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        before = set(tmp_path.rglob("*"))
+        spec, _ = listening()
+        attached = running((spec,))
+        assert attached.run("far__ping", {}) == "pong"
+        after = set(tmp_path.rglob("*"))
+    finally:
+        os.chdir(was)
+
+    assert after == before, f"a remote server left {after - before} on disk"
+
+
+def test_leaving_closes_the_connection(running, listening):
+    """#81 AC 20, measured rather than argued.
+
+    `terminate_on_close=True` sends a DELETE when the context exits, which is the
+    mechanism - but reading the SDK's source and believing it is not a test.
+
+    **Counted on axiom's own side, not the server's.** Written first against the
+    server process, and it reported no connections at all at any point - psutil
+    cannot enumerate that process's sockets here, so the test would have "passed"
+    by measuring nothing. Measured instead: axiom holds one established connection
+    to that port while the session is open and none after `stop()`. That is also
+    the side axiom is responsible for.
+
+    The first assertion is the guard against measuring nothing twice: with no
+    connection to begin with, the second proves nothing.
+
+    **Polled for two seconds, not ten**, and the number is load-bearing. httpx
+    expires an idle keep-alive connection after five, so a ten-second poll waits
+    out the keep-alive and reports success whether or not axiom closed anything -
+    which is why the first two breaks against this stayed green. Two seconds is
+    inside that window: the connection is still alive unless something closed it.
+
+    Polled at all rather than checked once because a socket closing is not
+    instantaneous, and a single check would be #43 cycle 4's race pointing the
+    other way.
+    """
+    import time
+
+    import psutil
+
+    spec, _ = listening()
+    port = int(spec.address.rsplit(":", 1)[1].split("/")[0])
+    me = psutil.Process()
+
+    def held() -> list:
+        return [
+            c
+            for c in me.net_connections()
+            if c.raddr and c.raddr.port == port and c.status == "ESTABLISHED"
+        ]
+
+    attached = servers.Servers((spec,))
+    attached.start()
+    try:
+        assert attached.run("far__ping", {}) == "pong"
+        assert held(), "nothing was connected to begin with, so nothing was proved"
+    finally:
+        attached.stop()
+
+    deadline = time.monotonic() + 2.0
+    while held() and time.monotonic() < deadline:
+        time.sleep(0.1)
+
+    assert not held(), f"leaving left {len(held())} connection(s) open"
+
+
+# --- #81 AC 21, AC 24: nothing else moved ------------------------------------
+
+
+def test_a_command_server_behaves_as_it_did(running, listening):
+    """#81 AC 21. A stdio server is untouched by a remote one being there.
+
+    **The real evidence for this criterion is #43's forty-five tests**, which
+    pass untouched across every cycle of this row and went red twenty at a time
+    when cycle 3 lost three imports. That is a break watched going red, and it is
+    a stronger statement than any single test written here could make.
+
+    What this adds is the case #43 cannot have: the same stdio server with a
+    remote one alongside it. Same tool count, same names, same answers.
+    """
+    alone = running((ours(),))
+    counts_alone = dict(alone.connected)
+    answer_alone = alone.run("tiny__shout", {"text": "same"})
+
+    together = running((ours(), listening()[0]))
+
+    assert together.connected["tiny"] == counts_alone["tiny"], (
+        "a remote server changed how many tools the stdio one declared"
+    )
+    assert together.run("tiny__shout", {"text": "same"}) == answer_alone
+    assert answer_alone == "SAME"
+
+
+def test_a_redirected_run_is_unchanged_by_a_remote_server(capsys, monkeypatch):
+    """#81 AC 24. Not a terminal, so the plain path, remote server or not.
+
+    A configured remote server must not make a redirected run start emitting
+    escape sequences or a different startup line - that is what the golden
+    transcript is 477 lines of, and it has not moved in sixteen cycles.
+    """
+    from axiom import main
+
+    monkeypatch.setattr(
+        config, "read_servers", lambda path: ((nothing_listening(),), ())
+    )
+    feed(monkeypatch, ["hello", "/exit"])
+    stub = StubBackend(models=["solo:1b"], turns=[["an answer"]])
+
+    main([], using=stub)
+    shown = capsys.readouterr()
+
+    assert shown.out.startswith("axiom: "), (
+        f"the run no longer opens plainly: {shown.out[:60]!r}"
+    )
+    assert "\x1b" not in shown.out, "escape sequences reached a redirected run"

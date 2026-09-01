@@ -51,7 +51,7 @@ def slow(seconds: float) -> str:
     return f"waited {seconds} seconds"
 
 
-def serve_over_http() -> None:
+def serve_over_http(wait: float = 0.0) -> None:
     """Listen on a port the operating system chose, and say which (#81).
 
     **The port is never fixed.** A hardcoded port fails on a machine where
@@ -66,8 +66,16 @@ def serve_over_http() -> None:
 
     The port goes to stdout on its own line, flushed, before serving starts. The
     test reads that line; nothing has to guess or poll.
+
+    `wait` is #81 AC 11 and it is **slow to accept, not slow to answer**. The
+    socket is listening, so a client's connection completes and its request sits
+    in the backlog with nothing to read it - which is what a server that has not
+    finished starting actually looks like. A tool that merely sleeps before
+    replying would race the start bound, and #43's rule is to remove a race
+    rather than shrink the window.
     """
     import socket
+    import time
 
     import uvicorn
 
@@ -80,6 +88,9 @@ def serve_over_http() -> None:
     listening.listen()
     print(listening.getsockname()[1], flush=True)
 
+    if wait:
+        time.sleep(wait)
+
     app = server.streamable_http_app()
     uvicorn.Server(uvicorn.Config(app, log_level="error")).run(sockets=[listening])
 
@@ -88,6 +99,8 @@ if __name__ == "__main__":
     import sys
 
     if "--http" in sys.argv:
-        serve_over_http()
+        at = sys.argv.index("--http")
+        after = sys.argv[at + 1 :]
+        serve_over_http(float(after[0]) if after else 0.0)
     else:
         server.run()

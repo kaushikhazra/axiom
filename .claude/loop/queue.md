@@ -26,11 +26,39 @@ cycles resolving each other's conflicts.
 | 17 | [#77](https://github.com/kaushikhazra/axiom/issues/77) the look of it | `77-look` | **done** - merged in PR #79, 8 cycles, all 37 criteria. Ran **outside** the queue, which was empty at the time; recorded here so the row order stays a full history |
 | 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **done, unmerged** - 10 cycles, 5h19m (2026-09-01 20:46 → 2026-09-02 02:05). **21 criteria by test, 15 by Kaushik** - never added up. Nineteen tests deleted after they crashed the machine twice; two vacuous tests found by breaks; filed [#83](https://github.com/kaushikhazra/axiom/issues/83). **Cycle 8 has no log - the machine went down during it**, and its tests were committed by the cycle that followed. Merge waits on `manual-pass.md` |
 | 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | **done, unmerged** - 2 cycles, 32 minutes, **all 13 criteria**. The defect was a truncation at the window less two, not a wrap. **Five tests could not have failed and three breaks were no-ops**, every one found by breaking rather than by reading. Merge waits on the manual pass #72, #73 and #74 already owe |
-| 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | **running** - started 2026-09-02 02:50, fail-safe **2026-09-02 06:50 +0530** |
+| 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | **done, unmerged** - 4 cycles, 1h40m, **all 25 criteria**. Found and fixed a defect in #43's own design: one shared `AsyncExitStack` for every session, so killing a *remote* server took a *stdio* one with it. **AC 20 took five breaks and four were no-ops**, one of which showed the test had been measuring httpx's keep-alive expiry rather than axiom closing anything |
 
-**The queue is running, on row 20 - the last one.** Rows 1 to 19 are done. The cron was deleted
-at the last handover, correctly - there was no chain left to end - and has been recreated for
-this run. **It is deleted again when row 20 finishes and not before.**
+**The queue is empty again.** Twenty rows, all done. **The cron has been deleted** - see
+**Handing over** for why that is right at the last handover and wrong at every other.
+
+**Rows 18 to 20 ran unattended between 01:35 and 04:30 on 2026-09-02** and produced one shipped
+fix, one converged feature, one new feature, and two follow-up issues. **Five branches are
+unmerged and five manual passes are owed** - #80, #76, #81, and #72/#73/#74 from before. Nothing
+in this run merged anything, deliberately: every row touched code that a person has not yet
+looked at running.
+
+**What this run is actually evidence for is the break, not the loop.** Across three rows it
+found:
+
+- **five tests that could not have failed** - one asking a modelled screen for a row wider than
+  the screen, which wraps; one filtering out blank rows while looking for a stray blank row; one
+  never forcing a terminal, so the flag under test was never consulted; one asserting the absence
+  of a string nothing had ever typed; one counting requests, which is satisfied by throwing the
+  message away;
+- **thirteen no-op breaks**, every one printing the same words a surviving test prints;
+- **two real defects in shipped code** - a schedule silently switching multi-line input off
+  ([#83](https://github.com/kaushikhazra/axiom/issues/83)), and one shared `AsyncExitStack`
+  letting a dead remote server take a live stdio one with it.
+
+Not one of those came from reading a diff. **A green suite cannot see any of them**, which is
+why the rule is to break a criterion before claiming it, and why a break that changes nothing
+has to be recognised as such rather than recorded as a survival.
+
+**The no-op break remains the open problem this queue has not solved.** #60 named it, the
+harnesses now print a warning when a replacement string is absent, and that still does not catch
+a break that applies cleanly and changes no behaviour - AC 20's first four, AC 7's cut against a
+line that already fitted, AC 9's blank row absorbed by the erase. The only thing that has ever
+caught one is looking at *why* it stayed green.
 
 **Row 20 is the only row in this queue that starts processes**, and the queue has been running
 unattended for hours on a machine with 16 GB. Anything a test starts is killed in a fixture
