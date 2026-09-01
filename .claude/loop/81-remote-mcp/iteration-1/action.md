@@ -1,84 +1,94 @@
-# Action — cycle 1
+# Action — cycle 2
 
-**Survey and record. Do not write code.**
+**The configuration half. None of it needs a server.**
 
-#43 built the MCP layer and it works. A cycle that starts adding a transport before anyone has
-looked at what the installed SDK offers is guessing at an import name, and the guess will be a
-transport that was deprecated two releases ago.
+AC 1, 2, 4, 5, 16, 17 and 18 are all about `ServerSpec` and the file that fills it. Seven
+criteria reachable without anything listening, which is the cheapest and safest ground on this
+row — and it settles the shape everything else is built on.
 
 ## Before anything else, three checks
 
 1. **`git status`** and **`git branch --show-current`** — must be `feature/81-remote-mcp`.
-2. **`gh issue view 81`** — the criteria, read before the code and before this file.
-3. **Nothing of this loop's is already running.** Check for stray python processes before
-   starting anything. `assumption.md` says why.
+2. **`gh issue view 81`** — the criteria, before the diff and before cycle 1's log.
+3. **No stray processes.** Cycle 1 left none; check anyway, and check again before exiting.
 
-## 1 — Survey the SDK, and write down what you read
+## What cycle 1 established, so it is not rediscovered
 
-- Which client transports the **installed** version offers for a server reachable over the
-  network, what each is called, and which the SDK's own documentation points at now.
-- **Record the version.** A finding about "the SDK" that does not say which one is a finding
-  with a shelf life of one release.
-- Whether any of it needs a dependency axiom does not already have. `assumption.md` says none
-  should; if one does, that is a finding for the log and a justification in `pyproject.toml`,
-  not a quiet addition.
+- **`streamable_http_client`, not `streamablehttp_client`.** SDK 2.1.1. The second is what
+  memory gives and it is an `ImportError` here.
+- Both network transports are live; **neither is deprecated**, so the choice is axiom's on other
+  grounds rather than "use the current one".
+- `headers` and `timeout` are not parameters of `streamable_http_client` — they go into an
+  `httpx2.AsyncClient` from `create_mcp_http_client`. `session_group.py` line 325 is the working
+  example.
+- **The seam is `Servers._open`'s first eleven lines.** Everything from `listed = await ...
+  list_tools()` down is already transport-agnostic.
+- `tests/mcp_server.py` can serve over `streamable-http` with `host` and `port`. It needs an
+  entry point, not a rewrite.
 
-Read it out of the installed package, not out of memory.
+## 1 — `ServerSpec` gains an address (AC 1, AC 2)
 
-## 2 — Read what #43 built, and find where the seam is
+`command` and `args` become optional beside an `address`. Both kinds in one file, both working
+in one session — AC 2 is about the *file*, so it is a `config` test with two entries.
 
-`src/axiom/servers.py`. Specifically:
+**Do not give `Servers` a second class.** Cycle 1's seam sentence is the design: one `Servers`,
+one routing rule, two ways in.
 
-- where `StdioServerParameters` and `stdio_client` are constructed — that is the only place
-  that should learn there are two kinds;
-- what `Servers` does on start, on call, and on stop, and **which of those steps are about a
-  subprocess** — those are the ones AC 3 says a remote entry must not reach;
-- how `SEPARATOR` routing works, because AC 8 rides on it and #43's cycle 4 found it broken for
-  a server whose name contained the separator.
+## 2 — The two refusals (AC 4, AC 5)
 
-Write the seam down in the log as a sentence: *"the one function that has to learn there are
-two kinds is X, and everything below it stays as it is."* If that sentence cannot be written,
-the design is not understood yet and cycle 2 will find out the expensive way.
+> 4. An entry that names neither a command nor an address is refused, and the refusal says which
+>    is missing.
+> 5. An entry that names both is refused, and the refusal says so.
 
-## 3 — Pin AC 22 and AC 3 before anything can break them
+`config.read_servers` already returns `(servers, problems)` and #43 built the vocabulary for a
+refused entry. Reuse it. **The refusal has to name the entry** — a user with six servers
+configured needs to know which one, and #55 exists because a message named a folder instead of a
+file.
 
-Two tests, both of which should pass today:
+## 3 — Addresses (AC 16, AC 18)
 
-- **AC 22** — a session with no MCP configured is byte-for-byte unchanged. The golden
-  transcript already says this; a test that says it *for this row* is what goes red when a
-  remote code path starts costing something on every run.
-- **AC 3** — nothing is spawned for an entry that names no command. Today no such entry can
-  exist, so pin the half that can be pinned: that `Servers` spawns exactly one subprocess per
-  configured command and none otherwise. **Break it and watch it go red.**
+> 16. An address that is not a valid URL is refused before anything is attempted.
+> 18. An address may carry a port, a path, and a query.
 
-## 4 — Name the AC 17 decision, do not answer it
+AC 16's "before anything is attempted" is the half with teeth: refused at *configuration* time,
+not by a transport failing later. The break is a rubbish address reaching `Servers` at all.
+
+AC 18 is three cases and they are cheap: `:8080`, `/mcp`, `?key=value`. Watch for a validator
+that accepts a port and quietly drops a query.
+
+## 4 — AC 17, decided this cycle
 
 > A plain-text address is refused, or the user is told the traffic is not encrypted.
 
-Two acceptable outcomes and they lead to different features. `assumption.md` records the leaning
-— refusing `http://` outright makes this useless for someone running a server on their own
-machine — but **cycle 2 decides with the survey in hand**, and records the reasoning under a
-heading that says it was a decision.
+**Two acceptable outcomes and they are different features.** `assumption.md` records the leaning:
+refusing `http://` outright makes this useless for someone running a server on their own
+machine, which is the ordinary case. Telling them once, plainly, is the least surprising reading,
+and `localhost` is arguably not worth a word.
 
-## 5 — Establish the baseline numbers
+**Decide it, record the reasoning under a heading that says it was a decision, and carry it into
+the handover.** Do not ask, and do not leave it for cycle 3.
 
-- `uv run pytest` — count, pass, wall-clock. Expect **876 passed, 1 deselected, ~89s**.
-- `tests/baseline/transcript.txt` — record that it is untouched.
-- `uv run --no-sync python .claude/loop/cited.py tests/test_mcp.py` — what #43 already claims,
-  so this row does not write a second test for something already covered.
+## 5 — Prove each one, and expect a no-op
+
+`observe.md`'s rate, and cycle 1's own: **AC 22 took three breaks and two of them were no-ops
+that printed `STAYED GREEN`.** A refusal test is especially prone to it — a break that stops the
+refusal firing looks identical to one that stops the *entry* existing.
+
+For each criterion, ask what would still pass if the feature did nothing, then break exactly
+that.
 
 ## Do not
 
-- Write or change any code in `src/`.
 - Fetch anything. No `npx -y`, no `uvx`, nothing downloaded at test time.
 - Contact a hosted server, or need a real secret.
-- Start a server on a fixed port.
+- Start a server on a fixed port. That question is cycle 3's and it is open.
 - Leave a process running. Check before you exit.
+- Give `Servers` a second class of server.
 - Regenerate the baseline.
 - Use a heredoc for anything containing a backslash escape.
 - Merge.
 
 ## Record
 
-`logs/cycle-1.md`, per `observe.md`. Then write `action.md` for cycle 2 from what the survey
-showed.
+`logs/cycle-2.md`, per `observe.md`. Then write cycle 3's action — which is where a server
+starts answering, and where the port question has to be settled.
