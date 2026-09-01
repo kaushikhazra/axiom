@@ -1,55 +1,55 @@
-# Action — cycle 2
+# Action — cycle 3
 
-**Prove the confinement first. Then add the dependency.**
+**The reader.** AC 1 to 5, and AC 33.
 
-Cycle 1 recommends `prompt_toolkit` and names the one thing that could overturn it: if it
-cannot be kept off the piped path, AC 30 fails, the golden transcript moves, and 876 tests
-change meaning. Adding it and then finding out is the expensive order.
+The confinement is proved and the hook exists, so the reader can be built behind both.
 
 ## Do these in order
 
-1. **Add `prompt_toolkit` to `pyproject.toml`** and sync. One dependency of its own,
-   `wcwidth`, BSD, Python >= 3.10 - all recorded in cycle 1.
+1. **A real composing reader**, behind `use_compose`'s seam, using `prompt_toolkit`:
 
-2. **Prove it is confined, before writing any reader.** A test that:
-   - runs a piped session, with `sys.stdout.isatty()` false, through `main()`
-   - asserts the output is byte-identical to the same session before the dependency existed
-   - and asserts `builtins.input` was the thing that read the line
-
-   Then **run the whole suite and check `tests/baseline/transcript.txt` is untouched.**
-   If it moved, stop and report - that is the finding, and no reader gets written until it
-   is understood.
-
-3. **Add the substitution hook.** Cycle 1's finding: every existing test supplies input by
-   monkeypatching `builtins.input`, so a terminal-only reader is unreachable from all 876 of
-   them. Give the composing reader its own hook, the way `use_input` is one for the timed
-   path. **Without this nothing about #80 is testable**, so it comes before the feature and
-   not after.
-
-4. **Then the reader**, terminal-only, behind that hook. Bind:
-
-       enter        c-m            accept
+       enter        c-m            accept the message
        ctrl+enter   escape, c-j    insert a newline
 
-   Not `"c-enter"`, which does not exist, and not a bare `c-j`, which also catches ctrl+J.
-   The mapping was read out of `prompt_toolkit/input/win32.py` and is quoted in cycle 1.
+   **Not `"c-enter"`** — there is no such key. On Windows ctrl+enter arrives as `\x0a`
+   with the control state set, and prompt_toolkit converts that to escape-then-ControlJ,
+   the VT100 convention for a meta-modified key. The mapping is quoted in `logs/cycle-1.md`
+   with the source it was read from.
 
-## Prove, do not claim
+2. **AC 33 has its before.** `.tmp/before-80.txt` holds a piped single-line session captured
+   before any of this landed. Compare against it and account for any difference — the one
+   already seen is the context window, which Ollama reports differently run to run and is
+   not axiom's doing.
 
-Take AC 30, 31, 32, 33 first - the guards. They are the ones a wrong move breaks silently,
-and they are testable today without any of the new behaviour existing.
+3. **Wire the reader in** so a real terminal session uses it, with the plain path untouched.
 
-**AC 33 needs a before.** Capture a single-line session's bytes now, on this branch, before
-the reader lands - otherwise there is nothing to compare against and the criterion becomes
-an opinion.
+## Prove
+
+Every criterion here is reachable by driving the reader with key presses that
+`prompt_toolkit` can be fed — its `PipeInput` exists for exactly this and does not need a
+terminal. **That proves the reader, not the terminal**, which is a distinction the log must
+keep making: a test that feeds `escape, c-j` proves axiom does the right thing with that
+key, not that this console delivers it.
+
+Break each one. On the measured rate from #77, roughly one break in four is aimed at the
+code rather than at the criterion and proves nothing.
+
+**AC 33 is the one to be careful with.** A single-line session must produce exactly the
+bytes it produces today, and the reader is now in that path at a terminal. The failure mode
+is subtle: an extra newline, a moved cursor, a prompt drawn twice.
 
 ## Do not
 
-- Write the composing behaviour this cycle. Confinement, hook, reader - in that order, and
-  stop when the cycle runs out rather than rushing the next step.
-- Regenerate the baseline.
+- Touch paste handling. That is cycle 4, and AC 9 is the hardest criterion in the issue.
+- Regenerate the baseline. Two issues and eight cycles without it moving.
+
+## Also
+
+`uv.lock` is still owed — it does not list `prompt_toolkit`. Run `uv lock` if no axiom
+session is holding `.venv/Scripts/axiom.exe`; if one still is, carry the note forward rather
+than dropping it.
 
 ## Record
 
-`logs/cycle-2.md`, per `observe.md`. Criteria met out of 36, the suite count and wall-clock,
-the baseline's state, and any addition to the list of what only a person can confirm.
+`logs/cycle-3.md`, per `observe.md`. Criteria out of 36, suite count and wall-clock, the
+baseline's state, and any addition to the list of what only a person can confirm.
