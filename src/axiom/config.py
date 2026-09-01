@@ -70,14 +70,32 @@ REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 @dataclass(frozen=True)
 class ServerSpec:
-    """One MCP server, as the user asked for it and as it will be started."""
+    """One MCP server, as the user asked for it and as it will be reached.
+
+    **Two kinds, one shape** (#81 AC 1, AC 2). A server is named either by a
+    `command` axiom starts or by an `address` that was already answering before
+    axiom ran - never both, and never neither. `read_servers` refuses those two
+    cases rather than letting an entry with no way in reach a transport.
+
+    One dataclass rather than two, deliberately. Everything downstream of the
+    transport - the tool filter, the `server__tool` routing, the declarations, the
+    count reported at startup - is the same for both, and a second class would
+    have every one of those places asking which it had.
+
+    `command` keeps its position and gains a default, so the four-positional form
+    `ServerSpec(name, command, args, env)` that #43's tests use still means what
+    it did.
+    """
 
     name: str
-    command: str
+    command: str = ""
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     # Only the tools named here are declared. Empty means all of them.
     tools: tuple[str, ...] = ()
+    # Where a server that axiom did not start is already listening. Empty means
+    # this is a `command` entry.
+    address: str = ""
 
 
 def _substituted(value: str, missing: list[str]) -> str:
@@ -136,21 +154,100 @@ def read_servers(path: Path) -> tuple[tuple[ServerSpec, ...], tuple[str, ...]]:
     servers: list[ServerSpec] = []
     problems: list[str] = []
     for name, entry in entries.items():
-        if not isinstance(entry, dict) or not entry.get("command"):
-            problems.append(f"{name} names no command")
+        if not isinstance(entry, dict):
+            problems.append(f"{name} needs either a command or an address")
             continue
         missing: list[str] = []
-        command = _substituted(str(entry["command"]), missing)
         args = tuple(_substituted(str(a), missing) for a in entry.get("args") or ())
         env = {
             key: _substituted(str(value), missing)
             for key, value in (entry.get("env") or {}).items()
         }
         tools = tuple(str(t) for t in entry.get("tools") or ())
+        command = (
+            _substituted(str(entry["command"]), missing) if entry.get("command") else ""
+        )
+        address = (
+            _substituted(str(entry["address"]), missing) if entry.get("address") else ""
+        )
+
+        # #81 AC 4 and AC 5. Both refusals name the entry: a project with six
+        # servers configured needs to know which one, and #55 exists because a
+        # message named a folder where the user needed a file.
+        if command and address:
+            problems.append(f"{name} names both a command and an address - use one")
+            continue
+        if not command and not address:
+            problems.append(f"{name} needs either a command or an address")
+            continue
+
+        if address:
+            wrong = _address_problem(name, address)
+            if wrong is not None:
+                problems.append(wrong)
+                continue
+            unencrypted = _unencrypted(name, address)
+            if unencrypted is not None:
+                problems.append(unencrypted)
+
         for name_of_variable in missing:
             problems.append(f"{name} wants ${{{name_of_variable}}}, which is not set")
-        servers.append(ServerSpec(name, command, args, env, tools))
+        servers.append(ServerSpec(name, command, args, env, tools, address))
     return tuple(servers), tuple(problems)
+
+
+def _address_problem(name: str, address: str) -> str | None:
+    """Why an address cannot be used, or None (#81 AC 16, AC 18).
+
+    **Refused here, at configuration time, rather than by a transport failing
+    later.** "Before anything is attempted" is the half of AC 16 with teeth: a
+    rubbish address that reaches `Servers` costs a start timeout and reports as a
+    connection failure, which sends the user looking at the network instead of at
+    the character they mistyped.
+
+    Only the scheme and the host are checked. A port, a path and a query are all
+    ordinary and are left exactly as written (AC 18) - a validator that accepted a
+    port and quietly dropped a query would meet AC 16 and break AC 18, and the
+    user would never be told.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(address)
+    except ValueError as unparsable:
+        return f"{name}: {address} is not a valid address ({unparsable})"
+    if parsed.scheme not in ("http", "https"):
+        named = parsed.scheme or "nothing"
+        return f"{name}: {address} is not a valid address - it names {named} rather than http or https"
+    if not parsed.netloc:
+        return f"{name}: {address} is not a valid address - it names no host"
+    return None
+
+
+def _unencrypted(name: str, address: str) -> str | None:
+    """A word about a plain-text address, or None (#81 AC 17).
+
+    **Told, not refused, and told for every `http://` including localhost.**
+
+    Told rather than refused because the ordinary case for a server that is
+    already running is one on the user's own machine, and refusing `http://`
+    outright would make this feature useless for the person most likely to want
+    it. It also matches what axiom already does with a bad entry everywhere else:
+    say what is wrong and carry on, because a problem with one server is not a
+    reason to end the session.
+
+    Localhost is **not** carved out, and that was the tempting half. Loopback
+    traffic really is unencrypted, and AC 17 says a plain-text address is refused
+    *or* the user is told - so staying silent for `http://localhost` would be
+    neither. Reading a criterion loosely to suit the implementation is what #48
+    and #49 were both caught by. If the line proves noisy in ordinary use that is
+    a change to the criterion, and it is Kaushik's to make.
+    """
+    return (
+        f"{name}: {address} is not encrypted - anything sent to it can be read in transit"
+        if address.lower().startswith("http://")
+        else None
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

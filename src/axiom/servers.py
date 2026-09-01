@@ -188,6 +188,18 @@ class Servers:
         returning failures rather than raising - a tool that cannot do its job
         is not a reason to end the session.
         """
+        if spec.address:
+            # #81 AC 3, held from the only end that exists yet: an entry named by
+            # address must not reach `StdioServerParameters`, `stdio_client`, or
+            # the devnull stderr below - all three are about a subprocess, and
+            # this server is not one.
+            #
+            # **Temporary, and it says so.** The transport that replaces this line
+            # is cycle 3's. Until then an address is configurable and not
+            # connectable, and the user is told that rather than being handed a
+            # connection failure for a server that was never dialled.
+            self.failures.append(f"{spec.name}: reached by address, not connected yet")
+            return
         try:
             parameters = StdioServerParameters(
                 command=spec.command,
