@@ -11,7 +11,7 @@ import json
 import pytest
 
 from axiom import backend, main, models
-from conftest import StubBackend, feed
+from conftest import StubBackend, feed, listed, row_for
 
 
 HOST = "http://localhost:11434"
@@ -44,12 +44,12 @@ def choice(tmp_path, monkeypatch):
 
 
 def rows(text):
-    """The model names, in the order the list printed them."""
-    return [
-        line.strip().split(". ", 1)[1].split("  ")[0]
-        for line in text.splitlines()
-        if line.strip()[:1].isdigit() and ". " in line
-    ]
+    """The model names, in the order the list printed them.
+
+    `listed` since #77 - the list is inside a border now, and a parser of its own
+    here was one of four that all keyed on "the line starts with a digit".
+    """
+    return listed(text)
 
 
 def run(capsys, monkeypatch, typed=None, tty=True, argv=None, **stub):
@@ -125,8 +125,8 @@ def test_the_default_is_a_model_that_can_call_tools(capsys, monkeypatch, choice)
     """AC 5. The whole point: `gemma2:2b` no longer takes the mark."""
     _, out = run(capsys, monkeypatch, ["1"])
 
-    assert "gemma4:e2b  tools  (default)" in out.out
-    assert "gemma2:2b  (default)" not in out.out
+    assert row_for(out.out, "gemma4:e2b").endswith("tools  (default)")
+    assert not row_for(out.out, "gemma2:2b").endswith("(default)")
 
 
 def test_a_piped_run_settles_on_a_model_that_can_call_tools(
@@ -164,7 +164,7 @@ def test_a_remembered_model_still_takes_the_mark_in_the_list(
 
     _, out = run(capsys, monkeypatch, [""])
 
-    assert "gemma2:2b  (default)" in out.out
+    assert row_for(out.out, "gemma2:2b").endswith("(default)")
     assert f"axiom: gemma2:2b at {HOST}" in out.out
 
 
@@ -175,8 +175,8 @@ def test_the_list_says_which_models_can_call_tools(capsys, monkeypatch, choice):
     """AC 8."""
     _, out = run(capsys, monkeypatch, ["1"])
 
-    assert "gemma4:e2b  tools" in out.out
-    assert "gemma2:2b  tools" not in out.out
+    assert "tools" in row_for(out.out, "gemma4:e2b")
+    assert "tools" not in row_for(out.out, "gemma2:2b")
 
 
 def test_nothing_is_annotated_when_it_would_explain_nothing(

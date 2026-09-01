@@ -1546,7 +1546,7 @@ def words(rows: list[str]) -> list[str]:
     return re.findall(r"[A-Za-z0-9_]+", text)
 
 
-def test_rendering_a_reply_changes_no_word_of_it():
+def test_rendering_a_reply_changes_no_word_of_it(monkeypatch):
     """#77 AC 34. The palette decorates; it must not edit.
 
     Compared against the same reply with rendering off, which is the only honest
@@ -1556,13 +1556,13 @@ def test_rendering_a_reply_changes_no_word_of_it():
     """
     source = ACCENTED + "\n" + REPLY
 
-    rendered = words(shown(source, width=80))
+    rendered = words(shown(source, width=80, monkeypatch=monkeypatch))
     plain = words(source.split("\n"))
 
     assert rendered == plain, "rendering changed the words of the reply"
 
 
-def test_no_character_is_lost_in_a_window_too_narrow_to_hold_them():
+def test_no_character_is_lost_in_a_window_too_narrow_to_hold_them(monkeypatch):
     """#77 AC 34 at the boundary that breaks renderers.
 
     A wide line is where a container crops - #72 exists because a 182-character
@@ -1592,7 +1592,7 @@ def test_no_character_is_lost_in_a_window_too_narrow_to_hold_them():
     )
     letters = re.compile(r"[^A-Za-z]")
 
-    drawn = letters.sub("", "".join(shown(source, width=24)))
+    drawn = letters.sub("", "".join(shown(source, width=24, monkeypatch=monkeypatch)))
     plain = letters.sub("", source)
 
     assert drawn == plain, f"{len(plain) - len(drawn):+d} letters"

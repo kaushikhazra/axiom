@@ -56,10 +56,12 @@ def show_models(
     user did not mean, and the answer is on screen rather than in a flag they
     have to remember typing.
 
-    Numbers are right-aligned so a ten-model host does not stagger the names.
+    Numbers are right-aligned so a ten-model host does not stagger the names,
+    and names are padded to the longest so the annotations line up under each
+    other rather than staggering with them (#77 AC 2).
     """
-    print(f"{VOICE} models on {host}")
-    width = len(str(len(models)))
+    number_width = len(str(len(models)))
+    longest = max((len(model) for model in models), default=0)
     label = "  (current)" if current else "  (default)"
     # Annotated only where it explains something (#52 AC 8): a host whose
     # models can *all* call tools, or none of which can, has an order that is
@@ -67,13 +69,79 @@ def show_models(
     # making every row longer. Mixed hosts are the case the ordering exists
     # for, and the only case where a reader needs to be told why.
     mixed = capable is not None and 0 < len(capable) < len(models)
+
+    rows = []
     for number, model in enumerate(models, start=1):
-        tools = "  tools" if mixed and model in capable else ""
-        print(f"  {number:>{width}}. {model}{tools}{label if model == marked else ''}")
+        marked_here = model == marked
+        # Padded even on the last column's absence: a row with no annotation
+        # still holds the name's column open, or the marker below it moves.
+        name = model.ljust(longest) if mixed or marked_here else model
+        tools = "  tools" if mixed and model in capable else ("      " if mixed else "")
+        rows.append(
+            (f"{number:>{number_width}}. ", name, tools, label if marked_here else "")
+        )
+    _show_model_panel(rows, host)
+
     if capable is not None and not capable:
         # AC 9. Said once rather than per row - it is a fact about the host,
         # not about any one model, and without it the order looks arbitrary.
         print(f"{VOICE} none of these can call tools")
+
+
+def _show_model_panel(rows: list[tuple[str, str, str, str]], host: str) -> None:
+    """The numbered list, inside a border, in the accent (#77 AC 1).
+
+    A rendering failure must not cost the user the list - the same promise
+    `_as_markdown` makes about a reply. Without the fallback a Rich that cannot
+    draw a box would leave a user who has to choose a model with nothing to
+    choose from.
+    """
+    try:
+        from rich.box import ROUNDED
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        body = Text()
+        for index, (number, name, tools, marker) in enumerate(rows):
+            if index:
+                body.append("\n")
+            body.append(number, style=ACCENT)
+            body.append(name, style=f"bold {ACCENT}" if marker else "")
+            # "dim default" rather than "dim": a style inside a panel is laid
+            # over the border's, so a bare "dim" inherits the accent and comes
+            # out tinted rather than grey.
+            body.append(tools, style="dim default")
+            body.append(marker, style=f"bold {ACCENT}")
+
+        Console(
+            force_terminal=sys.stdout.isatty(),
+            legacy_windows=False,
+            no_color=_colourless(),
+            width=_width(),
+        ).print(
+            Panel(
+                body,
+                # **The whole phrase, not a `models` title with the host as a
+                # subtitle.** Ten assertions across test_models, test_switch and
+                # test_tools_first match `models on <host>`, and four of them are
+                # negatives - `assert "models on" not in out.out`. Shortening this
+                # title does not fail them, it makes them **pass while testing
+                # nothing**. Keep the phrase whole.
+                title=Text(f"models on {host}", style=f"bold {ACCENT}"),
+                title_align="left",
+                border_style=ACCENT,
+                box=ROUNDED,
+                padding=(1, 2),
+                expand=False,
+            )
+        )
+    except Exception:
+        # The same trade `_as_markdown` makes: formatting is what a failure
+        # costs, never the content.
+        print(f"{VOICE} models on {host}")
+        for number, name, tools, marker in rows:
+            print(f"  {number}{name.rstrip()}{tools}{marker}")
 
 
 def ask_model(hint: str = "enter for the default") -> str:
