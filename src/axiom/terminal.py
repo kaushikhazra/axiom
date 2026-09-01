@@ -636,16 +636,16 @@ def use_input(read=None) -> None:
 
 
 def _compose_continuation():
-    """What marks the second line of a message, and the third (#80 AC 22).
+    """What marks the second line of a message, and the third (#80 AC 23).
 
     prompt_toolkit's default is `prompt_width` spaces. That lines the text up
     and **marks nothing** - so a message part way through looks exactly like one
-    that has already been sent and answered, which is the one thing AC 22 asks
+    that has already been sent and answered, which is the one thing AC 23 asks
     it not to look like.
 
     A marker in the voice's grey instead: quieter than the answer, because it is
     axiom's furniture rather than the user's words, and visible enough to say
-    "still yours, not sent". Every line staying on screen is what AC 4 and AC 23
+    "still yours, not sent". Every line staying on screen is what AC 4 and AC 24
     ask for, and prompt_toolkit does that part already.
 
     Returned as a callable rather than inlined so it can be tested without a
@@ -740,7 +740,7 @@ def compose(source=None, sink=None) -> str:
     def _abandon(event) -> None:
         """Throw the message away, or leave if there is nothing to throw.
 
-        #80 AC 24, AC 25 - and the two pull against each other, which is why
+        #80 AC 25, AC 26 - and the two pull against each other, which is why
         both are here rather than one.
 
         ctrl+c has always meant "leave" at an idle prompt, and that was right
@@ -753,7 +753,7 @@ def compose(source=None, sink=None) -> str:
         exactly as it did before #80, and `read_line` ends the session.
 
         Nothing is sent either way, and nothing reaches the history - which is
-        AC 26, and it is structural rather than defended: this returns to the
+        AC 27, and it is structural rather than defended: this returns to the
         reader, and only a message that is *accepted* leaves it.
         """
         if event.current_buffer.text:

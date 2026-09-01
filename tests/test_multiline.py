@@ -230,7 +230,7 @@ def test_a_line_beginning_with_a_slash_is_still_what_was_typed():
 
 
 def test_a_continuation_line_is_marked_as_still_being_written(monkeypatch):
-    """#80 AC 22, and AC 4 and AC 23 with it.
+    """#80 AC 23, and AC 4 and AC 24 with it.
 
     prompt_toolkit's default continuation is `prompt_width` spaces, which lines
     the text up and marks nothing - a message part way through then looks exactly
@@ -359,7 +359,7 @@ def test_nothing_is_sent_while_a_paste_is_still_arriving():
 
 
 def test_a_paste_whose_last_line_has_no_newline_is_still_complete():
-    """#80 AC 9's boundary. Most pastes end without a trailing newline."""
+    """#80 AC 10. Most pastes end without a trailing newline."""
     assert pasted("alpha\nbravo") == "alpha\nbravo"
 
 
@@ -373,7 +373,7 @@ def test_blank_lines_inside_a_paste_survive():
 
 
 def test_a_pasted_line_beginning_with_a_slash_is_text():
-    """#80 AC 10, at the reader.
+    """#80 AC 11, at the reader.
 
     The reader returns text either way; whether a `/exit` is a command is settled
     above it. What must not happen here is the paste being cut at that line, or
@@ -407,7 +407,7 @@ def sent_to(monkeypatch, capsys, typed_message: str) -> list:
 def test_a_multi_line_message_beginning_with_a_command_is_a_message(
     capsys, monkeypatch, choice
 ):
-    """#80 AC 10, above the reader, where it is actually decided.
+    """#80 AC 11 and AC 14, above the reader, where they are actually decided.
 
     `/exit` was already safe - it is matched by equality, and a message with more
     lines is not equal to it. **`/model` and `/skill` were not**: both used
@@ -425,7 +425,7 @@ def test_a_multi_line_message_beginning_with_a_command_is_a_message(
 def test_a_multi_line_message_beginning_with_slash_skill_is_a_message(
     capsys, monkeypatch, choice
 ):
-    """#80 AC 10. The same hole, the other command."""
+    """#80 AC 11 and AC 14. The same hole, the other command."""
     asked = sent_to(monkeypatch, capsys, "/skill deploy\nplus a second line")
 
     assert asked, "the message never reached the model"
@@ -433,7 +433,7 @@ def test_a_multi_line_message_beginning_with_slash_skill_is_a_message(
 
 
 def test_a_typed_command_on_one_line_still_works(capsys, monkeypatch, choice):
-    """#80 AC 13, which pulls directly against AC 10.
+    """#80 AC 13, which pulls directly against AC 11 and AC 14.
 
     Same characters, different meaning, told apart only by whether there is a
     second line. A fix for AC 10 that broke this would have met neither.
@@ -456,12 +456,12 @@ ABANDON = "\x03"  # ctrl+c
 
 
 def test_abandoning_clears_the_message_and_keeps_the_prompt():
-    """#80 AC 24. Sends nothing, and returns to an empty prompt."""
+    """#80 AC 25. Sends nothing, and returns to an empty prompt."""
     assert composed("throw this away" + ABANDON + "kept this" + ENTER) == "kept this"
 
 
 def test_abandoning_a_multi_line_message_clears_all_of_it():
-    """#80 AC 24. Not just the line the cursor is on.
+    """#80 AC 25. Not just the line the cursor is on.
 
     The failure this excludes is an abandon that clears one line of four and
     leaves the rest, which reads as a bug rather than as a cancel.
@@ -472,7 +472,7 @@ def test_abandoning_a_multi_line_message_clears_all_of_it():
 
 
 def test_abandoning_does_not_end_the_session():
-    """#80 AC 25, and the trap in it.
+    """#80 AC 26, and the trap in it.
 
     ctrl+c has always meant "leave" at an idle prompt, and that was right when a
     prompt held one line. With a message part-written it is wrong - the user
@@ -486,7 +486,7 @@ def test_abandoning_does_not_end_the_session():
 
 
 def test_an_interrupt_at_an_empty_prompt_still_leaves():
-    """#80 AC 25's other half, and AC 34's neighbour.
+    """#80 AC 26's other half, and AC 35's neighbour.
 
     The fix for AC 25 must not swallow a real ctrl+c. Empty, the interrupt goes
     up exactly as it did before #80 - which is what ends the session.
@@ -496,7 +496,7 @@ def test_an_interrupt_at_an_empty_prompt_still_leaves():
 
 
 def test_an_abandoned_message_never_reaches_the_model(capsys, monkeypatch, choice):
-    """#80 AC 26. The conversation is exactly as it was before it began.
+    """#80 AC 27. The conversation is exactly as it was before it began.
 
     Structural rather than defended - an abandoned buffer never leaves the reader
     - but asserted anyway, because "nothing was sent" is the claim a user cares
@@ -508,11 +508,11 @@ def test_an_abandoned_message_never_reaches_the_model(capsys, monkeypatch, choic
     assert all("throw this away" not in message for message in asked)
 
 
-# --- #80 AC 32 to 36: what did not change ------------------------------------
+# --- #80 AC 31 to 36: what did not change ------------------------------------
 
 
 def test_no_render_is_unchanged_by_composing(capsys, monkeypatch, choice):
-    """#80 AC 32. `--no-render` takes the plain path, composer or no composer.
+    """#80 AC 31. `--no-render` takes the plain path, composer or no composer.
 
     **Asserted on which reader was used, not on the output.** The first version
     checked the printed bytes, and could not fail: `conftest` substitutes a
