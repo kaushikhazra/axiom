@@ -1,84 +1,97 @@
-# Action — cycle 3
+# Action — cycle 4
 
-**A remote server answering. This is the cycle with a process in it.**
+**The failures: AC 9 to 15, and AC 25 with them.**
 
-Cycle 2 made an address configurable and proved it reaches none of the subprocess path. Cycle 3
-connects it, which means `tests/mcp_server.py` gains an HTTP entry point and the port question
-has to be settled.
+A remote server now connects and its tools are called. What is untested is every way it can go
+wrong, which is where a feature like this is actually judged — a user whose server is down needs
+to be told which one and carry on, not read a stack trace or lose the session.
 
 ## Before anything else, three checks
 
 1. **`git status`** and **`git branch --show-current`** — must be `feature/81-remote-mcp`.
 2. **`gh issue view 81`** — the criteria, before the diff and before the logs.
-3. **No stray processes**, and check again before exiting. This is the cycle where that stops
-   being a formality.
+3. **No stray processes**, and check again before exiting. Cycle 3 started servers and left none;
+   keep it that way.
 
-## What the earlier cycles established
+## What cycle 3 established
 
-- **`streamable_http_client`, not `streamablehttp_client`.** SDK 2.1.1.
-- `headers` and `timeout` are not its parameters — they go into an `httpx2.AsyncClient` from
-  `create_mcp_http_client`. `session_group.py` line 325 is the working example.
-- `terminate_on_close=True` is the default, which may make **AC 20 free**.
-- **The seam is `Servers._open`'s first eleven lines.** Everything from `listed = await ...
-  list_tools()` down already works for both.
-- `Servers._open` currently returns early for an address with *"reached by address, not connected
-  yet"*. **That line is this cycle's to delete.**
-- `tests/mcp_server.py` can serve over `streamable-http` with `host` and `port`.
+- **`Servers._transport` is the only place that knows there are two kinds.** If a change to
+  handle a failure has to touch anything else, say so in the log — that is the design moving.
+- `tests/mcp_server.py --http` binds its own socket, prints the port, and serves. The
+  `listening` fixture starts one and kills it in teardown.
+- The script records **how it was started** and says so in its answers. That is what lets a test
+  tell two servers apart, and it exists because a test could not.
+- `terminate_on_close=True` is the default, so **AC 20 may already hold** and needs proving.
 
-## 1 — Settle the port, first
+## 1 — Startup (AC 9, AC 10, AC 12, AC 25)
 
-`assumption.md` forbids a fixed one: it fails where something else is listening and, worse,
-*passes* by talking to whatever that is. Two ways out:
+- **AC 9** — which remote servers answered and how many tools each offers. `note_servers`
+  already draws this for stdio servers; the question is whether a remote one reaches it
+  identically. **It should need no code at all** — check before writing any.
+- **AC 10** — a server that cannot be reached is named, **with the reason**, and the session
+  carries on. An address on a closed port is the honest case and needs no server: bind a socket,
+  read the port, close it, and point at it. That address is guaranteed unreachable.
+- **AC 12** — a run with no remote servers says nothing about them. AC 22's test is close but not
+  the same: this one has stdio servers configured and still says nothing about remote ones.
+- **AC 25** — a run that cannot reach *any* of its remote servers still starts and is usable.
+  Drive it through `main` rather than through `Servers`, because "usable" is a claim about the
+  session.
 
-- bind a socket to port 0, read the port, close it, hand it over — a small race;
-- have the server print its chosen port on stdout and the test read the line.
+## 2 — The bounds (AC 11, AC 15)
 
-**The second has no race and is barely more code.** Prefer it unless it does not work, and say in
-the log which was used and why.
+> 11. A remote server that is slow to answer does not hold the session open past the start limit.
+> 15. A call that exceeds the call limit is abandoned, and says so.
 
-Whatever is chosen: **the fixture kills the process in teardown, and the cycle checks before it
-exits.**
+**AC 11 is where the race lives.** #43's cycle-4 rule: *remove a race rather than shrinking the
+window.* A start limit tested against a server that answers in a millisecond is a coin toss that
+usually passes. The server needs to be genuinely slow to *accept*, not slow to answer — a socket
+that is bound and listening but never accepted, or a `--http` mode that sleeps before serving.
+Decide, and say which in the log.
 
-## 2 — Connect (AC 6, AC 7, and AC 2's second half)
+AC 15 is easier: `mcp_server.py` already has a `slow` tool built for exactly this, and #43 uses
+it. Reuse rather than invent.
 
-Replace the early return with the transport. The whole change should be inside those eleven
-lines — if it is not, cycle 1's seam sentence was wrong and that is the finding.
+## 3 — Mid-session (AC 13, AC 14)
 
-- **AC 6** — the tools appear alongside every other tool, indistinguishable in use.
-- **AC 7** — a tool is called and its result shown exactly as a local one is.
-- **AC 2's second half** — both kinds working in one session. One stdio server and one remote in
-  the same `Servers`, both answering.
+> 13. A remote server that stops answering mid-session is reported when a tool of its is called.
+> 14. A failed call to a remote server does not end the turn.
 
-## 3 — AC 8, and it has a known trap
+Kill the server process between two calls. #43 does this for stdio and the test to copy is
+`test_a_server_that_dies_fails_only_its_own_tools`. **AC 14's half that matters is that
+*everything else still works*** — a built-in and another server's tool, in the same session,
+after the failure.
 
-> Two servers offering a tool of the same name stay distinguishable.
+## 4 — State (AC 19, AC 20)
 
-#43 cycle 4 found this broken for a server whose **name contained the separator**. `SEPARATOR`
-is `__` and is both the collision guarantee and the routing key. A remote name goes through the
-same rule or the guarantee is half a guarantee. Test with a remote server named `odd__name`.
+> 19. Nothing about a remote server is written to disk by axiom.
+> 20. Leaving axiom leaves no connection open.
 
-## 4 — Do not claim what you have not broken
+AC 19 is a claim about absence: run a session with a remote server and assert nothing new
+appeared. Scope it — `tmp_path` and the working directory, not the whole disk.
 
-Cycle 2's AC 3 test passed for the wrong reason and only the break found it: an address entry
-has an empty command, `stdio_client` failed to exec, no process appeared, and the test was green
-while axiom had attempted a subprocess and waited out its timeout. **"Nothing happened" is not
-"nothing was tried".**
+AC 20 needs a measurement, not an argument. `terminate_on_close` sending a DELETE is the
+mechanism; the test is that the socket is gone. Counting the server's connections, or asserting
+the process exits cleanly, are both better than reading the SDK's source and believing it.
 
-Expect the same shape here. A remote tool that returns nothing and a remote server that was never
-reached look identical from the outside unless the test says which.
+## 5 — Expect a no-op break
+
+Seven so far in this queue, two of them in cycle 3. **A failure test is especially prone**: a
+break that stops the *failure* being reported looks identical to one that stops the *server*
+existing. For each, ask what would still pass if the feature did nothing.
 
 ## Do not
 
-- Fetch anything. No `npx -y`, no `uvx`, nothing downloaded at test time.
-- Contact a hosted server, or need a real secret.
+- Fetch anything, contact a hosted server, or need a real secret.
 - Start a server on a fixed port.
 - Leave a process running. **Check before you exit.**
-- Give `Servers` a second class of server.
+- Split a refactor that moves a call across two edits — cycle 3 lost three imports to the
+  formatter that way.
 - Regenerate the baseline.
 - Use a heredoc for anything containing a backslash escape.
 - Merge.
 
 ## Record
 
-`logs/cycle-3.md`, per `observe.md`. Then write cycle 4's action, which is AC 9 to 15 — the
-failures, and where AC 11's race lives.
+`logs/cycle-4.md`, per `observe.md`. If AC 9 to 15, 19, 20 and 25 all land, the row is done and
+**this is the last row in the queue** — follow `loop.md`'s exit, which is the one handover where
+the cron is deleted.

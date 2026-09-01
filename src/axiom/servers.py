@@ -180,27 +180,33 @@ class Servers:
             self._ready.set()
             await self._stop.wait()
 
-    async def _open(self, spec: ServerSpec, sessions: AsyncExitStack) -> None:
-        """One server, or a recorded reason it is not there.
+    def _transport(self, spec: ServerSpec, sessions: AsyncExitStack):
+        """The way in to one server. **The only place that knows there are two.**
 
-        A server that fails to start does not stop axiom: it starts without
-        that server and says which one failed. Consistent with `tools.run()`
-        returning failures rather than raising - a tool that cannot do its job
-        is not a reason to end the session.
+        Everything `_open` does after this - the wanted/offered tool filter, the
+        `server__tool` routing map, the declarations, the count reported at
+        startup - is the same for a server axiom started and one that was already
+        answering. That is why there is one `Servers` and one `ServerSpec` rather
+        than two of each (#81 AC 6, AC 7).
+
+        **An address is not a subprocess** (AC 3). Nothing below the `if` runs for
+        one: no `StdioServerParameters`, no `stdio_client`, and no devnull stderr -
+        a server reached by address has no stderr of axiom's to write into.
+
+        `streamable_http_client`, **not** `streamablehttp_client`. The second is
+        what the older documentation says and it is an `ImportError` on mcp 2.1.1;
+        read out of the installed package in `logs/cycle-1.md`.
+
+        Headers and timeouts are not parameters of it - they belong to an
+        `httpx2.AsyncClient`, which is why `create_mcp_http_client` is here. The
+        start bound is applied by `_open`'s `wait_for` rather than by the client,
+        so both kinds are bounded by the same number (AC 11).
+
+        `terminate_on_close` is left at its default of True: it sends a DELETE
+        when the context exits, so leaving axiom closes the session at the other
+        end rather than abandoning it (AC 20).
         """
-        if spec.address:
-            # #81 AC 3, held from the only end that exists yet: an entry named by
-            # address must not reach `StdioServerParameters`, `stdio_client`, or
-            # the devnull stderr below - all three are about a subprocess, and
-            # this server is not one.
-            #
-            # **Temporary, and it says so.** The transport that replaces this line
-            # is cycle 3's. Until then an address is configurable and not
-            # connectable, and the user is told that rather than being handed a
-            # connection failure for a server that was never dialled.
-            self.failures.append(f"{spec.name}: reached by address, not connected yet")
-            return
-        try:
+        if not spec.address:
             parameters = StdioServerParameters(
                 command=spec.command,
                 args=list(spec.args),
@@ -218,10 +224,27 @@ class Servers:
             quiet = sessions.enter_context(
                 open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
             )
+            return stdio_client(parameters, errlog=quiet)
+
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.shared._httpx_utils import create_mcp_http_client
+
+        return streamable_http_client(
+            url=spec.address,
+            http_client=create_mcp_http_client(headers=dict(spec.env) or None),
+        )
+
+    async def _open(self, spec: ServerSpec, sessions: AsyncExitStack) -> None:
+        """One server, or a recorded reason it is not there.
+
+        A server that fails to start does not stop axiom: it starts without
+        that server and says which one failed. Consistent with `tools.run()`
+        returning failures rather than raising - a tool that cannot do its job
+        is not a reason to end the session.
+        """
+        try:
             client = await asyncio.wait_for(
-                sessions.enter_async_context(
-                    Client(stdio_client(parameters, errlog=quiet))
-                ),
+                sessions.enter_async_context(Client(self._transport(spec, sessions))),
                 self.start_timeout,
             )
             listed = await asyncio.wait_for(client.list_tools(), self.start_timeout)

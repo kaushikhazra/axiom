@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from axiom import config, servers
+from axiom import config, servers, tools
 from axiom.config import ServerSpec
 from conftest import StubBackend, feed
 
@@ -389,3 +389,137 @@ def test_an_address_entry_is_not_started_as_a_subprocess(running, monkeypatch):
     assert dialled == [], "a subprocess transport was opened for an address"
     assert after - before == set(), f"an address spawned {after - before}"
     assert attached.connected == {}, "an address entry reported tools"
+
+
+# --- #81 AC 6, 7, 8: a server that is already answering ----------------------
+
+
+@pytest.fixture
+def listening():
+    """Our own server over HTTP, on a port the operating system chose.
+
+    **Never a fixed port.** A hardcoded one fails on a machine where something
+    else is listening and, worse, *passes* by talking to whatever that something
+    is - a test that silently checks a stranger.
+
+    The server binds the socket itself, prints the port, and hands the bound
+    socket to uvicorn, so there is no window in which anything else could take
+    it. The alternative - bind to zero, read the number, close, hand the number
+    over - is a race that is merely unlikely.
+
+    **Killed in teardown, whatever the test did.** This is the only row in the
+    queue that starts processes and the queue runs unattended for hours; an
+    orphan per cycle is a machine that stops responding.
+    """
+    import subprocess
+
+    started = []
+
+    def start(name: str = "far"):
+        process = subprocess.Popen(
+            [sys.executable, str(HERE / "mcp_server.py"), "--http"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        started.append(process)
+        line = process.stdout.readline().strip()
+        assert line.isdigit(), f"the server did not report a port, it said {line!r}"
+        return ServerSpec(name=name, address=f"http://127.0.0.1:{line}/mcp")
+
+    yield start
+
+    for process in started:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:  # pragma: no cover - a wedged server
+            process.kill()
+            process.wait(timeout=10)
+
+
+def test_a_remote_server_offers_its_tools_like_any_other(running, listening):
+    """#81 AC 6. Same names, same shape, same declarations.
+
+    `declarations` is what the model is handed. A remote server whose tools
+    arrived in some other shape would still show up in `connected` and would be
+    invisible to a test that only counted.
+    """
+    attached = running((listening(),))
+
+    assert attached.connected == {"far": 4}, (
+        f"the server did not answer: {attached.failures}"
+    )
+    names = {declared["function"]["name"] for declared in attached.declarations}
+    assert names == {"far__ping", "far__shout", "far__read_file", "far__slow"}
+    for declared in attached.declarations:
+        assert declared["type"] == "function"
+        assert declared["function"]["description"], "a remote tool lost its description"
+
+
+def test_a_remote_tool_is_called_and_answers(running, listening):
+    """#81 AC 7. The result comes back as a local one does.
+
+    Two tools, because `ping` takes no arguments and would pass for a call that
+    dropped them. `shout` proves an argument arrived and came back changed.
+    """
+    attached = running((listening(),))
+
+    assert attached.run("far__ping", {}) == "pong"
+    assert attached.run("far__shout", {"text": "quietly"}) == "QUIETLY"
+
+
+def test_both_kinds_work_in_one_session(running, listening):
+    """#81 AC 2's second half, and AC 6 with it.
+
+    A file may hold both - proved in cycle 2 - and both must *work*. One
+    subprocess and one address in the same `Servers`, both answering, and each
+    routed to the right one.
+    """
+    attached = running((ours(), listening()))
+
+    assert attached.connected == {"tiny": 4, "far": 4}, (
+        f"one kind did not answer: {attached.failures}"
+    )
+    assert attached.run("tiny__ping", {}) == "pong"
+    assert attached.run("far__shout", {"text": "both"}) == "BOTH"
+
+
+def test_two_servers_offering_the_same_tool_stay_apart(running, listening):
+    """#81 AC 8. The same tool name on both kinds, told apart by its prefix.
+
+    `read_file` is the name deliberately: it is also a built-in, so this is three
+    things called the same thing in one session. #43 chose the `server__tool`
+    prefix as both the collision guarantee and the routing key - one mechanism -
+    and this is that mechanism meeting a kind of server it did not exist for.
+    """
+    attached = running((ours(), listening()))
+
+    from_stdio = attached.run("tiny__read_file", {"path": "one"})
+    from_remote = attached.run("far__read_file", {"path": "two"})
+
+    # **Asserted on which server answered, not on which path was passed.** Both
+    # servers are the same script, so both replies quoted their own argument and
+    # differed for that reason alone - and the test stayed green against a build
+    # that routed every tool to the first server it had. The script now says how
+    # it was started. A test cannot tell two servers apart if the servers cannot.
+    assert "stdio server read one" in from_stdio, from_stdio
+    assert "http server read two" in from_remote, from_remote
+    assert tools.run("read_file", {"path": str(HERE / "mcp_server.py")}).startswith(
+        '"""A tiny MCP server'
+    ), "the built-in was shadowed"
+
+
+def test_a_remote_server_whose_name_holds_the_separator(running, listening):
+    """#81 AC 8, at the place #43 found it broken.
+
+    #43 cycle 4 found the routing wrong for a server whose *name contained the
+    separator*: `odd__name__ping` splits at the first `__` and looks up a server
+    called `odd`. The prefix is the collision guarantee and the routing key at
+    once, so a name that contains it breaks both halves. A remote name goes
+    through exactly the same rule, and this is the test that says so.
+    """
+    attached = running((listening("odd__name"),))
+
+    assert attached.connected == {"odd__name": 4}, f"{attached.failures}"
+    assert attached.run("odd__name__ping", {}) == "pong"
