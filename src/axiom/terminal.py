@@ -604,7 +604,7 @@ def read_line(timeout: float | None = None) -> "str | None | object":
     """
     if timeout is None:
         try:
-            return input(PROMPT).strip()
+            return input(_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
             print()
@@ -627,7 +627,23 @@ def show_prompt() -> None:
     anything. **One place owns the prompt**, and with a timeout that place is the
     caller.
     """
-    print(PROMPT, end="", flush=True)
+    print(_prompt(), end="", flush=True)
+
+
+def _prompt() -> str:
+    """The prompt, in the accent at a terminal and plain everywhere else.
+
+    Only the marker is coloured. What the user types after it is left at the
+    terminal's own foreground (#77 AC 30) - the accent marks where the line
+    starts; it does not decorate what they say.
+
+    The reset comes before the space rather than after it, so nothing carries
+    into the typed line even if a terminal is careless about where a style ends.
+    """
+    if not _rendering or not sys.stdout.isatty() or _colourless():
+        return PROMPT
+    red, green, blue = (int(ACCENT[at : at + 2], 16) for at in (1, 3, 5))
+    return f"\x1b[1;38;2;{red};{green};{blue}m>\x1b[0m "
 
 
 def take_back_prompt() -> None:
@@ -683,7 +699,24 @@ def end_turn() -> None:
     exchange stopped and the next began. One blank line, once, at the point
     the turn is genuinely over - not after each tool round, which would break
     a single turn into pieces that look like separate ones.
+
+    This is also where the turn's tools are accounted for (#77 AC 24). Here
+    rather than at the end of the tool rounds, because a turn can go
+    model -> tool -> model -> tool, and the criterion asks for one line when the
+    *turn* finishes rather than one per round. **The counters are reset here
+    whatever happened**, including on the failure path - every route out of a
+    turn passes through this function, and a count that survived one would be
+    added to the next turn's.
     """
+    global _tool_runs, _tool_failures
+    _stop_working()
+    if _tool_runs and _rendering and sys.stdout.isatty():
+        # AC 25: nothing at all for a turn that called none, which is what makes
+        # the line mean something when it does appear.
+        word = "tool" if _tool_runs == 1 else "tools"
+        failed = f", {_tool_failures} failed" if _tool_failures else ""
+        print(_grey(f"  ·  {_tool_runs} {word}{failed}"))
+    _tool_runs, _tool_failures = 0, 0
     print()
 
 
@@ -1398,6 +1431,15 @@ def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> N
     because `path=notes.txt` is what the model asked for and where that
     actually lands is a different fact. Visibility only - nothing is blocked.
     """
+    global _tool_runs
+    if _rendering and sys.stdout.isatty():
+        # #77 AC 22: nothing per call. What the user gets instead is AC 23 - a
+        # line saying something is running, which is taken back the moment the
+        # result arrives. A tool phase is seconds long and a silent pause reads
+        # as a hang, which `note_starting` already says out loud.
+        _tool_runs += 1
+        _start_working(name)
+        return
     if isinstance(arguments, dict):
         detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
     else:
@@ -1407,6 +1449,47 @@ def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> N
     print(f"{VOICE} {name}({detail})")
     for path in outside or []:
         print(f"{VOICE} outside the working directory: {path}")
+
+
+# What this turn's tools did, for the one line that replaces all of them. Reset
+# by `end_turn`, which every route out of a turn goes through - including the
+# one that failed, or a turn that ended badly would spill its count into the next.
+_tool_runs = 0
+_tool_failures = 0
+_working = False
+
+
+def _start_working(name: str) -> None:
+    """One transient line while a tool runs (#77 AC 23).
+
+    `\\r` then erase-to-end-of-line, which is the pair `Rendered` already uses to
+    replace an echoed line with a styled one. Nothing is committed: the row is
+    overwritten by the next call and taken back entirely by `_stop_working`, so
+    a turn calling four tools leaves no trail of four lines behind it.
+    """
+    global _working
+    _working = True
+    print(f"\r\x1b[K  {_grey('· ' + name + ' ...')}", end="", flush=True)
+
+
+def _stop_working() -> None:
+    """Take the transient line back, leaving the row as it was."""
+    global _working
+    if _working:
+        print("\r\x1b[K", end="", flush=True)
+        _working = False
+
+
+def _grey(text: str) -> str:
+    """axiom's own voice, quieter than the answer (#77 AC 27).
+
+    A colour, so `NO_COLOR` takes it - which leaves the words, which is the
+    point: quieter is a preference, legible is not.
+    """
+    if _colourless():
+        return text
+    red, green, blue = (int(VOICE_GREY[at : at + 2], 16) for at in (1, 3, 5))
+    return f"\x1b[38;2;{red};{green};{blue}m{text}\x1b[0m"
 
 
 def note_round_limit(rounds: int) -> None:
@@ -1422,7 +1505,24 @@ def note_round_limit(rounds: int) -> None:
 
 
 def show_tool_result(result: str) -> None:
-    """A tool's output, marked so it cannot be read as the model's answer."""
+    """A tool's output, marked so it cannot be read as the model's answer.
+
+    At a terminal this shows **nothing** (#77 AC 26). The per-call detail leaves
+    the screen entirely and one summary line replaces the lot; the detail is
+    bound for a log, which is its own piece of work. What happens here instead is
+    that the transient line is taken back and the outcome is counted.
+
+    Not at a terminal it is unchanged, which is what keeps the golden transcript
+    still and AC 33 true.
+    """
+    global _tool_failures
+    if _rendering and sys.stdout.isatty():
+        _stop_working()
+        # The convention every tool already follows for a failure, and the one a
+        # user would recognise: a result that opens by saying it is an error.
+        if result.startswith("error:"):
+            _tool_failures += 1
+        return
     shown = result[:TOOL_OUTPUT_LIMIT]
     for line in shown.splitlines() or [""]:
         print(f"  | {line}")
@@ -1732,7 +1832,11 @@ def show_facts(
     before, and they are unchanged. Nothing is duplicated: the panel reads the
     same arguments rather than a second set of sentences.
     """
-    if not sys.stdout.isatty():
+    # `_rendering` as well as the terminal. `--no-render` takes the same path a
+    # redirected run takes rather than a quieter rendering (AC 32) - which is the
+    # rule `use_rendering` already states for replies, and a panel drawn under it
+    # would have made "off" mean two different things in one session.
+    if not _rendering or not sys.stdout.isatty():
         announce(model, host, context, overridden=overridden, tools=tools, web=web)
         note_servers(connected, problems, bounds=bounds)
         note_tool_cost(cost, context)
@@ -1845,9 +1949,7 @@ def _facts_panel(
             start, call = bounds
             row(
                 "",
-                Text(
-                    f"start limit {start:g}s, call limit {call:g}s", style=VOICE_GREY
-                ),
+                Text(f"start limit {start:g}s, call limit {call:g}s", style=VOICE_GREY),
             )
 
         if not skills_enabled:

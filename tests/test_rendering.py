@@ -17,7 +17,7 @@ import pytest
 from axiom import config, main, terminal
 from axiom.terminal import Rendered
 from conftest import StubBackend, feed, history
-from screen import shown
+from screen import Screen, shown
 
 
 # Any escape that sets a foreground colour, in all three forms a terminal takes:
@@ -836,12 +836,25 @@ def test_a_reply_that_turns_out_to_be_a_call_never_reaches_the_renderer(
     printed = capsys.readouterr().out
     assert announced not in printed, "the call was shown as though it were an answer"
     assert '{"name"' not in printed
-    assert "read_file(path=x)" in printed, "the call was not made"
     assert "the answer" in printed, "the reply after the call never arrived"
-    # AC 18, with rendering on. The transcript records the plain path only, so
-    # this is the one place the marker is checked against a rendered session.
-    assert "  | " in printed, "the tool's output lost its marker"
-    assert "axiom: read_file" in printed, "the call lost axiom's own voice"
+
+    # **This test used to prove the call happened by finding `read_file(path=x)`
+    # on screen, and #77 AC 22 took that line away** - a turn's calls are not
+    # shown one by one any more. The claim is unchanged and still has to be made,
+    # or "the call text never reached the renderer" would pass for a build that
+    # never made the call at all. The summary line is the observable now.
+    assert "1 tool" in stripped(printed), "the call was not made"
+
+    # AC 26 on the **screen**, not on the bytes. The line that says a tool is
+    # running is written and then taken back, so `read_file` is in the stream
+    # whatever the user ends up seeing - asserting its absence there fails on
+    # correct behaviour, and asserting it on a renderer that never erased would
+    # pass on broken behaviour. Only a screen can tell the two apart.
+    screen = Screen(80)
+    screen.feed(printed)
+    left = "\n".join(screen.text())
+    assert "read_file" not in left, "a per-call line was left on screen"
+    assert "  | " not in left, "the tool's output was left on screen"
 
 
 def test_a_cut_off_reply_does_not_leak_into_the_next_one(monkeypatch, capsys):

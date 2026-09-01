@@ -10,8 +10,9 @@ import re
 
 import pytest
 
-from axiom import main, models, terminal
+from axiom import backend, main, models, terminal
 from conftest import StubBackend, feed
+from screen import Screen
 
 
 HOST = "http://localhost:11434"
@@ -253,3 +254,151 @@ def test_without_a_terminal_the_facts_are_the_lines_they_always_were(
         "axiom: tools cost about 1250 tokens per request, 4% of the window\n"
     )
     assert "╭" not in shown and CLEAR not in shown
+
+
+# --- #77 AC 22 to 26, 30: the turn, and what it leaves behind ----------------
+
+
+def screen_of(text: str, width: int = 80) -> str:
+    """What a terminal is left showing, rather than what was written to it.
+
+    AC 22 and AC 26 are about the screen. The line saying a tool is running is
+    written and then taken back, so its name is in the byte stream whatever the
+    user ends up seeing: grepping the stream for absence fails on correct
+    behaviour, and a renderer that never erased would pass a test that only
+    looked for the summary. Only a screen tells the two apart.
+    """
+    screen = Screen(width)
+    screen.feed(text)
+    return "\n".join(screen.text())
+
+
+def a_turn_calling(results):
+    """One turn's worth of tool traffic, driven straight at `terminal`.
+
+    Not through `main` and a stub: the stub does not produce tool results - the
+    real `tools.run` does - and a test about how a turn is *displayed* should not
+    have to arrange for a file to exist to get a string back. What is under test
+    here is the three calls the chat loop makes in this order, which is exactly
+    what is driven.
+    """
+    for name, result in results.items():
+        terminal.note_tool("read_file", {"path": name})
+        terminal.show_tool_result(result)
+    terminal.end_turn()
+
+
+def test_a_turn_shows_nothing_for_any_individual_call(capsys, monkeypatch, choice):
+    """#77 AC 22 and AC 26."""
+    at_a_terminal(monkeypatch)
+    a_turn_calling({"a": "alpha", "b": "bravo"})
+    left = screen_of(capsys.readouterr().out)
+
+    assert "read_file" not in left, "a per-call line was left on screen"
+    assert "alpha" not in left and "bravo" not in left, "tool output stayed on screen"
+
+
+def test_the_user_can_see_that_something_is_running(capsys, monkeypatch, choice):
+    """#77 AC 23. Written before the result, not after.
+
+    A spinner cannot be watched from a test, so what is checked is the ordering:
+    something naming the tool reaches the stream before that tool's result does.
+    A summary printed only at the end would leave the user looking at nothing for
+    the whole tool phase, which is the failure this criterion exists to stop.
+    """
+    at_a_terminal(monkeypatch)
+    a_turn_calling({"a": "the-result"})
+    printed = capsys.readouterr().out
+
+    assert "read_file" in printed, "nothing said a tool was running"
+    assert printed.index("read_file") < printed.index("1 tool"), "said only afterwards"
+
+
+def test_one_line_says_how_many_tools_ran(capsys, monkeypatch, choice):
+    """#77 AC 24."""
+    at_a_terminal(monkeypatch)
+    a_turn_calling({"a": "x", "b": "y", "c": "z"})
+
+    assert "3 tools" in screen_of(capsys.readouterr().out)
+
+
+def test_a_turn_that_called_no_tools_says_nothing_about_them(
+    capsys, monkeypatch, choice
+):
+    """#77 AC 25. The boundary that makes AC 24 mean anything."""
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["hello", "/exit"])
+    main([], using=StubBackend(models=INSTALLED, turns=[["just an answer"]]))
+    left = screen_of(capsys.readouterr().out)
+
+    # The summary's shape, not the word - the facts panel says `11 tools
+    # including web`, and a bare `"tool" not in left` reads that as a summary.
+    assert not re.search(r"·\s+\d+ tools?", left), "a turn with no tools was summarised"
+
+
+def test_a_failed_tool_is_counted_and_the_turn_carries_on(
+    capsys, monkeypatch, choice
+):
+    """#77 AC 36. One failing, one succeeding, in the same turn."""
+    at_a_terminal(monkeypatch)
+    a_turn_calling({"a": "error: no such file", "b": "fine"})
+    left = screen_of(capsys.readouterr().out)
+
+    assert "2 tools" in left and "1 failed" in left
+
+
+def test_the_prompt_is_the_accent_and_the_typed_line_is_not(capsys, monkeypatch, choice):
+    """#77 AC 30."""
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["/exit"])
+    main([], using=StubBackend(models=INSTALLED))
+    printed = capsys.readouterr().out
+
+    assert re.search(r"\x1b\[[0-9;]*m>\x1b\[0m ", printed), "the prompt carries no accent"
+    assert "\x1b[0m " in printed, "the accent was not closed before the typed line"
+
+
+# --- #77 AC 32, 35, 37: the guards -------------------------------------------
+
+
+def test_no_render_output_is_unchanged(capsys, monkeypatch, choice):
+    """#77 AC 32. `--no-render` takes the plain path, panel or no panel."""
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["hello", "/exit"])
+    main(["--no-render"], using=StubBackend(models=INSTALLED, turns=[["an answer"]]))
+    printed = capsys.readouterr().out
+
+    assert "an answer" in printed
+    assert "╭" not in printed, "a panel was drawn with rendering off"
+
+
+def test_a_bare_run_says_no_more_than_it_did_before(capsys, monkeypatch, choice):
+    """#77 AC 35. A redesign is when a quiet path grows chatty.
+
+    Counted rather than read. A bare run - no servers, no skills, nothing
+    configured - gets the facts and the prompt, and the point is that the number
+    of things on screen did not grow.
+    """
+    at_a_terminal(monkeypatch)
+    feed(monkeypatch, ["/exit"])
+    main([], using=StubBackend(models=INSTALLED))
+    left = [row for row in screen_of(capsys.readouterr().out).splitlines() if row.strip()]
+
+    assert "servers" not in "\n".join(left), "a bare run mentioned servers"
+    assert "skills" not in "\n".join(left), "a bare run mentioned skills"
+    # The border is four rows of the panel; the facts are four more. Anything
+    # much past that is a bare run that has started explaining itself.
+    assert len(left) <= 10, f"a bare run now puts {len(left)} rows on screen"
+
+
+def test_a_host_that_cannot_be_reached_is_reported_as_before(capsys, monkeypatch):
+    """#77 AC 37. The failures that end a run are untouched by any of this."""
+    at_a_terminal(monkeypatch)
+    stub = StubBackend(listing=backend.BackendError("refused"))
+    feed(monkeypatch, ["/exit"])
+
+    with pytest.raises(SystemExit) as left:
+        main([], using=stub)
+
+    assert left.value.code == 2
+    assert "cannot reach Ollama" in capsys.readouterr().err
