@@ -20,6 +20,16 @@ from conftest import StubBackend, feed, history
 from screen import shown
 
 
+# Any escape that sets a foreground colour, in all three forms a terminal takes:
+# `31` and friends for the 16-colour range, `38;5;n` for 256, `38;2;r;g;b` for
+# truecolor. Bold, dim, underline and reset are attributes rather than colours and
+# must not match - `NO_COLOR` takes the colour and leaves the formatting.
+#
+# The 16-colour half alone was the probe until #77, and it cannot see a truecolor
+# accent. `test_the_colour_probe_sees_every_form_a_colour_can_take` is what stops
+# that happening again.
+COLOUR = re.compile(r"\x1b\[[0-9;]*?(?:3[0-7]|9[0-7]|38;[25];)[0-9;]*m")
+
 REPLY = (
     "# Factorial\n\nHere is a **short** function with *notes*.\n\n"
     "- it uses recursion\n- it handles only non-negative integers\n\n"
@@ -284,7 +294,6 @@ def test_a_named_language_is_syntax_highlighted():
     number = styling(emitted, "return 42")
 
     assert keyword and number, "no styling at all inside the fence"
-    assert set(keyword) != {"\x1b[36m", "\x1b[0m"}, "still one flat colour"
     assert keyword != number, "every line coloured identically"
 
 
@@ -321,28 +330,54 @@ def test_a_long_block_does_not_carry_the_whole_of_itself():
     assert stripped("".join(out)).count("value_199") >= 1, "the last line was lost"
 
 
-def test_an_unknown_language_falls_back_rather_than_failing():
-    """AC 3. Rich falls back silently, so it is asked before rather than after."""
+def test_an_unknown_language_carries_no_styling_of_its_own():
+    """#60 AC 3, reinterpreted by #77 AC 20. Rich falls back silently, so it is
+    asked before rather than after.
+
+    Until #77 this asserted a cyan. The rule now is Kaushik's: if the fence names
+    no language we cannot know how to colour what is inside it, so we do not.
+    What still holds up "a block reads as a block" is the fence markers, which
+    stay dim above and below it - the block is delimited rather than painted, and
+    `test_a_fence_is_delimited_whatever_its_language` is where that is checked.
+    """
     emitted = stream("```nosuchlanguage\nx = 1\n```\n")
 
-    assert "\x1b[36m" in emitted, "no fallback colour, so not set apart"
+    assert not styling(emitted, "x = 1"), "a colour was chosen for unknown code"
     assert "x = 1" in stripped(emitted)
 
 
 @pytest.mark.parametrize("opener", ["```python", "```", "```nosuchlanguage"])
-def test_a_fence_is_set_apart_from_the_prose(opener):
-    """AC 2, AC 3. A block reads as a block, named language or not.
+def test_a_fence_is_delimited_whatever_its_language(opener):
+    """AC 2, and #77 AC 20. A block reads as a block, named language or not.
 
     Comparing the two lines' *text* is vacuous - `x = 1` and `prose` differ
     whatever the styling. The claim is about how they are dressed, so that is
     what is compared. The first version made the vacuous comparison and a
     renderer that styled code exactly like prose passed it.
+
+    **What is claimed changed with #77 and the claim got narrower, so read this.**
+    It used to be that the code line itself was always dressed differently from
+    prose. That is now true only when a lexer exists. What is true for every
+    opener is that the *fence marker* is dressed differently from prose - so the
+    block still has visible edges - and that is asserted for all three.
     """
     emitted = stream(f"prose\n{opener}\nx = 1\n```\nmore\n")
 
-    assert styling(emitted, "x = 1"), "code carried no styling at all"
-    assert styling(emitted, "x = 1") != styling(emitted, "prose")
     assert styling(emitted, opener), "the fence marker was not set apart"
+    assert styling(emitted, opener) != styling(emitted, "prose")
+
+
+def test_a_known_language_still_dresses_the_code_itself():
+    """AC 2. The half of the test above that only a lexed block can keep.
+
+    Split out rather than dropped: without it, #77 AC 20 would have quietly taken
+    the highlighting of *every* block with it and three parametrised cases would
+    have gone green saying the edges were fine.
+    """
+    emitted = stream("prose\n```python\nx = 1\n```\nmore\n")
+
+    assert styling(emitted, "x = 1"), "a lexed block carried no styling at all"
+    assert styling(emitted, "x = 1") != styling(emitted, "prose")
 
 
 def test_a_link_keeps_its_address():
@@ -664,58 +699,90 @@ def test_help_names_the_flag_and_its_variable(capsys):
 # --- NO_COLOR --------------------------------------------------------------
 
 
+def test_the_colour_probe_sees_every_form_a_colour_can_take():
+    """#77 AC 31, and the reason the test below could not have caught it.
+
+    The probe used to be `\\x1b\\[[0-9;]*3[0-7]m`, which matches the 16-colour
+    range and nothing else. #77 paints the reply in a truecolor accent, and a
+    truecolor escape is `38;2;r;g;b` - so an accent that survived `NO_COLOR`
+    would have left the test below green while the screen stayed gold.
+
+    A widened regex nobody watched work is the same hole one layer down, so
+    the probe is checked against all three forms here rather than trusted.
+    """
+    assert COLOUR.search("\x1b[36m"), "16-colour missed"
+    assert COLOUR.search("\x1b[38;2;218;169;0m"), "truecolor missed"
+    assert COLOUR.search("\x1b[38;5;178m"), "256-colour missed"
+    assert not COLOUR.search("\x1b[1m"), "bold is not a colour"
+    assert not COLOUR.search("\x1b[2m"), "dim is not a colour"
+    assert not COLOUR.search("\x1b[0m"), "a reset is not a colour"
+
+
 def test_no_color_drops_colour_and_keeps_formatting(monkeypatch):
-    """AC 26.
+    """AC 26, and #77 AC 31.
 
     A decision, recorded: `NO_COLOR` means no *colour*, not no formatting. A
-    heading stays bold and underlined; inline code loses its cyan. That is the
-    published convention's own wording, and it is what Rich does natively - so
-    the two agree instead of arguing.
+    heading stays bold and underlined; its accent goes. That is the published
+    convention's own wording, and it is what Rich does natively - so the two
+    agree instead of arguing.
     """
     monkeypatch.setenv("NO_COLOR", "1")
     emitted = stream("# Heading\nwith `inline code`\n")
 
     assert "\x1b[1" in emitted, "formatting was dropped along with the colour"
-    assert not re.search(r"\x1b\[[0-9;]*3[0-7]m", emitted), "colour survived"
+    assert not COLOUR.search(emitted), "colour survived"
 
 
-def test_no_color_reaches_the_colour_this_module_writes_itself(monkeypatch):
-    """AC 26. Rich honours it for free; the fence fallback is hand-written.
+def test_no_color_reaches_the_accent_on_every_construct(monkeypatch):
+    """AC 26, and #77 AC 31.
 
-    A fence naming *no* language, deliberately: that is the path where this
-    module chooses the colour itself. With `python` the highlighter runs and
-    Rich has already honoured `NO_COLOR`, so the assertion would hold for a
-    renderer that had never heard of it.
+    This used to point at the hand-written cyan on an unlexed fence - the one
+    colour this module chose for itself. #77 AC 20 removed that colour, which
+    would have left the old assertion **passing vacuously**: there is no cyan to
+    find whatever the renderer does. So it is re-pointed at the accent, and at
+    every construct that carries it, because one construct proves one style map
+    entry and there are seventeen.
     """
     monkeypatch.setenv("NO_COLOR", "1")
-    emitted = stream("```\nx = 1\n```\n")
+    emitted = stream(
+        "# Heading\n\n- a bullet\n\n1. a number\n\n> a quote\n\nwith `code` in it\n"
+    )
 
-    assert "\x1b[36m" not in emitted, "fenced code kept its cyan"
-    assert "x = 1" in stripped(emitted)
+    assert not COLOUR.search(emitted), "the accent survived NO_COLOR"
+    assert "\x1b[1" in emitted, "formatting went with the colour"
+    for word in ("Heading", "a bullet", "a number", "a quote", "code"):
+        assert word in stripped(emitted), f"{word} was lost, not just decoloured"
 
 
 def test_colour_is_there_without_no_color(monkeypatch):
-    """The other half - otherwise the test above passes on a broken renderer."""
+    """The other half - otherwise the tests above pass on a renderer drawing
+    nothing at all."""
     monkeypatch.delenv("NO_COLOR", raising=False)
 
-    assert "\x1b[36m" in stream("```\nx = 1\n```\n")
+    assert COLOUR.search(stream("# Heading\n")), "no accent without NO_COLOR"
 
 
 def test_no_color_set_to_nothing_still_counts(monkeypatch):
-    """A decision, recorded.
+    """A decision, recorded - and #77 moved where it is implemented.
 
     The convention says "not an empty string"; Rich tests for presence. Rich
     draws most of what reaches the screen here, so presence it is - a session
     where headings lose their colour and fenced code keeps it is worse than
     either rule applied consistently.
 
-    A fence naming no language, for the same reason as the test above: with
-    `python` the highlighter runs and there is no cyan to find whatever this
-    function returns. Written that way first, and it survived its break.
+    Until #77 axiom held this opinion itself, in `_colourless()`, and this test
+    checked it through the one colour the module wrote by hand. AC 20 removed
+    that colour and `_colourless()` with it, so the opinion is now **entirely
+    Rich's** - which is the argument above carried to its end rather than a
+    reversal. This is the only place that hand-off is checked, so it is asserted
+    against the accent instead of a colour axiom picked.
+
+    A heading rather than a fence, deliberately: an unlexed fence now carries no
+    styling at all, and the old assertion would pass here whatever Rich did.
     """
     monkeypatch.setenv("NO_COLOR", "")
 
-    assert "\x1b[36m" not in stream("```\nx = 1\n```\n")
+    assert not COLOUR.search(stream("# Heading\n")), "empty NO_COLOR was ignored"
 
 
 # --- What the model and the history see ------------------------------------
@@ -1389,3 +1456,143 @@ def test_no_length_of_a_nested_item_is_shown_twice(width, monkeypatch):
             "- Outer\n  - " + body + "\n", width=width, monkeypatch=monkeypatch
         )
         assert "".join(on_screen).count("x") == length, f"length {length}"
+
+
+# --- #77: one accent, and the answer left alone -----------------------------
+
+ACCENTED = (
+    "# A heading\n\n"
+    "- a bullet\n\n"
+    "1. a number\n\n"
+    "> a quote\n\n"
+    "a paragraph with `inline code` in it\n\n"
+    "| head | cell |\n|---|---|\n| a | b |\n"
+)
+
+
+def colours(emitted: str, containing: str) -> set[str]:
+    """The foreground colours on the line holding `containing`, and only those.
+
+    One SGR escape carries several parameters at once - `\\x1b[1;38;5;178m` is
+    bold *and* gold, and `\\x1b[1;38;5;178;40m` adds a background. Comparing whole
+    escapes across constructs therefore compares their attributes too, and a
+    heading that is bold would never equal a quote that is dim however identical
+    their colour. What AC 17 claims is that the *colour* is one colour, so the
+    parameters are walked and only the foreground is kept.
+    """
+    found = set()
+    for part in styling(emitted, containing):
+        parameters = part[2:-1].split(";")
+        at = 0
+        while at < len(parameters):
+            value = parameters[at]
+            if value == "38" and at + 1 < len(parameters):
+                # 38;5;n is 256-colour, 38;2;r;g;b is truecolor. Consume whole.
+                width = 3 if parameters[at + 1] == "5" else 5
+                found.add(";".join(parameters[at : at + width]))
+                at += width
+                continue
+            if value.isdigit() and (30 <= int(value) <= 37 or 90 <= int(value) <= 97):
+                found.add(value)
+            at += 1
+    return found
+
+
+def test_every_structural_mark_carries_one_and_the_same_accent():
+    """#77 AC 17 and AC 18.
+
+    Asserted as *one distinct colour across all of them* rather than as a hex.
+    Rich picks its own encoding for a truecolor value - it came out as 256-colour
+    `38;5;178` on the machine this was written on - so pinning the bytes would
+    make the test a property of the terminal rather than of the palette.
+
+    What cannot be faked by an encoding is the count: if headings were magenta
+    and tables were cyan, as they were before this issue, the set has two members.
+    """
+    emitted = stream(ACCENTED)
+
+    seen = set()
+    for construct in ("A heading", "a bullet", "a number", "a quote", "inline code"):
+        found = colours(emitted, construct)
+        assert found, f"{construct} carries no colour at all"
+        seen |= found
+
+    assert len(seen) == 1, f"more than one accent in a reply: {seen}"
+
+
+def test_the_answer_itself_is_left_at_the_terminals_own_foreground():
+    """#77 AC 21. The prose is the thing the user asked for; it is not decorated.
+
+    A paragraph carries no colour of its own. This is what makes the accent mean
+    something - if the body text were accented too, nothing would stand out by
+    carrying it.
+    """
+    emitted = stream("just an ordinary sentence with nothing special about it\n")
+
+    assert not COLOUR.search(emitted), "the answer was given a colour"
+
+
+def words(rows: list[str]) -> list[str]:
+    """Every word on the screen, in order, with Rich's link ids normalised.
+
+    `tests/screen.py` strips SGR and CSI but **not** OSC-8 hyperlinks, and Rich
+    stamps a fresh `id=` into every one - so a reply containing a link compares
+    unequal to *itself* across two renders. Found while checking this criterion,
+    and normalising here rather than in the screen model because the id is real
+    output: the terminal receives it, and a test about words should ignore it
+    rather than pretend it was never sent.
+    """
+    text = re.sub(r"id=\d+", "id=N", " ".join(rows))
+    return re.findall(r"[A-Za-z0-9_]+", text)
+
+
+def test_rendering_a_reply_changes_no_word_of_it():
+    """#77 AC 34. The palette decorates; it must not edit.
+
+    Compared against the same reply with rendering off, which is the only honest
+    "before" available - the old renderer is gone, and a test that compared this
+    build to itself would prove nothing. `--no-render` is byte-for-byte the path
+    a redirected run takes, and AC 32 and AC 33 keep it that way.
+    """
+    source = ACCENTED + "\n" + REPLY
+
+    rendered = words(shown(source, width=80))
+    plain = words(source.split("\n"))
+
+    assert rendered == plain, "rendering changed the words of the reply"
+
+
+def test_no_character_is_lost_in_a_window_too_narrow_to_hold_them():
+    """#77 AC 34 at the boundary that breaks renderers.
+
+    A wide line is where a container crops - #72 exists because a 182-character
+    quote came back 58 characters long. The palette must not reintroduce that.
+
+    **Letters, not words, and that is not a weaker check.** At 24 columns #72
+    AC 14 breaks a word too wide for the line across two rows - `paragraph`
+    arrives as `pa` and `ragraph` - which is the criterion working, not a word
+    going missing. Comparing letter by letter catches a dropped character *and*
+    a duplicated one, which is the pair of failures a wrapping renderer has;
+    comparing words would fail here on correct behaviour.
+
+    **A wide container is the case, and the first version of this test had none.**
+    It used a heading, a short quote and a long paragraph, and stayed green when
+    `_CONTAINED` was undone underneath it - caught by the break-proof, not by
+    review. Cropping happens only inside a container, so a long quote and a long
+    list item are what have to be here.
+    """
+    source = (
+        ACCENTED
+        + "\n> "
+        + LONG_PARAGRAPH
+        + "\n- "
+        + LONG_PARAGRAPH
+        + "\n"
+        + LONG_PARAGRAPH
+    )
+    letters = re.compile(r"[^A-Za-z]")
+
+    drawn = letters.sub("", "".join(shown(source, width=24)))
+    plain = letters.sub("", source)
+
+    assert drawn == plain, f"{len(plain) - len(drawn):+d} letters"

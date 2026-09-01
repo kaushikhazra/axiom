@@ -912,10 +912,17 @@ class Rendered:
             drawn = _highlighted("\n".join(self._code), self._lexer)
             if len(drawn) >= len(self._code):
                 return drawn[len(self._code) - 1]
-        # Cyan is a colour, so `NO_COLOR` takes it. The dim on a fence marker is
-        # an attribute rather than a colour and stays - which is the line Rich
-        # draws, and the line the convention draws.
-        return line if _colourless() else f"\x1b[36m{line}\x1b[0m"
+        # #77 AC 20: no styling at all. If the fence names no language we cannot
+        # know how to colour what is inside it, and a colour chosen anyway is a
+        # claim about the content that nothing supports.
+        #
+        # This is a **reinterpretation of #60 AC 3**, "a block reads as a block,
+        # named language or not", and it is written down here rather than left to
+        # be inferred from an edited test. What sets the block apart is now its
+        # fence markers, which `_styled` still draws dim above and below it - the
+        # block is delimited rather than painted. Measured before the change:
+        # `styling('x = 1') == ''` and `styling('```nosuchlanguage') == '\x1b[2m'`.
+        return line
 
 
 def _lexer_for(language: str) -> str | None:
@@ -951,7 +958,11 @@ def _highlighted(code: str, language: str) -> list[str]:
 
         buffer = StringIO()
         Console(
-            file=buffer, force_terminal=True, legacy_windows=False, width=10_000
+            file=buffer,
+            force_terminal=True,
+            legacy_windows=False,
+            width=10_000,
+            no_color=_colourless(),
         ).print(
             Syntax(
                 code,
@@ -970,12 +981,23 @@ def _highlighted(code: str, language: str) -> list[str]:
 def _colourless() -> bool:
     """Whether the user has asked for no colour.
 
-    Presence, not truth: `NO_COLOR=` with nothing after it counts. The published
-    convention says "not an empty string", but Rich tests for presence, and Rich
-    draws most of what reaches the screen here. Agreeing with the renderer beats
-    agreeing with the specification and then disagreeing with itself - a session
-    where headings lose their colour and fenced code keeps it is the worse
-    outcome of the two.
+    Presence, not truth: `NO_COLOR=` with nothing after it counts.
+
+    **This used to claim Rich agreed, and Rich does not.** Measured under #77:
+    with `NO_COLOR=` set to the empty string, Rich emits the accent regardless -
+    it follows the published convention's "not an empty string" wording. Nothing
+    ever caught the disagreement because the only test of this rule went through
+    the one colour this module wrote by hand, which obeyed *this* function and
+    never asked Rich anything.
+
+    So the two rules were in force at once: with `NO_COLOR=`, a fence lost its
+    colour and every heading kept its own. That is the exact inconsistency the
+    old docstring said it was avoiding, and it shipped for the whole of #60.
+
+    Presence is kept, because it is the recorded decision and it is the stricter
+    of the two - a user who writes `NO_COLOR=` meant something by it. It is now
+    imposed on Rich rather than assumed of it: every Console that draws is built
+    with `no_color=` from here, so one rule reaches the whole screen.
     """
     return "NO_COLOR" in os.environ
 
@@ -1015,6 +1037,72 @@ _LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d{1,9}[.)])(?:\s+(.*))?$")
 # already draws, because AC 6 says a flat list must not change.
 NESTED_MARKERS = ("◦", "▪", "•")  # ring, small square, bullet
 NEST_INDENT = 2  # columns a level is indented by
+
+# The one accent, and the grey axiom speaks in (#77).
+#
+# ACCENT is Mountain Leverage's own `--uicore-secondary-color`, read off their
+# theme stylesheet. VOICE_GREY is their `--uicore-body-color`, `rgba(16,24,40,.6)`
+# resolved over white - derived rather than published, and chosen over a lighter
+# grey because axiom does not know whether it is on a light or a dark background
+# and this one survives both.
+ACCENT = "#daa900"
+VOICE_GREY = "#70747e"
+
+# What Rich paints a reply with. Without this it uses its own defaults - magenta
+# for quotes and h2-h4, cyan for inline code, list numbers and table borders,
+# bright_blue for links. Three hues that axiom never chose and that have nothing
+# to do with each other (#77 AC 17, AC 18).
+#
+# Two entries are deliberately left at Rich's value rather than accented:
+#
+#   markdown.code_block   a fenced block with a *known* language is drawn by
+#                         `_highlighted` against ansi_dark, because a language
+#                         needs more than one hue to be readable (AC 19). This
+#                         style only ever reaches a block nobody has a lexer for,
+#                         and AC 20 says that one carries no styling at all.
+#   markdown.h1.border    Rich draws no border for h1 here; naming it would be
+#                         asserting a decision this issue does not make.
+_MARKDOWN_STYLES = {
+    "markdown.block_quote": f"dim {ACCENT}",
+    "markdown.code": f"bold {ACCENT} on black",
+    "markdown.h1": f"bold {ACCENT}",
+    "markdown.h2": f"bold {ACCENT}",
+    "markdown.h3": ACCENT,
+    "markdown.h4": f"italic {ACCENT}",
+    "markdown.h5": "italic dim",
+    "markdown.h6": "dim",
+    "markdown.hr": "dim",
+    "markdown.item.bullet": f"bold {ACCENT}",
+    "markdown.item.number": ACCENT,
+    "markdown.kbd": f"bold {ACCENT}",
+    "markdown.link": f"underline {ACCENT}",
+    "markdown.link_url": "dim underline",
+    "markdown.list": ACCENT,
+    "markdown.table.border": ACCENT,
+    "markdown.table.header": f"bold {ACCENT}",
+}
+
+
+def _theme():
+    """The palette, built once and handed to every Console that draws a reply.
+
+    A function rather than a module-level object because `rich.theme` is imported
+    lazily everywhere else in this file - the import cost belongs to the first
+    render, not to starting up.
+
+    `NO_COLOR` needs nothing here. Rich honours it natively and strips the accent
+    while leaving bold, dim and underline alone, which is what the convention asks
+    for and what axiom already decided to defer to (AC 31).
+    """
+    global _THEME
+    if _THEME is None:
+        from rich.theme import Theme
+
+        _THEME = Theme(_MARKDOWN_STYLES)
+    return _THEME
+
+
+_THEME = None
 
 # What Rich draws under a table's header row, and the sign that it understood
 # the rows as a table at all rather than as a paragraph of pipes.
@@ -1063,6 +1151,8 @@ def _as_table(rows: list[str]) -> list[str]:
             legacy_windows=False,
             width=_width(),
             soft_wrap=False,  # a table draws its own edges; do not let them wrap
+            theme=_theme(),  # #77 AC 17 - the rules carry the accent
+            no_color=_colourless(),
         ).print(Markdown("\n".join(rows)), end="")
         drawn = [_unpadded(line) for line in buffer.getvalue().split("\n")]
         # Rich draws a top and bottom border row for a table, and the box style
@@ -1122,6 +1212,8 @@ def _as_markdown(
             # Off for anything Rich draws in a container, on for everything
             # else. See `_CONTAINED` - this one flag is the whole of #72.
             soft_wrap=(not _CONTAINED.match(line)) if wrapped is None else not wrapped,
+            theme=_theme(),  # #77 AC 17, AC 18 - one accent, not Rich's three hues
+            no_color=_colourless(),  # presence, imposed rather than assumed
         ).print(Markdown(line), end="")
         shown = buffer.getvalue().strip("\n")
         return _unpadded(shown) if shown.strip() else line
