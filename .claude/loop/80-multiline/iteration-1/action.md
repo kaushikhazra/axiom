@@ -1,55 +1,50 @@
-# Action — cycle 3
+# Action — cycle 4
 
-**The reader.** AC 1 to 5, and AC 33.
+**First, finish what cycle 3 left unproved. Then the composing display.**
 
-The confinement is proved and the hook exists, so the reader can be built behind both.
+## 1 — Three breaks that did not prove anything
 
-## Do these in order
+AC 1, 2 and 18 are implemented, their tests are green, and they are **not counted**. Close
+that before adding anything.
 
-1. **A real composing reader**, behind `use_compose`'s seam, using `prompt_toolkit`:
+- **AC 1 and AC 2's breaks did not apply.** The harness's search strings were mangled by
+  escaping. **Write the harness through the Edit tool**, not a heredoc — the source contains
+  `insert_text("\n")` and that is exactly the case the rule is about.
+- **AC 18's break was wrong, not its test.** `multiline=False` still lets `insert_text` put a
+  newline in the buffer, so the criterion was never violated and the test was right to stay
+  green. Find a break that actually stops a blank line surviving.
 
-       enter        c-m            accept the message
-       ctrl+enter   escape, c-j    insert a newline
+**Every break must be given an end before it runs.** Cycle 3 lost the file twice to a reader
+waiting for a key that never came; `create_pipe_input` is now closed in the test helper,
+which is what makes a broken binding fail in milliseconds rather than hang.
 
-   **Not `"c-enter"`** — there is no such key. On Windows ctrl+enter arrives as `\x0a`
-   with the control state set, and prompt_toolkit converts that to escape-then-ControlJ,
-   the VT100 convention for a meta-modified key. The mapping is quoted in `logs/cycle-1.md`
-   with the source it was read from.
+## 2 — What the user sees while composing
 
-2. **AC 33 has its before.** `.tmp/before-80.txt` holds a piped single-line session captured
-   before any of this landed. Compare against it and account for any difference — the one
-   already seen is the context window, which Ollama reports differently run to run and is
-   not axiom's doing.
+AC 4, 5, 22, 23. These are the criteria a test can only half-reach, so be explicit in the log
+about which half:
 
-3. **Wire the reader in** so a real terminal session uses it, with the plain path untouched.
+- **AC 4** — every line of the message is visible before it is sent.
+- **AC 22** — it is apparent the message has not been sent yet.
+- **AC 23** — the user can tell how many lines it has, or see them all.
+- **AC 5** — the first time a second line is started, axiom says how to send and how to add
+  another. Said **once**, not on every line; a hint that repeats is noise by the third time.
 
-## Prove
-
-Every criterion here is reachable by driving the reader with key presses that
-`prompt_toolkit` can be fed — its `PipeInput` exists for exactly this and does not need a
-terminal. **That proves the reader, not the terminal**, which is a distinction the log must
-keep making: a test that feeds `escape, c-j` proves axiom does the right thing with that
-key, not that this console delivers it.
-
-Break each one. On the measured rate from #77, roughly one break in four is aimed at the
-code rather than at the criterion and proves nothing.
-
-**AC 33 is the one to be careful with.** A single-line session must produce exactly the
-bytes it produces today, and the reader is now in that path at a terminal. The failure mode
-is subtle: an extra newline, a moved cursor, a prompt drawn twice.
+`prompt_toolkit` draws a continuation prompt for lines after the first, which is most of
+AC 4 and AC 22 for free. Check what it draws by default before writing one.
 
 ## Do not
 
-- Touch paste handling. That is cycle 4, and AC 9 is the hardest criterion in the issue.
-- Regenerate the baseline. Two issues and eight cycles without it moving.
+- Touch paste handling. That is AC 7, 8, 9 and it is the hardest thing in the issue.
+- Regenerate the baseline.
 
-## Also
+## Still owed
 
-`uv.lock` is still owed — it does not list `prompt_toolkit`. Run `uv lock` if no axiom
-session is holding `.venv/Scripts/axiom.exe`; if one still is, carry the note forward rather
-than dropping it.
+`uv.lock` does not list `prompt_toolkit`. The package went in with `uv pip install` because a
+live axiom session held `.venv/Scripts/axiom.exe`. **Run `uv lock` if nothing is holding it**;
+if something still is, carry this forward rather than dropping it — a lockfile that disagrees
+with `pyproject.toml` surfaces on someone else's machine, not this one.
 
 ## Record
 
-`logs/cycle-3.md`, per `observe.md`. Criteria out of 36, suite count and wall-clock, the
-baseline's state, and any addition to the list of what only a person can confirm.
+`logs/cycle-4.md`, per `observe.md`. Criteria out of 36, suite count and wall-clock, the
+baseline's state, and the running list of what only a person can confirm.
