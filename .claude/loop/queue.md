@@ -24,7 +24,7 @@ cycles resolving each other's conflicts.
 | 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **done** - merged in PR #69, 6 cycles, 2h40m, all 29 criteria. **Seven real defects across two cold reads**, six of them found by feeding hostile input to a modelled terminal rather than by reading code. AC 7 was not met at all - every paragraph longer than the window was drawn on screen twice, while the recorded evidence for it stayed true |
 
 | 17 | [#77](https://github.com/kaushikhazra/axiom/issues/77) the look of it | `77-look` | **done** - merged in PR #79, 8 cycles, all 37 criteria. Ran **outside** the queue, which was empty at the time; recorded here so the row order stays a full history |
-| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **running** - restarted 2026-09-02 01:35, fail-safe **2026-09-02 04:00 +0530**. 8 cycles already spent outside the queue |
+| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **running** - restarted 2026-09-02 01:35, fail-safe **2026-09-02 04:00 +0530**. 8 cycles spent outside the queue; cycle 9 took it to 19 of the 23 a test can reach, and filed [#83](https://github.com/kaushikhazra/axiom/issues/83) |
 | 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | queued |
 | 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | queued |
 

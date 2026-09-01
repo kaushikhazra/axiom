@@ -84,7 +84,12 @@ now tested and break-proven. **It is AC 1 that is violated in that state**, and 
 reader thread while the main thread calls `take_back_prompt()` to erase the line a job is
 about to draw over. Two threads owning one terminal is a design question, not a cycle's work,
 and a half-built version is the AC 21 trap in a different place. It is outside #80's 36
-criteria, so it does not block this row. Filed for Kaushik as its own story.
+criteria, so it does not block this row.
+
+Filed as **[#83](https://github.com/kaushikhazra/axiom/issues/83)** — seventeen criteria,
+including the four the two-threads-one-terminal problem actually turns on: a job firing must
+not send a part-composed message, must not lose it, must not draw over it, and must leave no
+reader thread behind.
 
 ## The suite
 
