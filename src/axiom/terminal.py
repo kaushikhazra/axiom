@@ -635,6 +635,41 @@ def use_input(read=None) -> None:
     _typed = Typed(read=read) if read is not None else None
 
 
+_compose = None
+
+
+def use_compose(read=None) -> None:
+    """Replace the reader that composes a message, or forget the one in use.
+
+    The counterpart of `use_input`, and for the same reason it exists: a
+    module-level singleton is right for a program with one console and wrong for
+    a test suite.
+
+    It is also **the only way #80 is testable at all.** Every other test in this
+    suite supplies input by monkeypatching `builtins.input`, and a reader that
+    only runs at a terminal is unreachable from all of them - no test process is
+    a terminal. Without this hook the feature could be built and never checked,
+    which is how #77 nearly shipped a panel nothing had looked at.
+
+    `None` forgets it, so the next read goes back to the real one.
+    """
+    global _compose
+    _compose = read
+
+
+def _composer():
+    """The composing reader, or None when this run should read a plain line.
+
+    **Terminal-only, and that is load-bearing rather than tidy.** The golden
+    transcript is 477 lines captured from a `StringIO` and every test drives
+    axiom by feeding it lines; a composer reachable from a piped run changes all
+    of that at once. Same split #77 landed on, for the same reason.
+    """
+    if not _rendering or not sys.stdout.isatty():
+        return None
+    return _compose
+
+
 def read_line(timeout: float | None = None) -> "str | None | object":
     """The next line the user types, or None if they are leaving.
 
@@ -649,7 +684,8 @@ def read_line(timeout: float | None = None) -> "str | None | object":
     """
     if timeout is None:
         try:
-            return input(_prompt()).strip()
+            composer = _composer()
+            return composer().strip() if composer else input(_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
             print()
