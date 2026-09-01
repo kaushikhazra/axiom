@@ -7,12 +7,13 @@ host a question.
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
-from axiom import backend, config, main, models
-from conftest import StubBackend, feed
+from axiom import backend, config, main, models, terminal
+from conftest import StubBackend, feed, listed, row_for
 
 
 HOST = "http://localhost:11434"
@@ -83,12 +84,7 @@ def test_the_order_does_not_follow_the_host(capsys, monkeypatch, choice):
     """
     out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
 
-    shown = [
-        line
-        for line in out.out.splitlines()
-        if line.strip()[:2] in {f"{n}." for n in range(1, 10)}
-    ]
-    assert [line.split(". ", 1)[1].split("  ")[0] for line in shown] == list(SORTED)
+    assert listed(out.out) == list(SORTED)
 
 
 def test_the_same_models_number_the_same_way_whatever_order_the_host_gives(
@@ -98,12 +94,11 @@ def test_the_same_models_number_the_same_way_whatever_order_the_host_gives(
     first = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
     second = run(capsys, monkeypatch, typed=["1"], models=list(reversed(SORTED)))
 
-    numbered = lambda text: [  # noqa: E731
-        line
-        for line in text.splitlines()
-        if line.strip().startswith(("1.", "2.", "3.", "4.", "5."))
-    ]
-    assert numbered(first.out) == numbered(second.out)
+    # `listed`, not a line filter of its own. The filter that was here keyed on
+    # "the line starts with a digit", and #77 put the list inside a border - so
+    # it matched nothing in either run and the comparison passed as `[] == []`,
+    # green while checking nothing at all.
+    assert listed(first.out) == listed(second.out) == list(SORTED)
 
 
 def test_sorting_is_case_insensitive():
@@ -131,7 +126,7 @@ def test_the_first_entry_is_the_default_until_something_is_chosen(
     """AC 11."""
     out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
 
-    assert f"{SORTED[0]}  (default)" in out.out
+    assert row_for(out.out, SORTED[0]).endswith("(default)")
 
 
 def test_an_empty_line_takes_the_default(capsys, monkeypatch, choice):
@@ -252,10 +247,18 @@ def test_a_named_installed_model_is_used_without_a_list(capsys, monkeypatch, cho
 
 
 def test_one_installed_model_is_chosen_without_a_question(capsys, monkeypatch, choice):
-    """AC 17."""
+    """AC 17, and #77 AC 5.
+
+    The two halves are different claims and only the first was here. "No question
+    was asked" is not "no list was shown" - a build that printed the list and then
+    chose for you would have passed this test, and #77 puts that list in a border
+    which makes it much more of a thing to print at someone unasked.
+    """
     out = run(capsys, monkeypatch, models=["solo:1b"])
 
     assert "which model?" not in out.out
+    assert "models on" not in out.out, "a one-model host was shown a list"
+    assert "╭" not in out.out, "a one-model host was shown a panel"
     assert "using solo:1b - the only model installed" in out.out
     assert f"axiom: solo:1b at {HOST}" in out.out
 
@@ -299,7 +302,7 @@ def test_a_pick_is_remembered_and_marked_next_time(capsys, monkeypatch, choice):
     assert json.loads(choice.read_text(encoding="utf-8")) == {HOST: SORTED[2]}
 
     out = run(capsys, monkeypatch, typed=[""], models=AS_THE_HOST_GIVES_THEM)
-    assert f"{SORTED[2]}  (default)" in out.out
+    assert row_for(out.out, SORTED[2]).endswith("(default)")
     assert f"axiom: {SORTED[2]} at {HOST}" in out.out
 
 
@@ -320,7 +323,7 @@ def test_the_choice_is_remembered_per_host(capsys, monkeypatch, choice):
     }
 
     out = run(capsys, monkeypatch, typed=[""], models=AS_THE_HOST_GIVES_THEM)
-    assert f"{SORTED[2]}  (default)" in out.out
+    assert row_for(out.out, SORTED[2]).endswith("(default)")
 
 
 def test_the_choice_lives_beside_the_mcp_config():
@@ -361,7 +364,7 @@ def test_a_different_directory_has_its_own_remembered_choice(
     out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
 
     # Nothing carried over: the second directory starts with no choice at all.
-    assert f"{SORTED[0]}  (default)" in out.out
+    assert row_for(out.out, SORTED[0]).endswith("(default)")
     assert json.loads((here / ".axiom" / "model.json").read_text()) == {HOST: SORTED[2]}
     assert json.loads((there / ".axiom" / "model.json").read_text()) == {
         HOST: SORTED[0]
@@ -448,7 +451,7 @@ def test_a_remembered_model_that_has_gone_is_said_and_not_used(
 
     assert "removed:9b" in out.err
     assert "no longer has it" in out.err
-    assert f"{SORTED[0]}  (default)" in out.out
+    assert row_for(out.out, SORTED[0]).endswith("(default)")
 
 
 # --- A named model the host does not have -------------------------------
@@ -740,3 +743,144 @@ def test_the_question_is_asked_once_and_not_again(capsys, monkeypatch, choice):
 
     assert out.out.count("which model?") == 1
     assert out.out.count("models on") == 1
+
+
+# --- #77: the list inside a border ----------------------------------------
+
+
+def raw_row(text, model):
+    """The chooser's row for `model` with its escape sequences still on it."""
+    for line in text.splitlines():
+        if model in re.sub(r"\x1b\[[0-9;]*m", "", line):
+            return line
+    return ""
+
+
+def annotation_column(text, model):
+    """Where this row's annotation starts, counting from the model's number.
+
+    Measured from the number rather than from the left edge, so the border and
+    the padding around the list are not what is being compared - AC 2 is about
+    the annotations lining up with each other.
+
+    The end of the first run of two-or-more spaces, not `split("  ")[0]`. The
+    first version used the split and measured **the end of the name** instead,
+    which differs by a character between `gemma2:2b` and `gemma4:e2b` whatever
+    the padding does - so it reported a stagger on a list that was aligned.
+    """
+    bare = row_for(text, model)
+    gap = re.search(r"\s{2,}", bare)
+    return gap.end() if gap else None
+
+
+def test_the_list_is_drawn_inside_a_border_naming_the_host(capsys, monkeypatch, choice):
+    """#77 AC 1."""
+    out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
+
+    assert "╭" in out.out and "╰" in out.out, "no border around the list"
+    assert f"models on {HOST}" in out.out, "the host is not named on the list"
+    for number, model in enumerate(SORTED, start=1):
+        assert row_for(out.out, model).startswith(f"{number}. ")
+
+
+def test_every_annotation_begins_at_the_same_column(capsys, monkeypatch, choice):
+    """#77 AC 2. The point of padding the names to the longest.
+
+    `gemma2:2b` and `qwen2.5-coder:7b` differ by seven characters, so a list that
+    does not pad staggers every annotation by the length of the name above it.
+    """
+    out = run(
+        capsys,
+        monkeypatch,
+        typed=["1"],
+        models=AS_THE_HOST_GIVES_THEM,
+        capable={m: m in {"gemma4:e2b", "ornith:9b"} for m in SORTED},
+    )
+
+    columns = {
+        annotation_column(out.out, model)
+        for model in SORTED
+        if annotation_column(out.out, model) is not None
+    }
+    assert len(columns) == 1, f"annotations start at {sorted(columns)}"
+
+
+def test_the_marked_model_is_dressed_unlike_the_others(capsys, monkeypatch, choice):
+    """#77 AC 3. "Which one it is can be seen without reading every row."
+
+    A marker only the reader's eye can find by reading each line is not a marker.
+    The name itself is accented, so the row differs before it is read.
+
+    **`sys.stdout.isatty` has to be forced here**, and finding that out was worth
+    the test on its own: under pytest stdout is captured, the panel's Console sees
+    no terminal and emits the box with no colour at all. Which is right - a
+    redirected run should not be full of escapes - but it means every other test
+    in this file is looking at an uncoloured chooser, and a criterion about how
+    something is *dressed* cannot be checked from one of those.
+    """
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
+
+    marked = raw_row(out.out, SORTED[0])
+    plain = raw_row(out.out, SORTED[1])
+
+    assert marked and plain
+    assert re.findall(r"\x1b\[[0-9;]*m", marked) != re.findall(
+        r"\x1b\[[0-9;]*m", plain
+    ), "the marked row is dressed exactly like an unmarked one"
+
+
+@pytest.mark.parametrize(
+    "able, annotated",
+    [
+        ({"gemma4:e2b", "ornith:9b"}, True),
+        (set(SORTED), False),
+        (set(), False),
+    ],
+    ids=["some capable", "all capable", "none capable"],
+)
+def test_tools_are_annotated_only_where_they_explain_something(
+    capsys, monkeypatch, choice, able, annotated
+):
+    """#77 AC 4, at all three hosts rather than the interesting one.
+
+    The middle and the last are where a marker appears that should not: on a host
+    where every model can call tools, or none can, the order is plain name order
+    and a note on every row explains nothing.
+    """
+    out = run(
+        capsys,
+        monkeypatch,
+        typed=["1"],
+        models=AS_THE_HOST_GIVES_THEM,
+        capable={m: m in able for m in SORTED},
+    )
+
+    # The rows, not the whole run. `"tools" in out.out` also matches the startup
+    # line - `no tools - this model cannot call them` - so it read as annotated
+    # on precisely the host where nothing should be annotated.
+    rows = [row_for(out.out, model) for model in SORTED]
+    assert any("tools" in row for row in rows) is annotated
+
+
+def test_a_narrow_window_still_shows_every_name_in_full(capsys, monkeypatch, choice):
+    """#77 AC 6.
+
+    A panel spends columns the plain list did not: two on the border and four on
+    the padding. At **20** columns there are fourteen left, `qwen2.5-coder:7b` is
+    sixteen, and the name has to wrap - which is the case that crops if anything
+    does. 30 was the first width tried here and nothing was squeezed at all: every
+    name fit, so the test passed while the renderer was told never to wrap.
+
+    **The border glyphs have to come out along with the whitespace.** A wrapped
+    name arrives as `qwen2.5-coder:` and `7b` on two rows with a `│` between them,
+    and a check that removes only spaces reads that as a crop. Wrapping in full is
+    the criterion being met; losing characters is not.
+    """
+    monkeypatch.setattr(terminal, "_width", lambda: 20)
+    out = run(capsys, monkeypatch, typed=["1"], models=AS_THE_HOST_GIVES_THEM)
+
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out.out)
+    flat = re.sub(r"[\s│╭╮╰╯─]+", "", plain)
+    for model in SORTED:
+        assert model in flat, f"{model} lost characters at 20 columns"

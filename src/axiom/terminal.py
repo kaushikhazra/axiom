@@ -36,6 +36,50 @@ PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
+def say(message: str, stream=None) -> None:
+    """One line in axiom's own voice (#77 AC 27, AC 28).
+
+    At a terminal: a grey `·` and a grey line. Everywhere else: `axiom: message`,
+    exactly the bytes this module printed before #77 - which is what keeps the
+    golden transcript still and AC 33 and AC 35 true.
+
+    **Why the marker rather than the name.** The prefix was on every line axiom
+    said, so the eye had to read each one to find out whose it was; a name
+    repeated forty times identifies nothing. The grey does that job without a
+    word, and the `·` marks the line as axiom's for anyone reading a transcript
+    where colour has been stripped.
+
+    **Why the whole line and not just the marker.** AC 27 is that axiom's own
+    output is *dimmer than the answer*. A grey bullet in front of a full-strength
+    sentence leaves the sentence competing with the model's reply, which is the
+    complaint this came from.
+
+    The gate is the stream being written to, not stdout: a run with stdout piped
+    and stderr still at the terminal should not have its errors decided by where
+    the answer went.
+    """
+    print(_voiced(message, stream), file=stream if stream is not None else sys.stdout)
+
+
+def _voiced(message: str, stream=None) -> str:
+    """One line in axiom's voice, as a string rather than printed.
+
+    For the places that cannot use `say`: a question, whose cursor has to land
+    after it rather than on the row below, and anything that has to measure the
+    line before writing it.
+
+    Assembled rather than interpolated on the plain path, deliberately. This is
+    the one place `VOICE` is still spelled out, and an f-string opening with it
+    would make this function look like all the others to anything scanning for
+    them - including the pass that converted them, which would have turned this
+    line into a call to itself.
+    """
+    stream = stream if stream is not None else sys.stdout
+    if not _rendering or not stream.isatty():
+        return VOICE + " " + message
+    return _grey("·  " + message)
+
+
 def show_models(
     models: tuple[str, ...],
     host: str,
@@ -56,10 +100,12 @@ def show_models(
     user did not mean, and the answer is on screen rather than in a flag they
     have to remember typing.
 
-    Numbers are right-aligned so a ten-model host does not stagger the names.
+    Numbers are right-aligned so a ten-model host does not stagger the names,
+    and names are padded to the longest so the annotations line up under each
+    other rather than staggering with them (#77 AC 2).
     """
-    print(f"{VOICE} models on {host}")
-    width = len(str(len(models)))
+    number_width = len(str(len(models)))
+    longest = max((len(model) for model in models), default=0)
     label = "  (current)" if current else "  (default)"
     # Annotated only where it explains something (#52 AC 8): a host whose
     # models can *all* call tools, or none of which can, has an order that is
@@ -67,13 +113,79 @@ def show_models(
     # making every row longer. Mixed hosts are the case the ordering exists
     # for, and the only case where a reader needs to be told why.
     mixed = capable is not None and 0 < len(capable) < len(models)
+
+    rows = []
     for number, model in enumerate(models, start=1):
-        tools = "  tools" if mixed and model in capable else ""
-        print(f"  {number:>{width}}. {model}{tools}{label if model == marked else ''}")
+        marked_here = model == marked
+        # Padded even on the last column's absence: a row with no annotation
+        # still holds the name's column open, or the marker below it moves.
+        name = model.ljust(longest) if mixed or marked_here else model
+        tools = "  tools" if mixed and model in capable else ("      " if mixed else "")
+        rows.append(
+            (f"{number:>{number_width}}. ", name, tools, label if marked_here else "")
+        )
+    _show_model_panel(rows, host)
+
     if capable is not None and not capable:
         # AC 9. Said once rather than per row - it is a fact about the host,
         # not about any one model, and without it the order looks arbitrary.
-        print(f"{VOICE} none of these can call tools")
+        say("none of these can call tools")
+
+
+def _show_model_panel(rows: list[tuple[str, str, str, str]], host: str) -> None:
+    """The numbered list, inside a border, in the accent (#77 AC 1).
+
+    A rendering failure must not cost the user the list - the same promise
+    `_as_markdown` makes about a reply. Without the fallback a Rich that cannot
+    draw a box would leave a user who has to choose a model with nothing to
+    choose from.
+    """
+    try:
+        from rich.box import ROUNDED
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+
+        body = Text()
+        for index, (number, name, tools, marker) in enumerate(rows):
+            if index:
+                body.append("\n")
+            body.append(number, style=ACCENT)
+            body.append(name, style=f"bold {ACCENT}" if marker else "")
+            # "dim default" rather than "dim": a style inside a panel is laid
+            # over the border's, so a bare "dim" inherits the accent and comes
+            # out tinted rather than grey.
+            body.append(tools, style="dim default")
+            body.append(marker, style=f"bold {ACCENT}")
+
+        Console(
+            force_terminal=sys.stdout.isatty(),
+            legacy_windows=False,
+            no_color=_colourless(),
+            width=_width(),
+        ).print(
+            Panel(
+                body,
+                # **The whole phrase, not a `models` title with the host as a
+                # subtitle.** Ten assertions across test_models, test_switch and
+                # test_tools_first match `models on <host>`, and four of them are
+                # negatives - `assert "models on" not in out.out`. Shortening this
+                # title does not fail them, it makes them **pass while testing
+                # nothing**. Keep the phrase whole.
+                title=Text(f"models on {host}", style=f"bold {ACCENT}"),
+                title_align="left",
+                border_style=ACCENT,
+                box=ROUNDED,
+                padding=(1, 2),
+                expand=False,
+            )
+        )
+    except Exception:
+        # The same trade `_as_markdown` makes: formatting is what a failure
+        # costs, never the content.
+        say(f"models on {host}")
+        for number, name, tools, marker in rows:
+            print(f"  {number}{name.rstrip()}{tools}{marker}")
 
 
 def ask_model(hint: str = "enter for the default") -> str:
@@ -89,7 +201,11 @@ def ask_model(hint: str = "enter for the default") -> str:
     a key mid-line, and the next thing printed would otherwise land on it.
     """
     try:
-        return input(f"{VOICE} which model? ({hint}) ")
+        # `say` cannot be used here: this is a question, and the cursor has to
+        # land after it rather than on the row below. So it takes the same two
+        # forms by hand - `axiom: which model?` when nothing is being drawn, and
+        # a grey marked line at a terminal (#77 AC 27, AC 28).
+        return input(_voiced(f"which model? ({hint}) "))
     except (EOFError, KeyboardInterrupt):
         print()
         raise
@@ -114,9 +230,9 @@ def refuse_model(answer: str, count: int, names: bool = False) -> None:
         else f"type a number from 1 to {count}"
     )
     if given.isdigit():
-        print(f"{VOICE} there is no model {given} - {wanted}", file=sys.stderr)
+        say(f"there is no model {given} - {wanted}", sys.stderr)
     else:
-        print(f"{VOICE} {given!r} is not a number - {wanted}", file=sys.stderr)
+        say(f"{given!r} is not a number - {wanted}", sys.stderr)
 
 
 def note_model_missing(model: str, host: str) -> None:
@@ -127,14 +243,14 @@ def note_model_missing(model: str, host: str) -> None:
     from the host the user meant is a different problem from a model missing
     because the run is pointed at the wrong host.
     """
-    print(f"{VOICE} {model} is not installed on {host}", file=sys.stderr)
+    say(f"{model} is not installed on {host}", sys.stderr)
 
 
 def note_choice_forgotten(model: str, host: str) -> None:
     """The remembered choice has been removed from the host since it was made."""
-    print(
-        f"{VOICE} {model} was your last choice here but {host} no longer has it",
-        file=sys.stderr,
+    say(
+        f"{model} was your last choice here but {host} no longer has it",
+        sys.stderr,
     )
 
 
@@ -149,11 +265,25 @@ def note_choice_unreadable(path: str) -> None:
     Said rather than swallowed because the alternative is a user who edits the
     file, sees no effect, and has no way to learn why.
     """
-    print(
-        f"{VOICE} {path} could not be read - carrying on as though nothing "
+    say(
+        f"{path} could not be read - carrying on as though nothing "
         f"had been chosen here",
-        file=sys.stderr,
+        sys.stderr,
     )
+
+
+def settled_because(reason: str) -> str | None:
+    """Why axiom chose this model, in words, or None if the user chose it.
+
+    One function because the phrase is now said in two places - the line below
+    and the facts panel's model row (#77 AC 15) - and two copies of a sentence
+    are two sentences the moment one of them is edited.
+    """
+    return {
+        "only": "the only model installed",
+        "remembered": "your last choice here",
+        "first": "first installed, nothing was chosen",
+    }.get(reason)
 
 
 def note_settled(model: str, reason: str) -> None:
@@ -164,12 +294,9 @@ def note_settled(model: str, reason: str) -> None:
     it. The other two are axiom choosing on the user's behalf, and AC 22 is
     that this never happens invisibly.
     """
-    if reason == "only":
-        print(f"{VOICE} using {model} - the only model installed")
-    elif reason == "remembered":
-        print(f"{VOICE} using {model} - your last choice here")
-    elif reason == "first":
-        print(f"{VOICE} using {model} - first installed, nothing was chosen")
+    because = settled_because(reason)
+    if because:
+        say(f"using {model} - {because}")
 
 
 def note_choice_saved(problem: str | None, path: str) -> None:
@@ -189,9 +316,9 @@ def note_choice_saved(problem: str | None, path: str) -> None:
     also claims a file was written.
     """
     if problem:
-        print(f"{VOICE} {problem} - it will be asked again next time", file=sys.stderr)
+        say(f"{problem} - it will be asked again next time", sys.stderr)
     elif path:
-        print(f"{VOICE} remembering this choice in {path}")
+        say(f"remembering this choice in {path}")
 
 
 def note_switched(
@@ -224,15 +351,12 @@ def note_switched(
     against a deliberately broken caller purely because the default happened to
     match. Required arguments turn that silence into a `TypeError`.
     """
-    print(
-        f"{VOICE} now {model} "
-        f"(context: {_room(context, overridden)}, {_can_do(tools, web)})"
-    )
+    say(f"now {model} (context: {_room(context, overridden)}, {_can_do(tools, web)})")
 
 
 def note_unchanged(model: str) -> None:
     """Nothing happened, said so the silence is not mistaken for a switch."""
-    print(f"{VOICE} still {model}")
+    say(f"still {model}")
 
 
 def note_current_missing(model: str, host: str) -> None:
@@ -248,15 +372,15 @@ def note_current_missing(model: str, host: str) -> None:
     being unusable this second, and guessing otherwise would end a working
     conversation over a listing.
     """
-    print(
-        f"{VOICE} still on {model}, which {host} no longer lists",
-        file=sys.stderr,
+    say(
+        f"still on {model}, which {host} no longer lists",
+        sys.stderr,
     )
 
 
 def note_only_model(model: str) -> None:
     """There is nothing to switch to, and the list would say nothing useful."""
-    print(f"{VOICE} {model} is the only model installed - nothing to switch to")
+    say(f"{model} is the only model installed - nothing to switch to")
 
 
 def report_switch_failed(host: str, cause: BaseException, model: str) -> None:
@@ -267,15 +391,15 @@ def report_switch_failed(host: str, cause: BaseException, model: str) -> None:
     at startup: there is a working session and a working model here, and losing
     the list is a reason to stay put rather than to end it.
     """
-    print(
-        f"{VOICE} cannot reach Ollama at {host} ({cause}) - staying on {model}",
-        file=sys.stderr,
+    say(
+        f"cannot reach Ollama at {host} ({cause}) - staying on {model}",
+        sys.stderr,
     )
 
 
 def refuse_command(form: str) -> None:
     """A command that was recognised but not usable as typed."""
-    print(f"{VOICE} {form}", file=sys.stderr)
+    say(f"{form}", sys.stderr)
 
 
 def report_no_models(host: str) -> None:
@@ -353,8 +477,8 @@ def announce(
     two three-state settings from becoming nine sentences: with no tools there
     is nothing to say about the web, and the line stays one line.
     """
-    print(
-        f"{VOICE} {model} at {host} "
+    say(
+        f"{model} at {host} "
         f"(context: {_room(context, overridden)}, {_can_do(tools, web)})"
     )
 
@@ -367,7 +491,7 @@ def note_starting(servers: int) -> None:
     """
     if servers:
         word = "server" if servers == 1 else "servers"
-        print(f"{VOICE} starting {servers} MCP {word}...")
+        say(f"starting {servers} MCP {word}...")
 
 
 def note_tool_cost(cost: int | None, window: int | None) -> None:
@@ -391,7 +515,7 @@ def note_tool_cost(cost: int | None, window: int | None) -> None:
     if cost is None:
         return
     share = f", {100 * cost / window:.0f}% of the window" if window else ""
-    print(f"{VOICE} tools cost about {cost} tokens per request{share}")
+    say(f"tools cost about {cost} tokens per request{share}")
 
 
 def note_servers(
@@ -417,14 +541,14 @@ def note_servers(
 
     for name, count in connected.items():
         tools_word = "tool" if count == 1 else "tools"
-        print(f"{VOICE} {name}: {count} {tools_word}")
+        say(f"{name}: {count} {tools_word}")
 
     if connected and bounds is not None:
         start, call = bounds
-        print(f"{VOICE} server start limit {start:g}s, tool call limit {call:g}s")
+        say(f"server start limit {start:g}s, tool call limit {call:g}s")
 
     for problem in problems:
-        print(f"{VOICE} {problem}", file=sys.stderr)
+        say(f"{problem}", sys.stderr)
 
 
 WAITING = object()
@@ -525,7 +649,7 @@ def read_line(timeout: float | None = None) -> "str | None | object":
     """
     if timeout is None:
         try:
-            return input(PROMPT).strip()
+            return input(_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
             print()
@@ -548,7 +672,23 @@ def show_prompt() -> None:
     anything. **One place owns the prompt**, and with a timeout that place is the
     caller.
     """
-    print(PROMPT, end="", flush=True)
+    print(_prompt(), end="", flush=True)
+
+
+def _prompt() -> str:
+    """The prompt, in the accent at a terminal and plain everywhere else.
+
+    Only the marker is coloured. What the user types after it is left at the
+    terminal's own foreground (#77 AC 30) - the accent marks where the line
+    starts; it does not decorate what they say.
+
+    The reset comes before the space rather than after it, so nothing carries
+    into the typed line even if a terminal is careless about where a style ends.
+    """
+    if not _rendering or not sys.stdout.isatty() or _colourless():
+        return PROMPT
+    red, green, blue = (int(ACCENT[at : at + 2], 16) for at in (1, 3, 5))
+    return f"\x1b[1;38;2;{red};{green};{blue}m>\x1b[0m "
 
 
 def take_back_prompt() -> None:
@@ -579,7 +719,7 @@ def note_scheduled(prompt: str) -> None:
     The prompt is echoed because the user did not type it and would otherwise be
     reading an answer to a question they cannot see.
     """
-    print(f"{VOICE} scheduled - {prompt}")
+    say(f"scheduled - {prompt}")
 
 
 def start_turn() -> None:
@@ -604,8 +744,46 @@ def end_turn() -> None:
     exchange stopped and the next began. One blank line, once, at the point
     the turn is genuinely over - not after each tool round, which would break
     a single turn into pieces that look like separate ones.
+
+    This is also where the turn's tools are accounted for (#77 AC 24). Here
+    rather than at the end of the tool rounds, because a turn can go
+    model -> tool -> model -> tool, and the criterion asks for one line when the
+    *turn* finishes rather than one per round. **The counters are reset here
+    whatever happened**, including on the failure path - every route out of a
+    turn passes through this function, and a count that survived one would be
+    added to the next turn's.
     """
+    global _tool_runs, _tool_failures, _tools_summarised
+    _stop_working()
+    # Normally already drawn, above the answer, by `show_piece`. This is the
+    # turn that never produced another word - out of rounds, or interrupted -
+    # where without it the tools that ran would go unmentioned entirely.
+    _summarise_tools()
+    _tool_runs, _tool_failures, _tools_summarised = 0, 0, False
     print()
+
+
+def _summarise_tools() -> None:
+    """The turn's tools, in one line, once (#77 AC 24, AC 25, AC 26).
+
+    Guarded by a flag rather than by where it is called from: two callers reach
+    it - the first fragment of the answer, and the end of a turn that produced no
+    answer - and a turn must not be able to get two lines out of them.
+    """
+    global _tools_summarised
+    if _tools_summarised or not _tool_runs:
+        # AC 25: nothing at all for a turn that called none, which is what makes
+        # the line mean something when it does appear.
+        return
+    if not _rendering or not sys.stdout.isatty():
+        return
+    _tools_summarised = True
+    word = "tool" if _tool_runs == 1 else "tools"
+    failed = f", {_tool_failures} failed" if _tool_failures else ""
+    print(_grey(f"  ·  {_tool_runs} {word}{failed}"))
+
+
+_tools_summarised = False
 
 
 # Lines of a fenced block kept as context for highlighting the next one. See
@@ -912,10 +1090,17 @@ class Rendered:
             drawn = _highlighted("\n".join(self._code), self._lexer)
             if len(drawn) >= len(self._code):
                 return drawn[len(self._code) - 1]
-        # Cyan is a colour, so `NO_COLOR` takes it. The dim on a fence marker is
-        # an attribute rather than a colour and stays - which is the line Rich
-        # draws, and the line the convention draws.
-        return line if _colourless() else f"\x1b[36m{line}\x1b[0m"
+        # #77 AC 20: no styling at all. If the fence names no language we cannot
+        # know how to colour what is inside it, and a colour chosen anyway is a
+        # claim about the content that nothing supports.
+        #
+        # This is a **reinterpretation of #60 AC 3**, "a block reads as a block,
+        # named language or not", and it is written down here rather than left to
+        # be inferred from an edited test. What sets the block apart is now its
+        # fence markers, which `_styled` still draws dim above and below it - the
+        # block is delimited rather than painted. Measured before the change:
+        # `styling('x = 1') == ''` and `styling('```nosuchlanguage') == '\x1b[2m'`.
+        return line
 
 
 def _lexer_for(language: str) -> str | None:
@@ -951,7 +1136,11 @@ def _highlighted(code: str, language: str) -> list[str]:
 
         buffer = StringIO()
         Console(
-            file=buffer, force_terminal=True, legacy_windows=False, width=10_000
+            file=buffer,
+            force_terminal=True,
+            legacy_windows=False,
+            width=10_000,
+            no_color=_colourless(),
         ).print(
             Syntax(
                 code,
@@ -970,12 +1159,23 @@ def _highlighted(code: str, language: str) -> list[str]:
 def _colourless() -> bool:
     """Whether the user has asked for no colour.
 
-    Presence, not truth: `NO_COLOR=` with nothing after it counts. The published
-    convention says "not an empty string", but Rich tests for presence, and Rich
-    draws most of what reaches the screen here. Agreeing with the renderer beats
-    agreeing with the specification and then disagreeing with itself - a session
-    where headings lose their colour and fenced code keeps it is the worse
-    outcome of the two.
+    Presence, not truth: `NO_COLOR=` with nothing after it counts.
+
+    **This used to claim Rich agreed, and Rich does not.** Measured under #77:
+    with `NO_COLOR=` set to the empty string, Rich emits the accent regardless -
+    it follows the published convention's "not an empty string" wording. Nothing
+    ever caught the disagreement because the only test of this rule went through
+    the one colour this module wrote by hand, which obeyed *this* function and
+    never asked Rich anything.
+
+    So the two rules were in force at once: with `NO_COLOR=`, a fence lost its
+    colour and every heading kept its own. That is the exact inconsistency the
+    old docstring said it was avoiding, and it shipped for the whole of #60.
+
+    Presence is kept, because it is the recorded decision and it is the stricter
+    of the two - a user who writes `NO_COLOR=` meant something by it. It is now
+    imposed on Rich rather than assumed of it: every Console that draws is built
+    with `no_color=` from here, so one rule reaches the whole screen.
     """
     return "NO_COLOR" in os.environ
 
@@ -1015,6 +1215,72 @@ _LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d{1,9}[.)])(?:\s+(.*))?$")
 # already draws, because AC 6 says a flat list must not change.
 NESTED_MARKERS = ("◦", "▪", "•")  # ring, small square, bullet
 NEST_INDENT = 2  # columns a level is indented by
+
+# The one accent, and the grey axiom speaks in (#77).
+#
+# ACCENT is Mountain Leverage's own `--uicore-secondary-color`, read off their
+# theme stylesheet. VOICE_GREY is their `--uicore-body-color`, `rgba(16,24,40,.6)`
+# resolved over white - derived rather than published, and chosen over a lighter
+# grey because axiom does not know whether it is on a light or a dark background
+# and this one survives both.
+ACCENT = "#daa900"
+VOICE_GREY = "#70747e"
+
+# What Rich paints a reply with. Without this it uses its own defaults - magenta
+# for quotes and h2-h4, cyan for inline code, list numbers and table borders,
+# bright_blue for links. Three hues that axiom never chose and that have nothing
+# to do with each other (#77 AC 17, AC 18).
+#
+# Two entries are deliberately left at Rich's value rather than accented:
+#
+#   markdown.code_block   a fenced block with a *known* language is drawn by
+#                         `_highlighted` against ansi_dark, because a language
+#                         needs more than one hue to be readable (AC 19). This
+#                         style only ever reaches a block nobody has a lexer for,
+#                         and AC 20 says that one carries no styling at all.
+#   markdown.h1.border    Rich draws no border for h1 here; naming it would be
+#                         asserting a decision this issue does not make.
+_MARKDOWN_STYLES = {
+    "markdown.block_quote": f"dim {ACCENT}",
+    "markdown.code": f"bold {ACCENT} on black",
+    "markdown.h1": f"bold {ACCENT}",
+    "markdown.h2": f"bold {ACCENT}",
+    "markdown.h3": ACCENT,
+    "markdown.h4": f"italic {ACCENT}",
+    "markdown.h5": "italic dim",
+    "markdown.h6": "dim",
+    "markdown.hr": "dim",
+    "markdown.item.bullet": f"bold {ACCENT}",
+    "markdown.item.number": ACCENT,
+    "markdown.kbd": f"bold {ACCENT}",
+    "markdown.link": f"underline {ACCENT}",
+    "markdown.link_url": "dim underline",
+    "markdown.list": ACCENT,
+    "markdown.table.border": ACCENT,
+    "markdown.table.header": f"bold {ACCENT}",
+}
+
+
+def _theme():
+    """The palette, built once and handed to every Console that draws a reply.
+
+    A function rather than a module-level object because `rich.theme` is imported
+    lazily everywhere else in this file - the import cost belongs to the first
+    render, not to starting up.
+
+    `NO_COLOR` needs nothing here. Rich honours it natively and strips the accent
+    while leaving bold, dim and underline alone, which is what the convention asks
+    for and what axiom already decided to defer to (AC 31).
+    """
+    global _THEME
+    if _THEME is None:
+        from rich.theme import Theme
+
+        _THEME = Theme(_MARKDOWN_STYLES)
+    return _THEME
+
+
+_THEME = None
 
 # What Rich draws under a table's header row, and the sign that it understood
 # the rows as a table at all rather than as a paragraph of pipes.
@@ -1063,6 +1329,8 @@ def _as_table(rows: list[str]) -> list[str]:
             legacy_windows=False,
             width=_width(),
             soft_wrap=False,  # a table draws its own edges; do not let them wrap
+            theme=_theme(),  # #77 AC 17 - the rules carry the accent
+            no_color=_colourless(),
         ).print(Markdown("\n".join(rows)), end="")
         drawn = [_unpadded(line) for line in buffer.getvalue().split("\n")]
         # Rich draws a top and bottom border row for a table, and the box style
@@ -1122,6 +1390,8 @@ def _as_markdown(
             # Off for anything Rich draws in a container, on for everything
             # else. See `_CONTAINED` - this one flag is the whole of #72.
             soft_wrap=(not _CONTAINED.match(line)) if wrapped is None else not wrapped,
+            theme=_theme(),  # #77 AC 17, AC 18 - one accent, not Rich's three hues
+            no_color=_colourless(),  # presence, imposed rather than assumed
         ).print(Markdown(line), end="")
         shown = buffer.getvalue().strip("\n")
         return _unpadded(shown) if shown.strip() else line
@@ -1190,6 +1460,22 @@ def show_piece(text: str) -> None:
     if not _rendering or not sys.stdout.isatty():
         print(text, end="", flush=True)
         return
+    # #77 AC 24: the turn's tools are accounted for **before** the answer they
+    # produced, not after it.
+    #
+    # It used to be drawn in `end_turn`, which put it below the answer and
+    # between two blank lines - so it read as belonging to the next prompt, and
+    # you learned what the answer rested on only after you had read it. Driven by
+    # hand on 2026-09-01: a turn that ran one tool and answered "I do not have a
+    # tool available" showed `·  1 tool` underneath, and nothing on screen
+    # resolved the contradiction until you scrolled back to look at it again.
+    #
+    # Here rather than at the end of the tool rounds because a turn can go
+    # model -> tool -> model -> tool: this fires on the first fragment of reply
+    # that follows any tool call, which is one line per turn wherever the rounds
+    # fall. `end_turn` still draws it if a turn ended without another word - out
+    # of rounds, or interrupted - so it is never simply lost.
+    _summarise_tools()
     if _reply is None:
         _reply = Rendered()
     _reply.feed(text)
@@ -1227,15 +1513,65 @@ def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> N
     because `path=notes.txt` is what the model asked for and where that
     actually lands is a different fact. Visibility only - nothing is blocked.
     """
+    global _tool_runs
+    if _rendering and sys.stdout.isatty():
+        # #77 AC 22: nothing per call. What the user gets instead is AC 23 - a
+        # line saying something is running, which is taken back the moment the
+        # result arrives. A tool phase is seconds long and a silent pause reads
+        # as a hang, which `note_starting` already says out loud.
+        _tool_runs += 1
+        _start_working(name)
+        return
     if isinstance(arguments, dict):
         detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
     else:
         # A call announced as text can carry anything at all. Show it as it
         # came - running it is what reports that it cannot be used.
         detail = str(arguments)
-    print(f"{VOICE} {name}({detail})")
+    say(f"{name}({detail})")
     for path in outside or []:
-        print(f"{VOICE} outside the working directory: {path}")
+        say(f"outside the working directory: {path}")
+
+
+# What this turn's tools did, for the one line that replaces all of them. Reset
+# by `end_turn`, which every route out of a turn goes through - including the
+# one that failed, or a turn that ended badly would spill its count into the next.
+_tool_runs = 0
+_tool_failures = 0
+_working = False
+
+
+def _start_working(name: str) -> None:
+    """One transient line while a tool runs (#77 AC 23).
+
+    `\\r` then erase-to-end-of-line, which is the pair `Rendered` already uses to
+    replace an echoed line with a styled one. Nothing is committed: the row is
+    overwritten by the next call and taken back entirely by `_stop_working`, so
+    a turn calling four tools leaves no trail of four lines behind it.
+    """
+    global _working
+    _working = True
+    print(f"\r\x1b[K  {_grey('· ' + name + ' ...')}", end="", flush=True)
+
+
+def _stop_working() -> None:
+    """Take the transient line back, leaving the row as it was."""
+    global _working
+    if _working:
+        print("\r\x1b[K", end="", flush=True)
+        _working = False
+
+
+def _grey(text: str) -> str:
+    """axiom's own voice, quieter than the answer (#77 AC 27).
+
+    A colour, so `NO_COLOR` takes it - which leaves the words, which is the
+    point: quieter is a preference, legible is not.
+    """
+    if _colourless():
+        return text
+    red, green, blue = (int(VOICE_GREY[at : at + 2], 16) for at in (1, 3, 5))
+    return f"\x1b[38;2;{red};{green};{blue}m{text}\x1b[0m"
 
 
 def note_round_limit(rounds: int) -> None:
@@ -1244,14 +1580,31 @@ def note_round_limit(rounds: int) -> None:
     Without this the user gets whatever `reply` happened to hold, which after
     a turn that called tools every round is nothing at all (#41 AC 10).
     """
-    print(
-        f"{VOICE} stopped after {rounds} rounds of tool calls without an answer. "
+    say(
+        f"stopped after {rounds} rounds of tool calls without an answer. "
         f"Nothing further was tried."
     )
 
 
 def show_tool_result(result: str) -> None:
-    """A tool's output, marked so it cannot be read as the model's answer."""
+    """A tool's output, marked so it cannot be read as the model's answer.
+
+    At a terminal this shows **nothing** (#77 AC 26). The per-call detail leaves
+    the screen entirely and one summary line replaces the lot; the detail is
+    bound for a log, which is its own piece of work. What happens here instead is
+    that the transient line is taken back and the outcome is counted.
+
+    Not at a terminal it is unchanged, which is what keeps the golden transcript
+    still and AC 33 true.
+    """
+    global _tool_failures
+    if _rendering and sys.stdout.isatty():
+        _stop_working()
+        # The convention every tool already follows for a failure, and the one a
+        # user would recognise: a result that opens by saying it is an error.
+        if result.startswith("error:"):
+            _tool_failures += 1
+        return
     shown = result[:TOOL_OUTPUT_LIMIT]
     for line in shown.splitlines() or [""]:
         print(f"  | {line}")
@@ -1274,15 +1627,15 @@ def show_sources(read: list[str], seen: list[str]) -> None:
     not, and presenting one as the other is the thing this exists to prevent.
     """
     if read:
-        print(f"{VOICE} read: " + ", ".join(read))
+        say("read: " + ", ".join(read))
     only_seen = [address for address in seen if address not in read]
     if only_seen:
-        print(f"{VOICE} found, not read: " + ", ".join(only_seen))
+        say("found, not read: " + ", ".join(only_seen))
 
 
 def note_compaction(kept_pairs: int) -> None:
     level = "everything" if kept_pairs == 0 else f"keeping the last {kept_pairs}"
-    print(f"{VOICE} compacting older history ({level})")
+    say(f"compacting older history ({level})")
 
 
 def note_facts_forgotten(dropped: list[str]) -> None:
@@ -1294,7 +1647,7 @@ def note_facts_forgotten(dropped: list[str]) -> None:
     without telling them whether it mattered. Seeing it is what lets them say
     it again if it did.
     """
-    print(f"{VOICE} the summary is full - forgetting {len(dropped)}:")
+    say(f"the summary is full - forgetting {len(dropped)}:")
     for fact in dropped:
         print(f"  | {fact}")
 
@@ -1417,14 +1770,12 @@ def show_skills(listed: list[tuple[str, str]], where: str) -> None:
     go. Saying the path every time would be noise for everyone it cannot help.
     """
     if not listed:
-        print(
-            f"{VOICE} no skills loaded. A skill is a folder in {where} with a SKILL.md"
-        )
+        say(f"no skills loaded. A skill is a folder in {where} with a SKILL.md")
         return
     word = "skill" if len(listed) == 1 else "skills"
-    print(f"{VOICE} {len(listed)} {word}:")
+    say(f"{len(listed)} {word}:")
     for name, description in listed:
-        print(f"{VOICE}   {name} - {description}")
+        say(f"  {name} - {description}")
 
 
 def note_skill(name: str) -> None:
@@ -1436,7 +1787,7 @@ def note_skill(name: str) -> None:
     `/skill` reaches the same behaviour by a different route, and the two should
     not end up looking like different features.
     """
-    print(f"{VOICE} skill: {name}")
+    say(f"skill: {name}")
 
 
 def note_no_skill(name: str, available: tuple[str, ...]) -> None:
@@ -1452,9 +1803,9 @@ def note_no_skill(name: str, available: tuple[str, ...]) -> None:
     """
     listed = ", ".join(available) or "none"
     if not name:
-        print(f"{VOICE} name a skill: /skill <name>. Available: {listed}")
+        say(f"name a skill: /skill <name>. Available: {listed}")
         return
-    print(f"{VOICE} there is no skill named {name}. Available: {listed}")
+    say(f"there is no skill named {name}. Available: {listed}")
 
 
 def note_skills_off() -> None:
@@ -1465,7 +1816,7 @@ def note_skills_off() -> None:
     into that folder would not be read. The difference is between having none
     and having asked for none.
     """
-    print(f"{VOICE} skills are off for this run (--no-skills or $AXIOM_SKILLS)")
+    say("skills are off for this run (--no-skills or $AXIOM_SKILLS)")
 
 
 def note_skills(
@@ -1495,16 +1846,16 @@ def note_skills(
     # A run with skills on and no directory says nothing at all, which is AC 1 -
     # the two states are different and only one of them was asked for.
     if not enabled:
-        print(f"{VOICE} skills off")
+        say("skills off")
         return
     if not loaded and not problems:
         return
     if loaded:
         word = "skill" if loaded == 1 else "skills"
         share = f", about {cost} tokens per request" if cost else ""
-        print(f"{VOICE} {loaded} {word} loaded{share}")
+        say(f"{loaded} {word} loaded{share}")
     for problem in problems:
-        print(f"{VOICE} skill not loaded - {problem}")
+        say(f"skill not loaded - {problem}")
 
 
 def note_skill_too_large(name: str, over: int) -> None:
@@ -1515,8 +1866,199 @@ def note_skill_too_large(name: str, over: int) -> None:
     characters. The thing that is too large is the file behind it, and only this
     line says so.
     """
-    print(
-        f"{VOICE} {name} is about {over} tokens too large for this model's "
+    say(
+        f"{name} is about {over} tokens too large for this model's "
         f"window - not sent. Shorten the skill, or switch to a model with more "
         f"room with /model."
     )
+
+
+# --- #77: the session's facts ----------------------------------------------
+
+
+def show_facts(
+    *,
+    model: str,
+    host: str,
+    context: "int | None",
+    overridden: bool,
+    tools: "int | None",
+    web: bool,
+    cost: "int | None",
+    connected: dict,
+    problems: list,
+    bounds: "tuple[float, float] | None",
+    skills_loaded: int,
+    skill_problems: list,
+    skills_cost: "int | None",
+    skills_enabled: bool,
+    reason: str = "",
+) -> None:
+    """What this session is: the model, the host, the room, the cost (#77 AC 11).
+
+    **Two renderers, one set of facts, and the split is not cosmetic.** AC 33
+    requires redirected and piped output to be unchanged byte for byte, and the
+    golden transcript is captured from a `StringIO` - not a terminal. So the
+    panel is drawn only at a terminal and a redirected run takes exactly the path
+    it took before #77 existed.
+
+    That is the same shape `use_rendering` already chose for replies: one plain
+    path, which is the one the transcript records, and a rendered path on top of
+    it. It also means **the 78 baseline lines this issue was expected to rewrite
+    do not change at all** - the narrowing #75 asks for, found by asking whether
+    the code could be shaped so the baseline is restored rather than updated.
+
+    The plain path calls the four functions in the order they were called in
+    before, and they are unchanged. Nothing is duplicated: the panel reads the
+    same arguments rather than a second set of sentences.
+    """
+    # `_rendering` as well as the terminal. `--no-render` takes the same path a
+    # redirected run takes rather than a quieter rendering (AC 32) - which is the
+    # rule `use_rendering` already states for replies, and a panel drawn under it
+    # would have made "off" mean two different things in one session.
+    if not _rendering or not sys.stdout.isatty():
+        announce(model, host, context, overridden=overridden, tools=tools, web=web)
+        note_servers(connected, problems, bounds=bounds)
+        note_tool_cost(cost, context)
+        note_skills(skills_loaded, skill_problems, skills_cost, enabled=skills_enabled)
+        return
+
+    _clear_screen()
+    _facts_panel(
+        model=model,
+        host=host,
+        context=context,
+        overridden=overridden,
+        tools=tools,
+        web=web,
+        cost=cost,
+        connected=connected,
+        bounds=bounds,
+        skills_loaded=skills_loaded,
+        skills_cost=skills_cost,
+        skills_enabled=skills_enabled,
+        reason=reason,
+    )
+    # Outside the box, on the streams they already used (#77 AC 16). A border
+    # around a failure makes it look like part of the report rather than
+    # something to do, and each of these is fixed by a different action.
+    for problem in problems:
+        say(f"{problem}", sys.stderr)
+    for problem in skill_problems:
+        say(f"skill not loaded - {problem}")
+
+
+def _clear_screen() -> None:
+    """The screen, not the scrollback (#77 AC 7, AC 9).
+
+    `\x1b[2J\x1b[H` - erase the display and home the cursor. Deliberately not
+    `\x1b[3J`, which also empties the scrollback buffer: a user who scrolls up
+    after choosing a model should still find what was there. The two look
+    identical the moment they are run and differ only in what is recoverable,
+    which is exactly the kind of difference that needs asserting on the bytes.
+    """
+    print("\x1b[2J\x1b[H", end="")
+
+
+def _facts_panel(
+    *,
+    model: str,
+    host: str,
+    context: "int | None",
+    overridden: bool,
+    tools: "int | None",
+    web: bool,
+    cost: "int | None",
+    connected: dict,
+    bounds: "tuple[float, float] | None",
+    skills_loaded: int,
+    skills_cost: "int | None",
+    skills_enabled: bool,
+    reason: str,
+) -> None:
+    """The facts as a label/value grid, in the same border as the model list.
+
+    **A row exists only where the plain path prints a line** (#77 AC 12). That is
+    the whole rule, and it is what keeps a bare run bare: no skills directory
+    means no skills row, exactly as `note_skills` says nothing at all in that
+    case, and an unknown cost is left out rather than shown as zero - a zero is a
+    number and reads like one.
+    """
+    try:
+        from rich.box import ROUNDED
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.table import Table
+        from rich.text import Text
+
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(justify="right", style=f"dim default {VOICE_GREY}")
+        grid.add_column()
+
+        def row(label: str, value: Text) -> None:
+            grid.add_row(Text(label, style=VOICE_GREY), value)
+
+        name = Text(model, style=f"bold {ACCENT}")
+        because = settled_because(reason)
+        if because:
+            # On the model's row rather than as a statement of its own: it
+            # explains that value, and is not a fact beside it (#77 AC 15).
+            name.append(f"   {because}", style=VOICE_GREY)
+        row("model", name)
+        row("host", Text(host, style=VOICE_GREY))
+
+        room = Text(_room(context, overridden))
+        row("context", room)
+
+        row("tools", Text(_can_do(tools, web)))
+
+        if cost is not None:
+            share = f", {100 * cost / context:.0f}% of the window" if context else ""
+            spend = Text(f"~{cost} tokens")
+            spend.append(f" per request{share}", style=VOICE_GREY)
+            row("cost", spend)
+
+        first = True
+        for server, count in (connected or {}).items():
+            word = "tool" if count == 1 else "tools"
+            line = Text(server)
+            line.append(f"  {count} {word}", style=VOICE_GREY)
+            row("servers" if first else "", line)
+            first = False
+        if connected and bounds:
+            start, call = bounds
+            row(
+                "",
+                Text(f"start limit {start:g}s, call limit {call:g}s", style=VOICE_GREY),
+            )
+
+        if not skills_enabled:
+            row("skills", Text("off", style=VOICE_GREY))
+        elif skills_loaded:
+            word = "skill" if skills_loaded == 1 else "skills"
+            loaded = Text(f"{skills_loaded} {word}")
+            if skills_cost:
+                loaded.append(f"  ~{skills_cost} tokens per request", style=VOICE_GREY)
+            row("skills", loaded)
+
+        Console(
+            force_terminal=True,
+            legacy_windows=False,
+            no_color=_colourless(),
+            width=_width(),
+        ).print(
+            Panel(
+                grid,
+                title=Text("axiom", style=f"bold {ACCENT}"),
+                title_align="left",
+                border_style=ACCENT,
+                box=ROUNDED,
+                padding=(1, 2),
+                expand=False,
+            )
+        )
+    except Exception:
+        # The same trade every other renderer here makes: formatting is what a
+        # failure costs, never the facts.
+        announce(model, host, context, overridden=overridden, tools=tools, web=web)
+        note_tool_cost(cost, context)

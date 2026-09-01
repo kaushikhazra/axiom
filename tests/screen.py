@@ -85,11 +85,25 @@ class Screen:
                 if not found:
                     at += 1
                     continue
-                count, letter = int(found.group(1) or 1), found.group(2)
+                parameter, letter = found.group(1), found.group(2)
+                count = int(parameter or 1)
                 if letter == "A":
                     self.row = max(0, self.row - count)
-                elif letter in ("K", "J"):
-                    self._truncate(to_end_of_screen=letter == "J")
+                elif letter == "K":
+                    self._truncate(to_end_of_screen=False)
+                elif letter == "J":
+                    # **The parameter matters and used to be ignored.** `[J` and
+                    # `[0J` erase from the cursor to the end of the screen; `[2J`
+                    # erases the *whole* screen whatever the cursor is doing, and
+                    # `[3J` does that and the scrollback too. Reading every `J` as
+                    # "from here down" left everything above the cursor standing,
+                    # so a cleared screen still showed the line that had been on
+                    # it - which is how #77 AC 8 came to be measured against a
+                    # screen that had not actually been cleared.
+                    if parameter in ("2", "3"):
+                        self.rows, self.row, self.column = [[]], 0, 0
+                    else:
+                        self._truncate(to_end_of_screen=True)
                 at = found.end()
             else:
                 self._put(character)

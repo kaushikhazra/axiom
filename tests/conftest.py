@@ -231,3 +231,43 @@ def feed(monkeypatch, lines: list) -> None:
         return item
 
     monkeypatch.setattr(builtins, "input", fake_input)
+
+
+def listed(text: str) -> list[str]:
+    """The model names, in the order the chooser printed them.
+
+    One helper because there were four, in three files, each keying on "the line
+    starts with a digit" - which #77 broke all at once by putting the list inside
+    a border, where every row starts with `|`. Four copies of a parse is four
+    places to miss next time the frame changes.
+
+    The border and the padding are chrome; the numbering, the order and the names
+    are the behaviour. Only the second group is returned.
+    """
+    names = []
+    for line in text.splitlines():
+        bare = line.strip().strip("│").strip()
+        if not bare[:1].isdigit() or ". " not in bare:
+            continue
+        names.append(bare.split(". ", 1)[1].split("  ")[0].strip())
+    return names
+
+
+def row_for(text: str, model: str) -> str:
+    """The chooser's row for one model, without the frame around it.
+
+    So an assertion can say what follows the name - `tools`, `(default)`,
+    `(current)` - without also asserting how many spaces the padding put there.
+    #77 aligns the annotations into a column, so the gap is now the length of the
+    longest name and pinning it would make every test a test of the widest model
+    on the stub's list.
+
+    Returns "" when the model has no row, so a test can assert absence too.
+    """
+    for line in text.splitlines():
+        bare = line.strip().strip("│").strip()
+        if not bare[:1].isdigit() or ". " not in bare:
+            continue
+        if bare.split(". ", 1)[1].split("  ")[0].strip() == model:
+            return bare
+    return ""
