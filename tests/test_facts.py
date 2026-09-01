@@ -40,6 +40,7 @@ def at_a_terminal(monkeypatch):
     already had it as a helper for the same reason.
     """
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    monkeypatch.setattr("sys.stderr.isatty", lambda: True)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
 
 
@@ -402,3 +403,73 @@ def test_a_host_that_cannot_be_reached_is_reported_as_before(capsys, monkeypatch
 
     assert left.value.code == 2
     assert "cannot reach Ollama" in capsys.readouterr().err
+
+
+# --- #77 AC 27 to 29: axiom's own voice --------------------------------------
+
+
+def a_noisy_session(monkeypatch, capsys):
+    """A run that exercises as many of axiom's own lines as one session can.
+
+    A model named that is not installed, a remembered choice the host has lost, a
+    server that will not start, and a turn - so the voice is checked across the
+    whole vocabulary rather than on whichever line happens to come first.
+    """
+    models.write_choice("gone:1b", HOST)
+    stub = StubBackend(models=INSTALLED, turns=[["an answer"]])
+    feed(monkeypatch, ["hello", "/exit"])
+    main(["--model", "absent:9b"], using=stub)
+    return capsys.readouterr()
+
+
+def test_no_line_axiom_prints_begins_with_its_own_name(capsys, monkeypatch, choice):
+    """#77 AC 28, over every line rather than over one.
+
+    The prefix was on 44 f-strings. A test that drove one path would have passed
+    with the other 43 untouched, which is why this drives a session that goes
+    wrong in several ways at once and then reads **every** row on the screen.
+    """
+    at_a_terminal(monkeypatch)
+    got = a_noisy_session(monkeypatch, capsys)
+
+    for stream in (got.out, got.err):
+        for row in screen_of(stream).splitlines():
+            assert not row.lstrip().startswith("axiom:"), f"still named: {row!r}"
+
+
+def test_axioms_own_lines_are_quieter_than_the_answer(capsys, monkeypatch, choice):
+    """#77 AC 27. A comparison, not a colour.
+
+    Asserting the grey is present would pass for a session that painted the
+    model's answer the same shade. What the criterion claims is a difference, so
+    both halves are read off the same run.
+    """
+    at_a_terminal(monkeypatch)
+    got = a_noisy_session(monkeypatch, capsys)
+    grey = terminal._grey("")[:-4]  # the escape that opens the voice's colour
+
+    # `is not installed` goes to stderr and the answer to stdout, so both are
+    # searched - a voice line is a voice line whichever stream it took.
+    everything = got.out.splitlines() + got.err.splitlines()
+    voice = [line for line in everything if "is not installed" in line]
+    answer = [line for line in everything if "an answer" in line]
+
+    assert voice and answer, "the session did not produce both to compare"
+    assert all(grey in line for line in voice), "axiom's own line is not grey"
+    assert not any(grey in line for line in answer), "the answer was greyed too"
+
+
+def test_a_failure_is_dressed_unlike_both(capsys, monkeypatch, choice):
+    """#77 AC 29. Three things on screen, three ways of being drawn.
+
+    A failure that looks like axiom's ordinary voice is a failure the eye slides
+    past, and one that looks like the answer is worse.
+    """
+    at_a_terminal(monkeypatch)
+    got = a_noisy_session(monkeypatch, capsys)
+
+    assert "absent:9b" in got.err, "the failure did not reach stderr"
+    assert screen_of(got.err), "the failure put nothing on screen"
+    # Not on the same stream as the answer, which is what sets it apart from
+    # both without needing a third colour.
+    assert "an answer" not in got.err

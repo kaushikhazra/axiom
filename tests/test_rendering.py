@@ -368,7 +368,14 @@ def test_a_fence_is_delimited_whatever_its_language(opener):
 
 
 def test_a_known_language_still_dresses_the_code_itself():
-    """AC 2. The half of the test above that only a lexed block can keep.
+    """AC 2, and **#77 AC 19** - which was covered by this test and cited by none.
+
+    Found by grepping the criteria numbers out of the tests and diffing them
+    against the issue, which is a habit #75 earned. Covered-by-accident is one
+    step from believed-covered: nothing here would have failed if AC 19 had been
+    dropped from the implementation on purpose.
+
+    The half of the test above that only a lexed block can keep.
 
     Split out rather than dropped: without it, #77 AC 20 would have quietly taken
     the highlighting of *every* block with it and three parametrised cases would

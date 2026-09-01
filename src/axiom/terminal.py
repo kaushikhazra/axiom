@@ -36,6 +36,50 @@ PROMPT = "> "
 VOICE = "axiom:"  # how axiom identifies its own lines, as opposed to the model's
 
 
+def say(message: str, stream=None) -> None:
+    """One line in axiom's own voice (#77 AC 27, AC 28).
+
+    At a terminal: a grey `·` and a grey line. Everywhere else: `axiom: message`,
+    exactly the bytes this module printed before #77 - which is what keeps the
+    golden transcript still and AC 33 and AC 35 true.
+
+    **Why the marker rather than the name.** The prefix was on every line axiom
+    said, so the eye had to read each one to find out whose it was; a name
+    repeated forty times identifies nothing. The grey does that job without a
+    word, and the `·` marks the line as axiom's for anyone reading a transcript
+    where colour has been stripped.
+
+    **Why the whole line and not just the marker.** AC 27 is that axiom's own
+    output is *dimmer than the answer*. A grey bullet in front of a full-strength
+    sentence leaves the sentence competing with the model's reply, which is the
+    complaint this came from.
+
+    The gate is the stream being written to, not stdout: a run with stdout piped
+    and stderr still at the terminal should not have its errors decided by where
+    the answer went.
+    """
+    print(_voiced(message, stream), file=stream if stream is not None else sys.stdout)
+
+
+def _voiced(message: str, stream=None) -> str:
+    """One line in axiom's voice, as a string rather than printed.
+
+    For the places that cannot use `say`: a question, whose cursor has to land
+    after it rather than on the row below, and anything that has to measure the
+    line before writing it.
+
+    Assembled rather than interpolated on the plain path, deliberately. This is
+    the one place `VOICE` is still spelled out, and an f-string opening with it
+    would make this function look like all the others to anything scanning for
+    them - including the pass that converted them, which would have turned this
+    line into a call to itself.
+    """
+    stream = stream if stream is not None else sys.stdout
+    if not _rendering or not stream.isatty():
+        return VOICE + " " + message
+    return _grey("·  " + message)
+
+
 def show_models(
     models: tuple[str, ...],
     host: str,
@@ -85,7 +129,7 @@ def show_models(
     if capable is not None and not capable:
         # AC 9. Said once rather than per row - it is a fact about the host,
         # not about any one model, and without it the order looks arbitrary.
-        print(f"{VOICE} none of these can call tools")
+        say("none of these can call tools")
 
 
 def _show_model_panel(rows: list[tuple[str, str, str, str]], host: str) -> None:
@@ -139,7 +183,7 @@ def _show_model_panel(rows: list[tuple[str, str, str, str]], host: str) -> None:
     except Exception:
         # The same trade `_as_markdown` makes: formatting is what a failure
         # costs, never the content.
-        print(f"{VOICE} models on {host}")
+        say(f"models on {host}")
         for number, name, tools, marker in rows:
             print(f"  {number}{name.rstrip()}{tools}{marker}")
 
@@ -157,7 +201,11 @@ def ask_model(hint: str = "enter for the default") -> str:
     a key mid-line, and the next thing printed would otherwise land on it.
     """
     try:
-        return input(f"{VOICE} which model? ({hint}) ")
+        # `say` cannot be used here: this is a question, and the cursor has to
+        # land after it rather than on the row below. So it takes the same two
+        # forms by hand - `axiom: which model?` when nothing is being drawn, and
+        # a grey marked line at a terminal (#77 AC 27, AC 28).
+        return input(_voiced(f"which model? ({hint}) "))
     except (EOFError, KeyboardInterrupt):
         print()
         raise
@@ -182,9 +230,9 @@ def refuse_model(answer: str, count: int, names: bool = False) -> None:
         else f"type a number from 1 to {count}"
     )
     if given.isdigit():
-        print(f"{VOICE} there is no model {given} - {wanted}", file=sys.stderr)
+        say(f"there is no model {given} - {wanted}", sys.stderr)
     else:
-        print(f"{VOICE} {given!r} is not a number - {wanted}", file=sys.stderr)
+        say(f"{given!r} is not a number - {wanted}", sys.stderr)
 
 
 def note_model_missing(model: str, host: str) -> None:
@@ -195,14 +243,14 @@ def note_model_missing(model: str, host: str) -> None:
     from the host the user meant is a different problem from a model missing
     because the run is pointed at the wrong host.
     """
-    print(f"{VOICE} {model} is not installed on {host}", file=sys.stderr)
+    say(f"{model} is not installed on {host}", sys.stderr)
 
 
 def note_choice_forgotten(model: str, host: str) -> None:
     """The remembered choice has been removed from the host since it was made."""
-    print(
-        f"{VOICE} {model} was your last choice here but {host} no longer has it",
-        file=sys.stderr,
+    say(
+        f"{model} was your last choice here but {host} no longer has it",
+        sys.stderr,
     )
 
 
@@ -217,10 +265,10 @@ def note_choice_unreadable(path: str) -> None:
     Said rather than swallowed because the alternative is a user who edits the
     file, sees no effect, and has no way to learn why.
     """
-    print(
-        f"{VOICE} {path} could not be read - carrying on as though nothing "
+    say(
+        f"{path} could not be read - carrying on as though nothing "
         f"had been chosen here",
-        file=sys.stderr,
+        sys.stderr,
     )
 
 
@@ -248,7 +296,7 @@ def note_settled(model: str, reason: str) -> None:
     """
     because = settled_because(reason)
     if because:
-        print(f"{VOICE} using {model} - {because}")
+        say(f"using {model} - {because}")
 
 
 def note_choice_saved(problem: str | None, path: str) -> None:
@@ -268,9 +316,9 @@ def note_choice_saved(problem: str | None, path: str) -> None:
     also claims a file was written.
     """
     if problem:
-        print(f"{VOICE} {problem} - it will be asked again next time", file=sys.stderr)
+        say(f"{problem} - it will be asked again next time", sys.stderr)
     elif path:
-        print(f"{VOICE} remembering this choice in {path}")
+        say(f"remembering this choice in {path}")
 
 
 def note_switched(
@@ -303,15 +351,12 @@ def note_switched(
     against a deliberately broken caller purely because the default happened to
     match. Required arguments turn that silence into a `TypeError`.
     """
-    print(
-        f"{VOICE} now {model} "
-        f"(context: {_room(context, overridden)}, {_can_do(tools, web)})"
-    )
+    say(f"now {model} (context: {_room(context, overridden)}, {_can_do(tools, web)})")
 
 
 def note_unchanged(model: str) -> None:
     """Nothing happened, said so the silence is not mistaken for a switch."""
-    print(f"{VOICE} still {model}")
+    say(f"still {model}")
 
 
 def note_current_missing(model: str, host: str) -> None:
@@ -327,15 +372,15 @@ def note_current_missing(model: str, host: str) -> None:
     being unusable this second, and guessing otherwise would end a working
     conversation over a listing.
     """
-    print(
-        f"{VOICE} still on {model}, which {host} no longer lists",
-        file=sys.stderr,
+    say(
+        f"still on {model}, which {host} no longer lists",
+        sys.stderr,
     )
 
 
 def note_only_model(model: str) -> None:
     """There is nothing to switch to, and the list would say nothing useful."""
-    print(f"{VOICE} {model} is the only model installed - nothing to switch to")
+    say(f"{model} is the only model installed - nothing to switch to")
 
 
 def report_switch_failed(host: str, cause: BaseException, model: str) -> None:
@@ -346,15 +391,15 @@ def report_switch_failed(host: str, cause: BaseException, model: str) -> None:
     at startup: there is a working session and a working model here, and losing
     the list is a reason to stay put rather than to end it.
     """
-    print(
-        f"{VOICE} cannot reach Ollama at {host} ({cause}) - staying on {model}",
-        file=sys.stderr,
+    say(
+        f"cannot reach Ollama at {host} ({cause}) - staying on {model}",
+        sys.stderr,
     )
 
 
 def refuse_command(form: str) -> None:
     """A command that was recognised but not usable as typed."""
-    print(f"{VOICE} {form}", file=sys.stderr)
+    say(f"{form}", sys.stderr)
 
 
 def report_no_models(host: str) -> None:
@@ -432,8 +477,8 @@ def announce(
     two three-state settings from becoming nine sentences: with no tools there
     is nothing to say about the web, and the line stays one line.
     """
-    print(
-        f"{VOICE} {model} at {host} "
+    say(
+        f"{model} at {host} "
         f"(context: {_room(context, overridden)}, {_can_do(tools, web)})"
     )
 
@@ -446,7 +491,7 @@ def note_starting(servers: int) -> None:
     """
     if servers:
         word = "server" if servers == 1 else "servers"
-        print(f"{VOICE} starting {servers} MCP {word}...")
+        say(f"starting {servers} MCP {word}...")
 
 
 def note_tool_cost(cost: int | None, window: int | None) -> None:
@@ -470,7 +515,7 @@ def note_tool_cost(cost: int | None, window: int | None) -> None:
     if cost is None:
         return
     share = f", {100 * cost / window:.0f}% of the window" if window else ""
-    print(f"{VOICE} tools cost about {cost} tokens per request{share}")
+    say(f"tools cost about {cost} tokens per request{share}")
 
 
 def note_servers(
@@ -496,14 +541,14 @@ def note_servers(
 
     for name, count in connected.items():
         tools_word = "tool" if count == 1 else "tools"
-        print(f"{VOICE} {name}: {count} {tools_word}")
+        say(f"{name}: {count} {tools_word}")
 
     if connected and bounds is not None:
         start, call = bounds
-        print(f"{VOICE} server start limit {start:g}s, tool call limit {call:g}s")
+        say(f"server start limit {start:g}s, tool call limit {call:g}s")
 
     for problem in problems:
-        print(f"{VOICE} {problem}", file=sys.stderr)
+        say(f"{problem}", sys.stderr)
 
 
 WAITING = object()
@@ -674,7 +719,7 @@ def note_scheduled(prompt: str) -> None:
     The prompt is echoed because the user did not type it and would otherwise be
     reading an answer to a question they cannot see.
     """
-    print(f"{VOICE} scheduled - {prompt}")
+    say(f"scheduled - {prompt}")
 
 
 def start_turn() -> None:
@@ -1446,9 +1491,9 @@ def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> N
         # A call announced as text can carry anything at all. Show it as it
         # came - running it is what reports that it cannot be used.
         detail = str(arguments)
-    print(f"{VOICE} {name}({detail})")
+    say(f"{name}({detail})")
     for path in outside or []:
-        print(f"{VOICE} outside the working directory: {path}")
+        say(f"outside the working directory: {path}")
 
 
 # What this turn's tools did, for the one line that replaces all of them. Reset
@@ -1498,8 +1543,8 @@ def note_round_limit(rounds: int) -> None:
     Without this the user gets whatever `reply` happened to hold, which after
     a turn that called tools every round is nothing at all (#41 AC 10).
     """
-    print(
-        f"{VOICE} stopped after {rounds} rounds of tool calls without an answer. "
+    say(
+        f"stopped after {rounds} rounds of tool calls without an answer. "
         f"Nothing further was tried."
     )
 
@@ -1545,15 +1590,15 @@ def show_sources(read: list[str], seen: list[str]) -> None:
     not, and presenting one as the other is the thing this exists to prevent.
     """
     if read:
-        print(f"{VOICE} read: " + ", ".join(read))
+        say("read: " + ", ".join(read))
     only_seen = [address for address in seen if address not in read]
     if only_seen:
-        print(f"{VOICE} found, not read: " + ", ".join(only_seen))
+        say("found, not read: " + ", ".join(only_seen))
 
 
 def note_compaction(kept_pairs: int) -> None:
     level = "everything" if kept_pairs == 0 else f"keeping the last {kept_pairs}"
-    print(f"{VOICE} compacting older history ({level})")
+    say(f"compacting older history ({level})")
 
 
 def note_facts_forgotten(dropped: list[str]) -> None:
@@ -1565,7 +1610,7 @@ def note_facts_forgotten(dropped: list[str]) -> None:
     without telling them whether it mattered. Seeing it is what lets them say
     it again if it did.
     """
-    print(f"{VOICE} the summary is full - forgetting {len(dropped)}:")
+    say(f"the summary is full - forgetting {len(dropped)}:")
     for fact in dropped:
         print(f"  | {fact}")
 
@@ -1688,14 +1733,12 @@ def show_skills(listed: list[tuple[str, str]], where: str) -> None:
     go. Saying the path every time would be noise for everyone it cannot help.
     """
     if not listed:
-        print(
-            f"{VOICE} no skills loaded. A skill is a folder in {where} with a SKILL.md"
-        )
+        say(f"no skills loaded. A skill is a folder in {where} with a SKILL.md")
         return
     word = "skill" if len(listed) == 1 else "skills"
-    print(f"{VOICE} {len(listed)} {word}:")
+    say(f"{len(listed)} {word}:")
     for name, description in listed:
-        print(f"{VOICE}   {name} - {description}")
+        say(f"  {name} - {description}")
 
 
 def note_skill(name: str) -> None:
@@ -1707,7 +1750,7 @@ def note_skill(name: str) -> None:
     `/skill` reaches the same behaviour by a different route, and the two should
     not end up looking like different features.
     """
-    print(f"{VOICE} skill: {name}")
+    say(f"skill: {name}")
 
 
 def note_no_skill(name: str, available: tuple[str, ...]) -> None:
@@ -1723,9 +1766,9 @@ def note_no_skill(name: str, available: tuple[str, ...]) -> None:
     """
     listed = ", ".join(available) or "none"
     if not name:
-        print(f"{VOICE} name a skill: /skill <name>. Available: {listed}")
+        say(f"name a skill: /skill <name>. Available: {listed}")
         return
-    print(f"{VOICE} there is no skill named {name}. Available: {listed}")
+    say(f"there is no skill named {name}. Available: {listed}")
 
 
 def note_skills_off() -> None:
@@ -1736,7 +1779,7 @@ def note_skills_off() -> None:
     into that folder would not be read. The difference is between having none
     and having asked for none.
     """
-    print(f"{VOICE} skills are off for this run (--no-skills or $AXIOM_SKILLS)")
+    say("skills are off for this run (--no-skills or $AXIOM_SKILLS)")
 
 
 def note_skills(
@@ -1766,16 +1809,16 @@ def note_skills(
     # A run with skills on and no directory says nothing at all, which is AC 1 -
     # the two states are different and only one of them was asked for.
     if not enabled:
-        print(f"{VOICE} skills off")
+        say("skills off")
         return
     if not loaded and not problems:
         return
     if loaded:
         word = "skill" if loaded == 1 else "skills"
         share = f", about {cost} tokens per request" if cost else ""
-        print(f"{VOICE} {loaded} {word} loaded{share}")
+        say(f"{loaded} {word} loaded{share}")
     for problem in problems:
-        print(f"{VOICE} skill not loaded - {problem}")
+        say(f"skill not loaded - {problem}")
 
 
 def note_skill_too_large(name: str, over: int) -> None:
@@ -1786,8 +1829,8 @@ def note_skill_too_large(name: str, over: int) -> None:
     characters. The thing that is too large is the file behind it, and only this
     line says so.
     """
-    print(
-        f"{VOICE} {name} is about {over} tokens too large for this model's "
+    say(
+        f"{name} is about {over} tokens too large for this model's "
         f"window - not sent. Shorten the skill, or switch to a model with more "
         f"room with /model."
     )
@@ -1863,9 +1906,9 @@ def show_facts(
     # around a failure makes it look like part of the report rather than
     # something to do, and each of these is fixed by a different action.
     for problem in problems:
-        print(f"{VOICE} {problem}", file=sys.stderr)
+        say(f"{problem}", sys.stderr)
     for problem in skill_problems:
-        print(f"{VOICE} skill not loaded - {problem}")
+        say(f"skill not loaded - {problem}")
 
 
 def _clear_screen() -> None:

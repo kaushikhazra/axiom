@@ -247,10 +247,18 @@ def test_a_named_installed_model_is_used_without_a_list(capsys, monkeypatch, cho
 
 
 def test_one_installed_model_is_chosen_without_a_question(capsys, monkeypatch, choice):
-    """AC 17."""
+    """AC 17, and #77 AC 5.
+
+    The two halves are different claims and only the first was here. "No question
+    was asked" is not "no list was shown" - a build that printed the list and then
+    chose for you would have passed this test, and #77 puts that list in a border
+    which makes it much more of a thing to print at someone unasked.
+    """
     out = run(capsys, monkeypatch, models=["solo:1b"])
 
     assert "which model?" not in out.out
+    assert "models on" not in out.out, "a one-model host was shown a list"
+    assert "╭" not in out.out, "a one-model host was shown a panel"
     assert "using solo:1b - the only model installed" in out.out
     assert f"axiom: solo:1b at {HOST}" in out.out
 
