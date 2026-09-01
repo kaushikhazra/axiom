@@ -262,7 +262,9 @@ def test_how_to_send_is_said_once_and_not_again(capsys, monkeypatch):
     at_a_terminal(monkeypatch)
     terminal.forget_the_hint()
     said = []
-    monkeypatch.setattr(terminal, "say", lambda message, stream=None: said.append(message))
+    monkeypatch.setattr(
+        terminal, "say", lambda message, stream=None: said.append(message)
+    )
     monkeypatch.setattr(
         "prompt_toolkit.application.run_in_terminal", lambda draw: draw()
     )
@@ -284,7 +286,9 @@ def test_the_hint_says_both_halves(capsys, monkeypatch):
     at_a_terminal(monkeypatch)
     terminal.forget_the_hint()
     said = []
-    monkeypatch.setattr(terminal, "say", lambda message, stream=None: said.append(message))
+    monkeypatch.setattr(
+        terminal, "say", lambda message, stream=None: said.append(message)
+    )
     monkeypatch.setattr(
         "prompt_toolkit.application.run_in_terminal", lambda draw: draw()
     )
@@ -444,3 +448,139 @@ def test_a_typed_command_on_one_line_still_works(capsys, monkeypatch, choice):
 
     printed = capsys.readouterr().out
     assert "skill" in printed.lower(), "a typed command stopped being a command"
+
+
+# --- #80 AC 24 to 26: changing your mind -------------------------------------
+
+ABANDON = "\x03"  # ctrl+c
+
+
+def test_abandoning_clears_the_message_and_keeps_the_prompt():
+    """#80 AC 24. Sends nothing, and returns to an empty prompt."""
+    assert composed("throw this away" + ABANDON + "kept this" + ENTER) == "kept this"
+
+
+def test_abandoning_a_multi_line_message_clears_all_of_it():
+    """#80 AC 24. Not just the line the cursor is on.
+
+    The failure this excludes is an abandon that clears one line of four and
+    leaves the rest, which reads as a bug rather than as a cancel.
+    """
+    half_written = "first" + CTRL_ENTER + "second" + CTRL_ENTER + "third"
+
+    assert composed(half_written + ABANDON + "fresh" + ENTER) == "fresh"
+
+
+def test_abandoning_does_not_end_the_session():
+    """#80 AC 25, and the trap in it.
+
+    ctrl+c has always meant "leave" at an idle prompt, and that was right when a
+    prompt held one line. With a message part-written it is wrong - the user
+    means *not that*, not goodbye - and ending the session would take the
+    conversation with it.
+
+    Proved by the reader returning a later message at all: had the interrupt
+    escaped, there would be no return value to assert on.
+    """
+    assert composed("half a thought" + ABANDON + "a whole one" + ENTER) == "a whole one"
+
+
+def test_an_interrupt_at_an_empty_prompt_still_leaves():
+    """#80 AC 25's other half, and AC 34's neighbour.
+
+    The fix for AC 25 must not swallow a real ctrl+c. Empty, the interrupt goes
+    up exactly as it did before #80 - which is what ends the session.
+    """
+    with pytest.raises(KeyboardInterrupt):
+        composed(ABANDON)
+
+
+def test_an_abandoned_message_never_reaches_the_model(capsys, monkeypatch, choice):
+    """#80 AC 26. The conversation is exactly as it was before it began.
+
+    Structural rather than defended - an abandoned buffer never leaves the reader
+    - but asserted anyway, because "nothing was sent" is the claim a user cares
+    about and the structure could change under it.
+    """
+    asked = sent_to(monkeypatch, capsys, "the message that survives")
+
+    assert asked, "nothing reached the model at all"
+    assert all("throw this away" not in message for message in asked)
+
+
+# --- #80 AC 32 to 36: what did not change ------------------------------------
+
+
+def test_no_render_is_unchanged_by_composing(capsys, monkeypatch, choice):
+    """#80 AC 32. `--no-render` takes the plain path, composer or no composer.
+
+    **Asserted on which reader was used, not on the output.** The first version
+    checked the printed bytes, and could not fail: `conftest` substitutes a
+    composer that reads through `input` so the other 900 tests keep working, so
+    both paths produced identical output and the break stayed green. A guard that
+    cannot tell the two paths apart is not guarding the thing it names.
+    """
+    at_a_terminal(monkeypatch)
+    reached = []
+    terminal.use_compose(lambda: reached.append("composer") or "hello")
+    feed(monkeypatch, ["hello", "/exit"])
+    try:
+        main(
+            ["--no-render"], using=StubBackend(models=INSTALLED, turns=[["an answer"]])
+        )
+    finally:
+        terminal.use_compose(None)
+    printed = capsys.readouterr().out
+
+    assert not reached, "--no-render reached the composing reader"
+    assert "an answer" in printed
+    assert "\x1b" not in printed, "escape sequences reached a --no-render run"
+
+
+def test_a_single_line_session_is_what_it_was_before_any_of_this(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 33.
+
+    Compared against `.tmp/before-80.txt` by hand in cycle 2 and again here in
+    the only form a test can hold: the piped path, which is the one the golden
+    transcript records, produces the lines it always did.
+    """
+    feed(monkeypatch, ["hello", "/exit"])
+    main([], using=StubBackend(models=INSTALLED, turns=[["an answer"]]))
+    printed = capsys.readouterr().out
+
+    assert printed.startswith("axiom: "), "a piped run no longer opens plainly"
+    assert "> " in printed and "an answer" in printed
+    assert "…" not in printed, "a continuation marker reached a piped run"
+
+
+def test_exit_at_an_empty_prompt_exits_with_the_same_status(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 34. Unchanged, and cheap to lose."""
+    at_a_terminal(monkeypatch)
+    supply = iter(["/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=StubBackend(models=INSTALLED))
+    finally:
+        terminal.use_compose(None)
+
+    assert "an answer" not in capsys.readouterr().out
+
+
+def test_end_of_input_at_an_empty_prompt_exits(capsys, monkeypatch, choice):
+    """#80 AC 35. Ctrl-d, or a pipe running dry."""
+    at_a_terminal(monkeypatch)
+
+    def ends():
+        raise EOFError
+
+    terminal.use_compose(ends)
+    try:
+        main([], using=StubBackend(models=INSTALLED))
+    finally:
+        terminal.use_compose(None)
+
+    capsys.readouterr()  # exiting on end of input is not an error

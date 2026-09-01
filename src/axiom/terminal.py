@@ -736,6 +736,37 @@ def compose(source=None, sink=None) -> str:
         _say_how_to_send()
         event.current_buffer.insert_text("\n")
 
+    @keys.add("c-c")
+    def _abandon(event) -> None:
+        """Throw the message away, or leave if there is nothing to throw.
+
+        #80 AC 24, AC 25 - and the two pull against each other, which is why
+        both are here rather than one.
+
+        ctrl+c has always meant "leave" at an idle prompt, and that was right
+        when a prompt held one line and nothing was ever in progress. With four
+        lines half-written it is wrong: the user means *not that*, not goodbye,
+        and ending the session would take the conversation with it.
+
+        So it depends on whether there is anything to abandon. With text in the
+        buffer it is cleared and the prompt stays; empty, the interrupt goes up
+        exactly as it did before #80, and `read_line` ends the session.
+
+        Nothing is sent either way, and nothing reaches the history - which is
+        AC 26, and it is structural rather than defended: this returns to the
+        reader, and only a message that is *accepted* leaves it.
+        """
+        if event.current_buffer.text:
+            event.current_buffer.reset()
+            return
+        # No `style=` argument, deliberately. prompt_toolkit accepts one here
+        # and the natural value is a class name of the form family-colon-tag -
+        # which is also the shape of a model name, so `test_config`'s guard
+        # against a default model creeping back reads it as one. The guard is
+        # right, the styling is worth nothing, and widening the guard to suit a
+        # cosmetic argument would be trading a real check for no gain.
+        event.app.exit(exception=KeyboardInterrupt)
+
     session = PromptSession(
         multiline=True,
         key_bindings=keys,
