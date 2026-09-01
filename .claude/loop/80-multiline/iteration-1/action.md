@@ -1,42 +1,55 @@
-# Action — cycle 1
+# Action — cycle 2
 
-**Read and survey. Do not write to `src/`.**
+**Prove the confinement first. Then add the dependency.**
 
-The artifact ships today and the first decision - what reads the keys - is the one that
-cannot be taken back cheaply. `~/.claude/CLAUDE.md` asks for a search before a build, and
-naming the library in cycle 2 without having looked is the shortcut that rule exists to
-stop.
+Cycle 1 recommends `prompt_toolkit` and names the one thing that could overturn it: if it
+cannot be kept off the piped path, AC 30 fails, the golden transcript moves, and 876 tests
+change meaning. Adding it and then finding out is the expensive order.
 
-Produce `logs/cycle-1.md` holding:
+## Do these in order
 
-1. **The starting suite.** `uv run pytest`. Count, pass, fail, wall-clock. It should be
-   876 passed, 1 deselected, ~92s. If it is not, that is the finding and everything waits.
+1. **Add `prompt_toolkit` to `pyproject.toml`** and sync. One dependency of its own,
+   `wcwidth`, BSD, Python >= 3.10 - all recorded in cycle 1.
 
-2. **Each of the 36 criteria in a bucket** — met with a proving test, true but unproved, or
-   not started. Read them from `gh issue view 80`. Expect most of "Unchanged" and "Exit" to
-   be already true: they are guards on behaviour that ships.
+2. **Prove it is confined, before writing any reader.** A test that:
+   - runs a piped session, with `sys.stdout.isatty()` false, through `main()`
+   - asserts the output is byte-identical to the same session before the dependency existed
+   - and asserts `builtins.input` was the thing that read the line
 
-3. **The library survey.** At least three candidates, not one. `prompt_toolkit` is the
-   obvious name; find the others before settling. For each, say:
-   - does it read ctrl+enter separately from enter, **on Windows**
-   - what it brings that would otherwise be hand-written - history, arrows, word-delete
-   - what it costs: install size, dependencies of its own, and whether it takes over the
-     terminal in ways that fight `Rendered`
-   - whether it can be confined to the terminal path, leaving piped runs untouched
-   **Recommend one, and say what would have to be true for the recommendation to be wrong.**
+   Then **run the whole suite and check `tests/baseline/transcript.txt` is untouched.**
+   If it moved, stop and report - that is the finding, and no reader gets written until it
+   is understood.
 
-4. **Where the seam is.** `terminal.read_line` is the only reader for a typed line, and
-   `Typed` wraps a second one for the scheduled path. Name exactly which functions change
-   and which must not. `use_input` exists for tests to substitute a reader - check whether
-   it is enough, because if the tests cannot swap the new reader out, nothing here is
-   testable.
+3. **Add the substitution hook.** Cycle 1's finding: every existing test supplies input by
+   monkeypatching `builtins.input`, so a terminal-only reader is unreachable from all 876 of
+   them. Give the composing reader its own hook, the way `use_input` is one for the timed
+   path. **Without this nothing about #80 is testable**, so it comes before the feature and
+   not after.
 
-5. **What a test will never be able to prove**, listed by criterion number. This list is the
-   manual pass's brief and it starts now, not at the end.
+4. **Then the reader**, terminal-only, behind that hook. Bind:
+
+       enter        c-m            accept
+       ctrl+enter   escape, c-j    insert a newline
+
+   Not `"c-enter"`, which does not exist, and not a bare `c-j`, which also catches ctrl+J.
+   The mapping was read out of `prompt_toolkit/input/win32.py` and is quoted in cycle 1.
+
+## Prove, do not claim
+
+Take AC 30, 31, 32, 33 first - the guards. They are the ones a wrong move breaks silently,
+and they are testable today without any of the new behaviour existing.
+
+**AC 33 needs a before.** Capture a single-line session's bytes now, on this branch, before
+the reader lands - otherwise there is nothing to compare against and the criterion becomes
+an opinion.
 
 ## Do not
 
-- Add a dependency this cycle. Recommending one is the output; installing it is cycle 2.
-- Touch `tests/baseline/transcript.txt`.
+- Write the composing behaviour this cycle. Confinement, hook, reader - in that order, and
+  stop when the cycle runs out rather than rushing the next step.
+- Regenerate the baseline.
 
-Then write `action.md` for cycle 2.
+## Record
+
+`logs/cycle-2.md`, per `observe.md`. Criteria met out of 36, the suite count and wall-clock,
+the baseline's state, and any addition to the list of what only a person can confirm.
