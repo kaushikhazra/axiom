@@ -73,3 +73,41 @@ a change made two stories later.
     832 -> 836 tests, all passing, 86.35s, 1 deselected
 
 Arithmetic: 832 + 4 = 836. Holds.
+
+---
+
+# The confirming run, taken 2026-09-01
+
+`uv run pytest -m live -q -s` — 425.95s, 1 passed, 836 deselected. Raw output kept at
+`.tmp/live-after-convergence.txt`.
+
+| model | before (cycle 9) | after this change | move |
+|---|---|---|---|
+| ornith:9b | 10/10 | 10/10 | — |
+| qwen2.5:7b | 10/10 | 10/10 | — |
+| qwen3.5:9b | 9/10 | 9/10 | — |
+| gemma4:e2b | 10/10 | **9/10** | −1, exactly the noise floor |
+| **qwen2.5-coder:7b** | **2/10** | **5/10** | **+3** |
+| gemma2:2b | no tool support | no tool support | — |
+
+**#68's rule is satisfied on numbers now, not on structure.** One model improves by 3, which
+clears the plus-or-minus-one floor. No model moves down by more than the floor itself —
+gemma4's single step is the same size as the step qwen3.5 and gemma4 took between two runs
+with *no* code change, so it is not distinguishable from noise.
+
+## The prediction was +5 and the reading is +3
+
+Worth writing down rather than rounding away. The census said five of ten replies were being
+refused, so translating them looked like 2/10 to 7/10. It landed at 5/10.
+
+The arithmetic that reconciles it was already visible in cycle 9 and was not noticed: the
+census counted **five replies recognised by `call_from_text`**, but the score that same run
+was **2/10 reached the skill**. Three of the five that were *already recognised* did not
+reach the skill either. Recognised is not reached. So the newly translated five should be
+expected to convert at about the same rate, and 3 of 5 is that rate.
+
+**This is the same lesson as cycle 9's, one layer down.** A number below the pack is a
+question about the measurement: `qwen2.5-coder:7b` at 5/10 is still not a model refusing to
+use skills — it reaches for the skill 10 times out of 10 — it is axiom converting a correct
+intention into a completed invocation half the time. What the remaining half is doing is
+**unmeasured**. It is not this change's business, and it is not nothing.

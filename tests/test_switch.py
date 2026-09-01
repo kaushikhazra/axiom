@@ -27,7 +27,7 @@ from axiom import backend, main, models, tools
 # startup line even though nothing about switching changed.
 ALL_TOOLS = len(tools.REGISTRY) - len(tools.SKILL_TOOLS - {"write_skill"})
 from axiom.backend import Call
-from conftest import StubBackend, feed
+from conftest import StubBackend, feed, listed, row_for
 
 
 HOST = "http://localhost:11434"
@@ -72,28 +72,20 @@ def test_the_list_matches_the_one_shown_at_startup(capsys, monkeypatch, choice):
     that passed the host's order through would show different numbers here.
     """
     _, switching = run(capsys, monkeypatch, ["/model", "2"])
-    numbered = [
-        line for line in switching.out.splitlines() if line.strip()[:1].isdigit()
-    ]
 
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     feed(monkeypatch, ["1", "/exit"])
     main([], using=StubBackend(models=INSTALLED))
-    at_startup = [
-        line
-        for line in capsys.readouterr().out.splitlines()
-        if line.strip()[:1].isdigit()
-    ]
+    at_startup = capsys.readouterr().out
 
-    strip = lambda rows: [r.split(". ", 1)[1].split("  ")[0] for r in rows]  # noqa: E731
-    assert strip(numbered) == strip(at_startup) == list(SORTED)
+    assert listed(switching.out) == listed(at_startup) == list(SORTED)
 
 
 def test_the_model_in_use_is_marked_as_current(capsys, monkeypatch, choice):
     """AC 3."""
     _, out = run(capsys, monkeypatch, ["/model", "2"])
 
-    assert "qwen2.5:7b  (current)" in out.out
+    assert row_for(out.out, "qwen2.5:7b").endswith("(current)")
 
 
 def test_a_number_switches(capsys, monkeypatch, choice):
@@ -537,7 +529,7 @@ def test_one_installed_model_shows_it_as_current_and_says_so(
         argv=["--model", "solo:1b"],
     )
 
-    assert "1. solo:1b  (current)" in out.out
+    assert row_for(out.out, "solo:1b") == "1. solo:1b  (current)"
     assert "nothing to switch to" in out.out
     assert "which model?" not in out.out
 
