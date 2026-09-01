@@ -15,7 +15,7 @@ Every 20 minutes, ONE iteration:
   - If goal met:     stop the loop and delete the cron
   - If goal not met: write the next action.md, then exit this run
 
-Fail-safe: at 2026-09-02 01:00 +0530, stop and delete the cron, converged or not.
+Fail-safe: at 2026-09-02 03:00 +0530, stop and delete the cron, converged or not.
 ```
 
 `goal.md` and `observe.md` do not change. Everything else may, including the assumptions —
