@@ -224,3 +224,72 @@ def test_a_line_beginning_with_a_slash_is_still_what_was_typed():
     assert composed("/skill one" + CTRL_ENTER + "second line" + ENTER) == (
         "/skill one\nsecond line"
     )
+
+
+# --- #80 AC 4, 5, 22, 23: what the user sees while composing -----------------
+
+
+def test_a_continuation_line_is_marked_as_still_being_written(monkeypatch):
+    """#80 AC 22, and AC 4 and AC 23 with it.
+
+    prompt_toolkit's default continuation is `prompt_width` spaces, which lines
+    the text up and marks nothing - a message part way through then looks exactly
+    like one that has been sent and answered. What is asserted is that axiom
+    supplies a continuation of its own, and that it is drawn in the voice's grey
+    rather than at the answer's weight.
+
+    Asserted on the callable rather than on a screen, because rendering it needs
+    a console. What it *looks* like is the manual pass's, and is on that list.
+    """
+    from prompt_toolkit.formatted_text import to_plain_text
+
+    continuation = terminal._compose_continuation()
+    drawn = continuation(2, 1, False)
+
+    assert to_plain_text(drawn).strip(), "a continuation line is marked with nothing"
+    assert terminal.VOICE_GREY.lstrip("#") in str(drawn.value) or "38;2" in str(
+        drawn.value
+    ), "the continuation is not in the voice's grey"
+
+
+def test_how_to_send_is_said_once_and_not_again(capsys, monkeypatch):
+    """#80 AC 5.
+
+    The hint answers a question the user has exactly once - at the moment they
+    discover that enter no longer does what it did a second ago. Said on every
+    line it is noise, and by the fourth it is in the way of what they are writing.
+    """
+    at_a_terminal(monkeypatch)
+    terminal.forget_the_hint()
+    said = []
+    monkeypatch.setattr(terminal, "say", lambda message, stream=None: said.append(message))
+    monkeypatch.setattr(
+        "prompt_toolkit.application.run_in_terminal", lambda draw: draw()
+    )
+
+    terminal._say_how_to_send()
+    terminal._say_how_to_send()
+    terminal._say_how_to_send()
+
+    assert len(said) == 1, f"the hint was said {len(said)} times"
+    assert "ctrl+enter" in said[0] and "enter sends" in said[0]
+
+
+def test_the_hint_says_both_halves(capsys, monkeypatch):
+    """#80 AC 5. "How to send **and** how to add another" - both, or neither.
+
+    A hint that says only how to add a line leaves the user unable to finish, and
+    one that says only how to send does not explain the key they just pressed.
+    """
+    at_a_terminal(monkeypatch)
+    terminal.forget_the_hint()
+    said = []
+    monkeypatch.setattr(terminal, "say", lambda message, stream=None: said.append(message))
+    monkeypatch.setattr(
+        "prompt_toolkit.application.run_in_terminal", lambda draw: draw()
+    )
+
+    terminal._say_how_to_send()
+
+    assert "sends" in said[0], "the hint never says how to send"
+    assert "another line" in said[0], "the hint never says how to add a line"

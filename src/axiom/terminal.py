@@ -635,6 +635,60 @@ def use_input(read=None) -> None:
     _typed = Typed(read=read) if read is not None else None
 
 
+def _compose_continuation():
+    """What marks the second line of a message, and the third (#80 AC 22).
+
+    prompt_toolkit's default is `prompt_width` spaces. That lines the text up
+    and **marks nothing** - so a message part way through looks exactly like one
+    that has already been sent and answered, which is the one thing AC 22 asks
+    it not to look like.
+
+    A marker in the voice's grey instead: quieter than the answer, because it is
+    axiom's furniture rather than the user's words, and visible enough to say
+    "still yours, not sent". Every line staying on screen is what AC 4 and AC 23
+    ask for, and prompt_toolkit does that part already.
+
+    Returned as a callable rather than inlined so it can be tested without a
+    console. An inline lambda here would be an untested one.
+    """
+    from prompt_toolkit.formatted_text import ANSI
+
+    def marker(width: int, line_number: int, wrapped: bool):
+        return ANSI(_grey("…".ljust(max(1, width))))
+
+    return marker
+
+
+_said_how_to_send = False
+
+
+def forget_the_hint() -> None:
+    """Let the hint be said again. For tests, and for a new session."""
+    global _said_how_to_send
+    _said_how_to_send = False
+
+
+def _say_how_to_send() -> None:
+    """How to send, said the first time a message grows a second line (#80 AC 5).
+
+    **Once per session, and that is the whole design.** A user who has just
+    discovered ctrl+enter has also just discovered that enter no longer does what
+    it did a moment ago, which is the one moment the answer is worth having. Said
+    again on the second line it is noise, and by the fourth it is in the way of
+    the thing being written.
+
+    Printed above the prompt through `run_in_terminal`, because the reader owns
+    the screen while it is running and writing underneath it would be drawn over.
+    """
+    global _said_how_to_send
+    if _said_how_to_send:
+        return
+    _said_how_to_send = True
+    from prompt_toolkit.application import run_in_terminal
+
+    run_in_terminal(lambda: say("enter sends, ctrl+enter starts another line"))
+
+
 def compose(source=None, sink=None) -> str:
     """A message, however many lines it has (#80 AC 1, AC 2, AC 3).
 
@@ -679,6 +733,7 @@ def compose(source=None, sink=None) -> str:
 
     @keys.add("escape", "c-j")
     def _newline(event) -> None:
+        _say_how_to_send()
         event.current_buffer.insert_text("\n")
 
     session = PromptSession(
@@ -686,6 +741,7 @@ def compose(source=None, sink=None) -> str:
         key_bindings=keys,
         input=source,
         output=sink,
+        prompt_continuation=_compose_continuation(),
     )
     # `ANSI(...)`, not the bare string: prompt_toolkit measures a prompt to
     # place the cursor, and escape sequences handed to it as text are counted as
