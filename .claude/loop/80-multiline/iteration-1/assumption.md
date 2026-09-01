@@ -57,10 +57,31 @@ several hundred tests change meaning. It has not moved in seven cycles across tw
 - **Assume a fresh context.** Only these files exist. Read the issue from GitHub before the
   diff and before the previous log.
 
-## What a test cannot do here
+## What a test cannot do here — and what it must not try
 
 A test cannot press a key. Everything about ctrl+enter is reachable only by feeding bytes to
 whatever reads them, which proves the reader and not the terminal. #77's whole visible
 behaviour sat on a path no test process could enter, and the one defect that mattered was
 found by a person. **Keep the list of what only a person can confirm**, every cycle, and
 hand it to the manual pass at the end.
+
+**Cycles 1 to 8 tried anyway, and it cost two machine crashes.** Nineteen tests built a real
+`prompt_toolkit` session with a `create_pipe_input` and a `DummyOutput` and fed it key
+presses. The escape: `_say_how_to_send` calls `run_in_terminal`, which writes to the **real**
+console rather than to the output the test supplied — so a test feeding `ctrl+enter` reached
+out of pytest and into the session that launched it. All nineteen were deleted in `32daf51`.
+
+**This assumption is now a prohibition, and it survives every rewrite of `action.md`:**
+
+> No test in this repository constructs a `PromptSession`, a `create_pipe_input`, or a key
+> processor. The reader is reached through the `use_compose` hook or through
+> `builtins.input`, and nowhere else.
+
+Twenty tests remain, and they cover the confinement — a piped run still reads through
+`builtins.input`, still gets one turn per line, `--no-render` is still byte-identical. Those
+are what protect the other 876 tests and the golden transcript, and they are safe to run.
+
+**Thirteen criteria moved to `manual-pass.md` as a result** — AC 1, 2, 3, 4, 7, 8, 9, 10, 12,
+18, 24, 25, 26. They are key presses and pastes. **The loop does not attempt them, does not
+count them, and does not wait for them.** Kaushik settles them at a real terminal. What is
+left for this loop is listed in that file under *Not built* and needs no key press at all.
