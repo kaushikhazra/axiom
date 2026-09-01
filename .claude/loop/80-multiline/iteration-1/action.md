@@ -1,50 +1,61 @@
-# Action — cycle 4
+# Action — cycle 5
 
-**First, finish what cycle 3 left unproved. Then the composing display.**
+**Paste.** AC 7, 8, 9, 10 — the hardest thing in the issue, and the reason #80 is filed
+as a bug rather than as a missing feature.
 
-## 1 — Three breaks that did not prove anything
+## What is actually broken, measured
 
-AC 1, 2 and 18 are implemented, their tests are green, and they are **not counted**. Close
-that before adding anything.
+Three lines pasted into a running axiom, before any of this:
 
-- **AC 1 and AC 2's breaks did not apply.** The harness's search strings were mangled by
-  escaping. **Write the harness through the Edit tool**, not a heredoc — the source contains
-  `insert_text("\n")` and that is exactly the case the rule is about.
-- **AC 18's break was wrong, not its test.** `multiline=False` still lets `insert_text` put a
-  newline in the buffer, so the criterion was never violated and the test was right to stay
-  green. Find a break that actually stops a blank line surviving.
+    >
+    Please provide the rest of your request.
+    >
+    Please provide the full text or instructions you would like me to work with.
+    >
+    Please provide the full text or instructions you would like me to work with.
 
-**Every break must be given an end before it runs.** Cycle 3 lost the file twice to a reader
-waiting for a key that never came; `create_pipe_input` is now closed in the test helper,
-which is what makes a broken binding fail in milliseconds rather than hang.
+Three turns, three requests paid for, three useless answers, and the message the user meant
+never assembled. **AC 9 is the criterion that fixes it**: nothing is sent while a paste is
+still arriving.
 
-## 2 — What the user sees while composing
+## Do these in order
 
-AC 4, 5, 22, 23. These are the criteria a test can only half-reach, so be explicit in the log
-about which half:
+1. **Find out what the terminal actually sends.** A paste is a burst of lines with no
+   keypress between them, and terminals bracket it - `\x1b[200~` before and `\x1b[201~`
+   after - when the program asks for that mode. prompt_toolkit supports bracketed paste and
+   delivers it as a single `Keys.BracketedPaste` event with the whole text.
+   **Check whether it is on by default in a `PromptSession`** before writing anything: if it
+   is, AC 7, 8 and 9 may already hold, and the work is proving it rather than building it.
 
-- **AC 4** — every line of the message is visible before it is sent.
-- **AC 22** — it is apparent the message has not been sent yet.
-- **AC 23** — the user can tell how many lines it has, or see them all.
-- **AC 5** — the first time a second line is started, axiom says how to send and how to add
-  another. Said **once**, not on every line; a hint that repeats is noise by the third time.
+2. **Prove AC 9 the hard way.** `create_pipe_input` can send a bracketed-paste sequence, so
+   a test can deliver a real paste without a terminal. Assert the whole paste is **one**
+   return value - and that no line of it was sent on its own, which is the failure being
+   fixed.
 
-`prompt_toolkit` draws a continuation prompt for lines after the first, which is most of
-AC 4 and AC 22 for free. Check what it draws by default before writing one.
+3. **AC 10 — a pasted line beginning with `/` is text, not a command.** The reader returns
+   text either way, so this criterion lives above it, in the chat loop's command matching.
+   Look at where `/exit` is recognised: it must match a *whole message*, not the first line
+   of one. This is the criterion that pulls against AC 13, where a typed `/exit` must still
+   work.
+
+4. **AC 8 — order preserved**, which sounds free and is the cheapest place for an
+   off-by-one to hide when lines are reassembled.
+
+## Watch for
+
+- **The failure mode is a partial send, and it does not look like a failure.** A test that
+  asserts "the paste came back" passes for an implementation that sent line one and returned
+  lines two and three. Assert the *whole* paste and assert the turn count.
+- **AC 20 is nearby and not this cycle's**: an oversized paste refused with a reason. Note
+  it if the paste path makes it easy, but do not do it instead of AC 9.
 
 ## Do not
 
-- Touch paste handling. That is AC 7, 8, 9 and it is the hardest thing in the issue.
 - Regenerate the baseline.
-
-## Still owed
-
-`uv.lock` does not list `prompt_toolkit`. The package went in with `uv pip install` because a
-live axiom session held `.venv/Scripts/axiom.exe`. **Run `uv lock` if nothing is holding it**;
-if something still is, carry this forward rather than dropping it — a lockfile that disagrees
-with `pyproject.toml` surfaces on someone else's machine, not this one.
+- Let a break hang. Every pipe input is closed in the helper; keep it that way.
 
 ## Record
 
-`logs/cycle-4.md`, per `observe.md`. Criteria out of 36, suite count and wall-clock, the
-baseline's state, and the running list of what only a person can confirm.
+`logs/cycle-5.md`, per `observe.md`. Criteria out of 36, suite count and wall-clock, the
+baseline's state, and the running list of what only a person can confirm — a real paste from
+a real terminal is on it.
