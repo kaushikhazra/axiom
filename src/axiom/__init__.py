@@ -733,7 +733,7 @@ def _chat(
         if not line:
             continue
 
-        # A command is a message of **one line** (#80 AC 10, AC 13). Since a
+        # A command is a message of **one line** (#80 AC 13, AC 14). Since a
         # message can now have several, `startswith` is no longer enough on its
         # own: a stack trace pasted with `/model` on its first line would have
         # been swallowed as a switch, and the rest of it thrown away. `/exit`

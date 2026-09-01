@@ -55,14 +55,25 @@ is to hand them over rather than to claim them.
 
 So this loop is **done** when:
 
-- the **23 criteria a test can reach** are all in bucket 1 — met with a break watched going
-  red — namely 5, 6, 11, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 27, 28, 29, 30, 31, 32, 33,
-  34, 35, 36;
+- the **21 criteria a test can reach** are all in bucket 1 — met with a break watched going
+  red — namely 5, 11, 13, 14, 15, 16, 17, 19, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33, 34, 35,
+  36;
 - `uv run pytest` is green and `tests/baseline/transcript.txt` is untouched;
-- `manual-pass.md` lists every one of the thirteen with what to do and what should happen.
+- `manual-pass.md` lists every one of the fifteen with what to do and what should happen.
 
-**Say the split in the handover** — 23 by test, 13 by Kaushik — and never report it as 36.
-A count that folds the manual thirteen into the tested total is the same mistake cycle 7
+**It was 23 and 13 when this was written.** Cycle 10 moved two more across, and both moves are
+the loop admitting something rather than achieving it:
+
+- **AC 27** — an interrupted compose leaving the conversation untouched — had a test that
+  could not fail. Abandoning happens inside `compose`'s ctrl+c binding and nothing leaves the
+  reader, so it is true *and* unreachable from outside a session.
+- **AC 6** — the terminal that cannot report ctrl+enter — is unimplemented and unverifiable on
+  the only console axiom has run on. Kept in the issue rather than struck, because striking it
+  means renumbering thirty criteria and cycle 7 spent a whole cycle repairing eleven citations
+  after the last one.
+
+**Say the split in the handover** — 21 by test, 15 by Kaushik — and never report it as 36.
+A count that folds the manual fifteen into the tested total is the same mistake cycle 7
 found eleven times over, and it would be a worse one: it would say verified about something
 nobody has looked at.
 

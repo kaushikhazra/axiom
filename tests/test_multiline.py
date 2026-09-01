@@ -22,6 +22,7 @@ What is left touches the reader only through the `use_compose` hook or through
 """
 
 import builtins
+import re
 from datetime import datetime
 
 import pytest
@@ -324,20 +325,24 @@ def test_a_typed_command_on_one_line_still_works(capsys, monkeypatch, choice):
     assert "skill" in printed.lower(), "a typed command stopped being a command"
 
 
-# --- #80 AC 27: changing your mind reaches nothing ---------------------------
-
-
-def test_an_abandoned_message_never_reaches_the_model(capsys, monkeypatch, choice):
-    """#80 AC 27. The conversation is exactly as it was before it began.
-
-    Structural rather than defended - an abandoned buffer never leaves the reader
-    - but asserted anyway, because "nothing was sent" is the claim a user cares
-    about and the structure could change under it.
-    """
-    asked = sent_to(monkeypatch, capsys, "the message that survives")
-
-    assert asked, "nothing reached the model at all"
-    assert all("throw this away" not in message for message in asked)
+# --- #80 AC 27: changing your mind, and why there is no test here ------------
+#
+# AC 27 - "an interrupted compose leaves the conversation exactly as it was
+# before it began" - had a test, and it was vacuous. It composed one message and
+# asserted that the string "throw this away" was not in what reached the model.
+# Nothing ever typed that string. It passed for every implementation there is,
+# including one that sent the abandoned buffer, and it would have gone on passing
+# for as long as anyone left it there.
+#
+# The criterion is real and it is **not reachable from here**. Abandoning happens
+# inside `compose`'s ctrl+c binding: the buffer is cleared and the reader stays
+# where it is, so nothing leaves `compose` at all. That is exactly why AC 27 is
+# true, and exactly why no test outside a session can see it - and a session is
+# what crashed the machine.
+#
+# So AC 27 joins AC 25 and AC 26 on `manual-pass.md`, where the other half of
+# this behaviour already sits. A criterion with no test is visible; a criterion
+# with a test that cannot fail is not.
 
 
 # --- #80 AC 31 to 36: what did not change ------------------------------------
@@ -390,12 +395,20 @@ def test_a_single_line_session_is_what_it_was_before_any_of_this(
 def test_exit_at_an_empty_prompt_exits_with_the_same_status(
     capsys, monkeypatch, choice
 ):
-    """#80 AC 34. Unchanged, and cheap to lose."""
+    """#80 AC 34. Unchanged, and cheap to lose.
+
+    **Asserted on the status code, which the criterion names and the first
+    version of this test did not.** It checked that the string "an answer" was
+    absent from the output - true of a stub with no turns whatever the exit path
+    did. A normal exit is `main` returning; the only non-zero code axiom has is
+    `CANNOT_START`, raised as `SystemExit`, so "the same status code as today"
+    is exactly "no `SystemExit`".
+    """
     at_a_terminal(monkeypatch)
     supply = iter(["/exit"])
     terminal.use_compose(lambda: next(supply))
     try:
-        main([], using=StubBackend(models=INSTALLED))
+        assert main([], using=StubBackend(models=INSTALLED)) is None
     finally:
         terminal.use_compose(None)
 
@@ -403,7 +416,11 @@ def test_exit_at_an_empty_prompt_exits_with_the_same_status(
 
 
 def test_end_of_input_at_an_empty_prompt_exits(capsys, monkeypatch, choice):
-    """#80 AC 35. Ctrl-d, or a pipe running dry."""
+    """#80 AC 35. Ctrl-d, or a pipe running dry - and the status code with it.
+
+    Same strengthening as AC 34 above: the criterion says "with the same status
+    code" and the assertion has to be about the status code.
+    """
     at_a_terminal(monkeypatch)
 
     def ends():
@@ -411,7 +428,7 @@ def test_end_of_input_at_an_empty_prompt_exits(capsys, monkeypatch, choice):
 
     terminal.use_compose(ends)
     try:
-        main([], using=StubBackend(models=INSTALLED))
+        assert main([], using=StubBackend(models=INSTALLED)) is None
     finally:
         terminal.use_compose(None)
 
@@ -661,3 +678,115 @@ def test_nothing_switches_composing_on_or_off_by_itself(monkeypatch):
     assert "compose" not in named, "a setting configures composing"
     assert "multiline" not in named, "a setting configures multi-line messages"
     assert "line" not in named, "a setting configures how a line is read"
+
+
+# --- #80 AC 21: a paste too large for the window -----------------------------
+
+
+def oversized(monkeypatch, capsys, window: int = 2000):
+    """A session that composes one paste far too large for `window`.
+
+    Returns the backend and what the user was told.
+
+    **Nothing new is built for this.** #42 already refuses a payload that will
+    not fit, names what is over and by how much, and rolls the message back out
+    of the history - and a paste is a long `line` like any other. Reusing that
+    is the point: a second refusal path would disagree with the first about the
+    arithmetic, which is the failure `_will_not_fit`'s docstring already names.
+    """
+    at_a_terminal(monkeypatch)
+    huge = "\n".join(["a pasted line of some considerable length"] * 500)
+    stub = StubBackend(
+        models=INSTALLED,
+        info={"qwen2.context_length": window},
+        turns=[["should never be reached"]],
+    )
+    supply = iter([huge, "/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=stub)
+    finally:
+        terminal.use_compose(None)
+    return stub, huge, capsys.readouterr()
+
+
+def test_an_oversized_paste_is_refused_and_says_by_how_much(
+    capsys, monkeypatch, choice
+):
+    """#80 AC 21, the "with a reason" half.
+
+    "Too large" on its own sends a user looking at what they pasted with no idea
+    whether to cut a line or a thousand. The figure is what makes the refusal
+    actionable, and #42 measured it rather than guessing.
+    """
+    stub, _, shown = oversized(monkeypatch, capsys)
+
+    assert stub.streamed == [], "an oversized paste reached the model"
+    assert "this message is about" in shown.err, (
+        f"the refusal does not name the message as what is over: {shown.err!r}"
+    )
+    assert re.search(r"\d+ tokens too large", shown.err), (
+        f"the refusal does not say by how much: {shown.err!r}"
+    )
+
+
+def test_an_oversized_paste_is_never_shortened_and_sent(capsys, monkeypatch, choice):
+    """#80 AC 21, the half that matters more, and the reason #42 exists.
+
+    A refusal is visible and a truncation is not. The failure this guards is the
+    one that already happened once on the other side of this conversation: the
+    message is quietly cut to whatever fits, the model answers confidently from
+    a fragment, and nothing anywhere says a word.
+
+    So this asserts the model was sent **nothing at all** - not that it was sent
+    less. A test written as "the model got fewer than N characters" would pass
+    for exactly the implementation being guarded against.
+    """
+    stub, huge, _ = oversized(monkeypatch, capsys)
+
+    sent = [
+        message["content"]
+        for request in stub.streamed
+        for message in request
+        if message.get("role") == "user"
+    ]
+
+    assert sent == [], f"a shortened paste was sent: {[len(s) for s in sent]}"
+    assert not any(huge.startswith(s[:200]) for s in sent if s), (
+        "a prefix of the paste reached the model"
+    )
+
+
+def test_a_session_survives_an_oversized_paste(capsys, monkeypatch, choice):
+    """#80 AC 21: refusing a paste is not ending the session.
+
+    #42 AC 4 underneath it. A paste that is too large is a mistake, not a wall.
+    The next message has to work, or the refusal has cost the user their
+    conversation instead of one message - which is what #42 was filed for.
+
+    The other issue's number is on the second line deliberately. **A docstring's
+    first line cites this file's own issue and nothing else**, because that line
+    is what `.claude/loop/cited.py` reads, and it cannot tell #42's AC 4 from
+    #80's.
+    """
+    at_a_terminal(monkeypatch)
+    huge = "\n".join(["a pasted line of some considerable length"] * 500)
+    stub = StubBackend(
+        models=INSTALLED,
+        info={"qwen2.context_length": 2000},
+        turns=[["an answer to the short one"]],
+    )
+    supply = iter([huge, "and now a short one", "/exit"])
+    terminal.use_compose(lambda: next(supply))
+    try:
+        main([], using=stub)
+    finally:
+        terminal.use_compose(None)
+    shown = capsys.readouterr()
+
+    assert len(stub.streamed) == 1, "the message after the refusal never went"
+    assert "an answer to the short one" in shown.out
+    said = [m["content"] for m in stub.streamed[0] if m.get("role") == "user"]
+    assert said == ["and now a short one"], (
+        f"the refused paste was still in the history: {[len(s) for s in said]}"
+    )
