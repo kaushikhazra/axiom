@@ -1,62 +1,54 @@
-# Action — cycle 5
+# Action — cycle 6
 
-Stage 3, second half: **the voice, the tool summary and the prompt.**
-AC 22 to 30, and the guards 32, 35, 36, 37.
+**Three criteria left: 27, 28, 29 — the voice.** If they land, the loop is done.
 
-Thirteen criteria left. This is the last block of new behaviour.
+## The change
 
-## Read first
+`terminal.py` says everything in its own voice through 44 f-strings of the form
+`print(f"{VOICE} ...")`, seven of them with `file=sys.stderr`. AC 27 wants all of
+it drawn dimmer than the model's answer; AC 28 wants none of it beginning with
+axiom's own name.
 
-- `.tmp/mock_quiet_turn.py` — variant **D** is the agreed design: nothing per
-  call, one grey line after the turn, `·  4 tools, 2 failed`.
-- `.tmp/mock_turn.py` — the greys and the one-line forms.
-- `logs/cycle-4.md` — the terminal-only split is the shape to reuse. Anything that
-  changes what a redirected run prints will move the baseline, and the baseline
-  has not moved once in four cycles.
+Add one `say(message, stream=None)` and convert the call sites:
 
-## Do these in order
+- **at a terminal, with rendering on** — `·  <message>` in `VOICE_GREY`
+- **anywhere else** — `axiom: <message>`, exactly as today
 
-1. **The tool summary.** `note_tool` currently prints a line per call plus an
-   `outside the working directory` line. On a terminal: nothing per call, a
-   transient progress line while one runs, and one grey summary after the turn.
-   Not at a terminal: **unchanged**, or the baseline moves — it holds seven
-   `axiom: read_file(...)` lines and they are the transcript's record of #34.
+`_grey` already exists from cycle 5. The gate is `_rendering and <stream>.isatty()`,
+the same pair every other path added by #77 uses. Gate on the **stream being
+written to**, not on stdout, or a stderr line takes stdout's answer.
 
-2. **The voice in grey**, `terminal.VOICE_GREY`, and the `axiom:` prefix dropped
-   in favour of `·` — AC 27, AC 28. Terminal-only again. `VOICE` stays for the
-   plain path.
+## Do it mechanically, then read the diff
 
-3. **The prompt** — AC 30. A single `>` in the accent, the typed line at the
-   terminal's own foreground.
+Forty-four sites is a scripted replace, and this repo has a rule about those:
+**anything containing a backslash escape goes through the Edit tool.** Check the
+list for multi-line `print(...)` calls before running anything - a regex that
+handles the single-line form and silently skips four others leaves four lines
+still saying `axiom:`, and AC 28 is a claim about **every** line.
 
-## The two that will be got wrong
+Count before and after: `grep -c 'f"{VOICE}' src/axiom/terminal.py` should end at
+the number `say` itself uses, and no more.
 
-- **AC 22 and AC 26 — nothing per call remains on screen.** The failure mode is a
-  transient line written and never erased: fine in a fast test, a trail of
-  spinners in a real terminal. **Assert on what is on the screen at the end**,
-  through `tests/screen.py`, not on what was written. A test that greps the byte
-  stream for absence will pass on output that is still sitting there.
+## Prove
 
-- **AC 35 — a bare run says no more than before.** A redesign is when a quiet path
-  grows chatty. Compare a no-tools, no-servers, no-skills run against the
-  baseline's own bare-run sections, and count lines rather than reading them.
-
-## Also
-
-- AC 23 needs the user to see *something* while a tool runs. A test cannot watch
-  a spinner; assert that something is written before the tool returns, with a
-  stub tool that blocks until released.
-- AC 25 — a turn calling no tools shows no summary line — is the boundary that
-  makes AC 24 mean anything. Both, or neither counts.
-- AC 36's second half is "counted in the summary line", which needs a turn with
-  one failing and one succeeding call.
+- **AC 28 is the one that will pass hollow.** "No line begins with its own name"
+  is easy to check on one line and the criterion is about all of them. Drive a
+  session that exercises many voice lines - a missing model, a forgotten choice, a
+  server that fails, a skill that will not load - and assert **no line on the
+  screen** starts with `axiom:`.
+- **AC 27** needs the comparison, not just the colour: axiom's lines carry the grey
+  and the model's answer does not.
+- **AC 29** - a failure drawn differently from both - needs three things on screen
+  at once: an answer, an ordinary voice line, and a failure.
 
 ## Do not
 
-- Regenerate the baseline. Four cycles, zero lines. If it moves, the terminal-only
-  split has been broken somewhere.
+- Change what the plain path says. The baseline has not moved in five cycles and
+  `say` is the one function that could move all 78 lines at once.
 
-## Record
+## If all 37 land
 
-`logs/cycle-5.md`, per `observe.md`. If all 37 land, say so and stop the loop:
-delete the cron, and say that too.
+Say so, and **stop the loop**: delete the cron, and record in `logs/cycle-6.md`
+that it was deleted. Then say what is left for a person - the manual pass over
+#72, #73 and #74 that was paused for this work, and the fact that #77's own
+behaviour has been proved by tests but not yet driven by hand.
