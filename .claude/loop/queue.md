@@ -23,9 +23,45 @@ cycles resolving each other's conflicts.
 | 15 | [#62](https://github.com/kaushikhazra/axiom/issues/62) what the summary keeps | `62-summary-facts` | **done** - merged in PR #67 at **exit 2**, 3 cycles, 49 minutes. **6 of 12 criteria met outright**, 3 met on one model of two, 2 not met as written. Follow-up [#68](https://github.com/kaushikhazra/axiom/issues/68). The two changes work on *opposite* models - showing the kept turns fixes qwen and not gemma, allowing an empty answer fixes gemma and not qwen |
 | 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **done** - merged in PR #69, 6 cycles, 2h40m, all 29 criteria. **Seven real defects across two cold reads**, six of them found by feeding hostile input to a modelled terminal rather than by reading code. AC 7 was not met at all - every paragraph longer than the window was drawn on screen twice, while the recorded evidence for it stayed true |
 
-**The queue is empty.** Sixteen rows, all done. Nothing is running and there is no next row
-to hand to, and **the cron has been deleted** - see **Handing over** below for why that is the
-right move at the last handover and the wrong one at every other.
+| 17 | [#77](https://github.com/kaushikhazra/axiom/issues/77) the look of it | `77-look` | **done** - merged in PR #79, 8 cycles, all 37 criteria. Ran **outside** the queue, which was empty at the time; recorded here so the row order stays a full history |
+| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **done, unmerged** - 10 cycles, 5h19m (2026-09-01 20:46 → 2026-09-02 02:05). **21 criteria by test, 15 by Kaushik** - never added up. Nineteen tests deleted after they crashed the machine twice; two vacuous tests found by breaks; filed [#83](https://github.com/kaushikhazra/axiom/issues/83). **Cycle 8 has no log - the machine went down during it**, and its tests were committed by the cycle that followed. Merge waits on `manual-pass.md` |
+| 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | **running** - started 2026-09-02 02:15, fail-safe **2026-09-02 06:15 +0530** |
+| 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | queued |
+
+**The queue is running, on row 19.** Rows 1 to 18 are done. The cron was deleted at the last
+handover, correctly - there was no chain left to end - and has been recreated for this run.
+See **Handing over** for why it must not be deleted again until row 20 finishes.
+
+**Row 18 left two things behind that rows 19 and 20 inherit.** `.claude/loop/cited.py` reads
+which criteria a test file actually claims, by parsing first lines rather than grepping - two
+greps were wrong about this in opposite directions, one cycle apart. And row 18's own lesson,
+which is not about multi-line messages at all: **three of the four criteria it examined in its
+last cycle had tests measuring something adjacent to what they claimed.** A count satisfied by
+the feature doing nothing, an assertion about a string nothing ever typed, and two criteria
+naming a status code whose tests asserted a substring. Every one was found by a break and none
+by reading.
+
+**Branching, and why row 19's branch is not simply off `master`.** `feature/76-indented-code`
+starts at `master` — row 18's code is unmerged and must not ride along — but `.claude/loop/`
+was carried over from `feature/80-multiline`, because this file and #80's records are the
+loop's own bookkeeping and have to travel or the chain loses its place. Code from `master`,
+bookkeeping from the previous row. Row 20 does the same.
+
+**Rows 18 to 20 are ordered by what is nearly finished, then by blast radius.** #80 has eight
+cycles behind it and a handful of criteria left, none needing a key press. #76 changes one
+branch of the markdown renderer. #81 is last: it is the largest, it adds a second transport to
+the MCP layer, and it is the only row that starts processes.
+
+**#80 and #76 both edit `terminal.py`, in different halves of it** - the reader and the
+renderer. Both branch from `master`, not from each other, so Kaushik can merge them in either
+order. A conflict between them is possible and is his to resolve at merge time; a loop must not
+rebase the other row's branch to avoid one.
+
+**Three manual passes are owed and none of them is the loop's** - #80's key presses and pastes
+(`.claude/loop/80-multiline/iteration-1/manual-pass.md`), and #72, #73, #74 from before.
+Kaushik does these at a real terminal, later today. **No cycle attempts a manual pass, and no
+cycle waits for one.** A row whose remaining criteria are all manual is finished as far as the
+queue is concerned: mark it done, say what is owed, and hand over.
 
 **#60 is where the method paid for itself most plainly, and the numbers are worth keeping**:
 seven real defects, **six vacuous tests**, and **five no-op breaks**. Every vacuous test
@@ -242,6 +278,22 @@ These apply to every loop in this queue and do not need rediscovering.
 - **The tool-testing safety rules in `CLAUDE.md` bind #34 and #35.** Live models get
   non-destructive requests only; destructive criteria are settled with a stub inside
   `tmp_path`; live-model tool tests run in `C:/Projects/.tmp/axiom-tool-sandbox`.
+- **No test builds a `prompt_toolkit` session. Not a `PromptSession`, not a
+  `create_pipe_input`, not a key processor.** #80 wrote nineteen that did, and running them
+  took Kaushik's machine down **twice**. The escape is understood: `_say_how_to_send` calls
+  `run_in_terminal`, which writes to the *real* console rather than to the `DummyOutput` the
+  test supplied, so a test feeding `ctrl+enter` reached out of pytest and into the session
+  that launched it. All nineteen were deleted in `32daf51`. **Reach the reader through the
+  `use_compose` hook or through `builtins.input`, and nowhere else.** What a key press does is
+  settled by a person at a real terminal, and thirteen of #80's criteria are now on that list.
+  This binds every row, not only #80 - the next loop to want a key-press test will not
+  remember the crash.
+- **A test that starts a process kills it in a fixture teardown, and the cycle checks before
+  it exits.** Row 20 is the one this is aimed at. 16 GB is tight, the queue runs unattended for
+  hours, and an orphaned server per cycle is a machine that stops responding around cycle
+  twenty. `CLAUDE.md`'s #43 rules still bind: no `npx -y`, no `uvx`, nothing fetched at test
+  time, and a real process only where a criterion cannot be settled in-memory - from a script
+  this repo owns, under `tests/`.
 - **The chain is session-only, and now more so than under cron.** Back-to-back cycles run
   inside the session, so when it ends the chain ends with it - there is no scheduler left
   behind to fire again. The files and commits survive. Restarting means reading this queue

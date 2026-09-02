@@ -790,6 +790,12 @@ _tools_summarised = False
 # `Rendered._code_line` for the measurement that chose it.
 CODE_CONTEXT = 20
 
+# Leading spaces that make a line a code block rather than prose. Markdown's own
+# number, and #76 AC 4 is the whole reason it is not the only test applied - a
+# list item four spaces in is a list item, and this indent means code only where
+# no list is open.
+INDENT_IS_CODE = 4
+
 
 class Rendered:
     """A reply turned into formatted lines, each written exactly once.
@@ -981,9 +987,58 @@ class Rendered:
             if self._fence is not None:
                 return self._code_line(line)
             nested = self._nested(line)
-            return nested if nested is not None else _as_markdown(line)
+            if nested is not None:
+                return nested
+            indented = self._indented(line)
+            return indented if indented is not None else _as_markdown(line)
         except Exception:
             return line
+
+    def _indented(self, line: str) -> str | None:
+        """A code block the model indented rather than fenced (#76).
+
+        **After `_nested`, never before it.** The rule Markdown states at the top
+        level - four leading spaces is code - is wrong inside a list, where
+        nesting is measured from the parent's content column. Placed ahead of the
+        list check it turns every nested bullet into a code block: measured, four
+        of #73's tests go red along with both of #76's AC 4 pins.
+
+        `self._levels` is the second half of that guard. `_nested` returns `None`
+        for a top-level item as well as for a non-item, and a list whose *first*
+        line is itself indented would otherwise be read as code by this. A list
+        open means this is not.
+
+        **Wrapped here rather than left to the terminal**, for #72's reason: a
+        terminal wraps to column zero, and a continuation at column zero is
+        indistinguishable from prose. Every row after the first is pushed out to
+        the block's own indent, so the block stays a rectangle.
+
+        **The indent is kept, and nothing is painted.** Rich renders one of these
+        as a code block with a hardcoded 256-colour background, padded across the
+        full width, and cuts the text at the window less two - which is the defect
+        #76 was filed for. What sets the block apart here is where it sits, the
+        same answer #77 AC 20 reached for a fence with no language: a block nobody
+        can lex is delimited, not coloured, because a colour is a claim about the
+        content that nothing supports.
+
+        The text is not run through `_as_markdown`. It is code - `**bold**` inside
+        it is two asterisks and a word, and rendering it would be the same
+        confident lie as colouring it.
+
+        Sliced by character rather than by cell, so a line of wide characters can
+        still spill one column and wrap. Every character reaches the screen, which
+        is AC 2; the rectangle is what suffers, and no criterion here is about a
+        CJK code block. Untested rather than solved, deliberately.
+        """
+        if self._levels:
+            return None
+        text = line.lstrip(" ")
+        lead = line[: len(line) - len(text)]
+        if len(lead) < INDENT_IS_CODE or not text:
+            return None
+        room = max(1, _width() - len(lead))
+        rows = [text[at : at + room] for at in range(0, len(text), room)]
+        return "\n".join(lead + row for row in rows)
 
     def _nested(self, line: str) -> str | None:
         """A list item below the top level, drawn at its own depth.
