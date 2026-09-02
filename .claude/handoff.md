@@ -1,27 +1,31 @@
-# Handoff — skills shipped, four stories waiting on a testing pass
+# Handoff — three features built and unmerged, five manual passes owed
 
-Rewritten 2026-08-31 at the end of the session that built #75. The previous version pointed
-at formal testing of #72, #73 and #74; **that has not happened.** What changed is that all
-four stories are now merged and pushed, so the testing pass covers one build instead of
-three.
+Rewritten 2026-09-02 at 04:40, before a restart, at the end of an unattended queue run that
+took rows 18 to 20 between 01:35 and 04:30.
 
-**The next session picks up here: formal testing, then two decisions.**
+**The next session's job is a manual pass, not more building.** Everything below is green,
+break-proven and committed. None of it has been watched running by a person, and that is the
+only thing standing between it and `master`.
 
 ## Where things stand
 
-`master` is **836 tests plus one deselected**, everything pushed, no open PR, nothing
-scheduled. `origin/master` is level with local.
+`master` is at `936fd1e` and has not moved. **Six branches are committed and unpushed** — a
+reboot does not lose them, they are local commits, but nothing off this machine has a copy.
 
-| issue | what it is | state |
+| branch | issue | state |
 |---|---|---|
-| [#75](https://github.com/kaushikhazra/axiom/issues/75) skills | 44/44 criteria, break-proven | **closed**, merged |
-| [#74](https://github.com/kaushikhazra/axiom/issues/74) scheduled prompts | 33/33, converged | open, merged, untested formally |
-| [#73](https://github.com/kaushikhazra/axiom/issues/73) nested lists | 13/13, converged | open, merged, untested formally |
-| [#72](https://github.com/kaushikhazra/axiom/issues/72) wide lines | 21/21, loop stopped unconverged | open, merged, untested formally |
-| [#68](https://github.com/kaushikhazra/axiom/issues/68) summary across models | not started | open |
+| `feature/81-remote-mcp` | [#81](https://github.com/kaushikhazra/axiom/issues/81) MCP server by address | 25/25 break-proven, 4 cycles |
+| `feature/76-indented-code` | [#76](https://github.com/kaushikhazra/axiom/issues/76) indented code block | 13/13 break-proven, 2 cycles |
+| `feature/80-multiline` | [#80](https://github.com/kaushikhazra/axiom/issues/80) multi-line message | **21 by test, 15 by a person** |
+| `feature/74-scheduled-prompts` | [#74](https://github.com/kaushikhazra/axiom/issues/74) | merged to master already; branch left behind |
+| `feature/73-nested-lists` | [#73](https://github.com/kaushikhazra/axiom/issues/73) | merged already; branch left behind |
+| `feature/72-wide-lines` | [#72](https://github.com/kaushikhazra/axiom/issues/72) | merged already; branch left behind |
 
-The three open merged ones stay open **because their code shipping is not the same as their
-behaviour being checked by a person.** Do not close them on the strength of a green suite.
+The suite on `feature/81-remote-mcp` is **912 passed, 1 deselected, ~128s**. On `master` it is
+876. `tests/baseline/transcript.txt` has not moved in seventeen cycles across five issues.
+
+**Nothing is scheduled and nothing is running.** The queue's cron was deleted at its last
+handover, which is the one place that is right — `.claude/loop/queue.md` explains why.
 
 ## Start here
 
@@ -33,95 +37,68 @@ uv run --project C:/Projects/axiom axiom
 **`--project`, not `--directory`.** `--directory` moves the working directory into the repo,
 which CLAUDE.md's tool-testing rule forbids, and then needs `--working-directory` to undo.
 
-Startup now says **`11 tools including web`** and **`about 1250 tokens`** with no skills
-configured. `--no-web` gives 9 tools and 1018.
+Each branch carries its own checklist, written by the loop that built it:
 
-## Three decisions waiting
+- `.claude/loop/80-multiline/iteration-1/manual-pass.md` — **fifteen criteria**, all key
+  presses and pastes
+- `.claude/loop/76-indented-code/iteration-1/manual-pass.md` — one judgement: does an
+  unpainted indented block still read as a block
+- `.claude/loop/81-remote-mcp/iteration-1/manual-pass.md` — everything tested is 127.0.0.1;
+  what is owed is a real server over a real network
 
-**1. The indented-code defect.** A line indented four spaces that is *not* a list item still
-crops - 41 characters lost at width 40. It belongs to neither #72 nor #73, and #73 converged
-after being handed it. A drafted issue with 13 criteria and the measurement is at
-`.tmp/issue-indented-code.md` (gitignored, still on disk). A one-line change takes the loss
-to zero and renders a three-line block as three blocks over eleven rows, because an indented
-code block has **no closing delimiter**. Fixing it properly needs the held-lines exemption
-that only tables have. **New story, or scope on #72?**
+**#72, #73 and #74 are still owed a pass from before**, and #72, #73 and #76 are all the same
+renderer. Worth one sitting.
 
-**2. What every request now costs.** 807 tokens before #74, 1111 after it, 1250 after #75 -
-**55% up on two stories**, before a single skill or scheduled job exists. #75 gave 257 back
-by declaring only the skill tools an empty catalogue can use, and the residual 139 is
-`write_skill`, which cannot be dropped without making the feature unreachable from a fresh
-project. `--no-skills` and `--no-mcp` take it to zero for a user who wants that. **Worth
-revisiting whether the scheduler's three tools earn their 304.**
+## The order that costs least
 
-**3. One thing in `master` that was never measured end to end.** `call_from_text` now
-translates a skill named where a tool belongs into `invoke_skill` - Kaushik's call, made
-after the loop converged. It rests on a census showing five of qwen2.5-coder's ten attempts
-arrive in that shape and were being dropped. **The confirming live run was not taken**, so
-"worsens no model" is a structural argument, not numbers. Six minutes closes it:
+1. **#76 and #72/#73 together** — one build, one renderer, one look.
+2. **#80** — the key presses. Its fifteen are the longest list and the only ones a test can
+   never reach.
+3. **#81** — needs a real remote MCP server, so it is the one that needs something you do not
+   have on the machine.
 
-```
-uv run pytest -m live -q -s
-```
+Merge each as it passes. Nothing was merged by the loop, deliberately.
 
-Recorded in `.claude/loop/75-skills/iteration-1/logs/after-convergence.md`.
+## Two decisions waiting
 
-## What skills are, in one paragraph
+**#80 AC 6** — *"on a terminal that cannot report ctrl+enter separately from enter…"* Real,
+unimplemented, and unverifiable on your console, which reports the key fine. Kept in the issue
+rather than struck, because striking means renumbering thirty criteria and cycle 7 spent a whole
+cycle repairing eleven citations after the last renumbering. It becomes real the first time
+axiom runs on Linux or macOS.
 
-A skill is a folder under `.axiom/skills/` holding a `SKILL.md`: markdown instructions
-behind frontmatter carrying a name and a description. Only the name and description ride on
-a request; the instructions are read from disk at the moment of invocation, so editing one
-mid-session takes effect without a restart. `/skills` lists them, `/skill <name> [text]` runs
-one, and the model gets four tools - read, write, delete, invoke. A `SKILL.md` written for
-another agent loads unchanged; fields axiom does not use are ignored.
+**#81 AC 17** — the loop decided *told, not refused*, and *told for every `http://` including
+localhost*. The thing to judge in use is whether the line is noise. If every local run says
+`far: http://127.0.0.1:9000/mcp is not encrypted`, that is a warning people learn to skip. If it
+reads that way to you, the criterion changes — and that is yours to change.
 
-## What the live lane is
+## Two issues this run opened
 
-`tests/test_skills_live.py`, marked `live` and **deselected by default** through
-`pyproject.toml`. It needs Ollama and takes six minutes. `uv run pytest` never runs it, which
-is what keeps the wall-clock readings in the loop logs meaningful.
+- **[#83](https://github.com/kaushikhazra/axiom/issues/83)** — scheduling anything silently
+  switches multi-line input off. `read_line`'s timed path never consults the composer, so a user
+  with a job set gets the old single-line reader and is told nothing. Seventeen criteria; the
+  four that matter are about a job firing while a message is half-written.
+- **[#82](https://github.com/kaushikhazra/axiom/issues/82)** — browser auth, from the earlier
+  conversation about Gmail, Drive, Calendar and Slack. Not started.
 
-Per-model counts from it, ten runs each: gemma4 10/10, ornith 10/10, qwen2.5 10/10, qwen3.5
-9/10, qwen2.5-coder 2/10, gemma2 no tool support. **The noise floor is plus or minus one** -
-two runs of the same measurement with no code change moved two models by one each.
+## One rule that must not be forgotten
 
-## What #75's loop learned that a reader should know
+**No test builds a `prompt_toolkit` session** — not a `PromptSession`, not a
+`create_pipe_input`, not a key processor. Nineteen did, and running them took this machine down
+**twice**. `_say_how_to_send` calls `run_in_terminal`, which writes to the *real* console rather
+than the `DummyOutput` a test supplies, so a test feeding `ctrl+enter` reaches out of pytest and
+into the session that launched it. All nineteen were deleted in `32daf51`.
 
-Eleven cycles' worth, all earned:
+It is written in `tests/test_multiline.py`'s docstring, in `tests/conftest.py`, and in the
+queue's **Standing**, because the next session will not remember the crash.
 
-> **A break big enough to be easy to write takes several tests with it and proves nothing
-> about the one it was aimed at.** Three separate cycles lost a criterion this way and had
-> to re-run a narrow break to earn it. A test that goes red for the wrong reason has not
-> been proven.
+## What the run is actually evidence for
 
-> **A score below the pack is a question about the measurement before it is an answer about
-> the model.** qwen2.5-coder scored 0/10, then 2/10. The first was the instrument counting
-> only structured calls; the second was axiom failing to route a correct intention. Neither
-> was the model, and both looked exactly like it. **0/10 is why it got caught** - at 3/10 it
-> would have read as a plausibly weak model and stood.
+Not the loop — **the break**. Across three rows it found five tests that could not have failed,
+thirteen no-op breaks, and two real defects in shipped code. Not one came from reading a diff.
+The details are in `.claude/loop/queue.md` under the empty-queue note, and in each row's cycle
+logs.
 
-> **A scripted break that reports nothing did not run.** Twice: once printing no summary
-> line at all, once `NO MATCH`. Both would have been read as "no test noticed", which is the
-> opposite of true. Anything with a backslash escape goes through the Edit tool.
-
-> **Grep the criteria numbers out of the tests and diff against the issue.** One command. It
-> caught two criteria that were genuinely asserted but cited nowhere - covered by accident
-> rather than on purpose, which is one step from believed-covered and not.
-
-> **"Already true, just needs a test" is a claim to check, not to act on.** AC 14 was that
-> and held. AC 34 was assumed the same way and was false - invoking a skill twice duplicated
-> its instructions.
-
-> **Read the baseline diff rather than accepting it.** Regenerating it once produced a
-> correct-but-noisy line; narrowing the code let the baseline be *restored* instead of
-> updated, leaving observable behaviour byte-identical.
-
-## Loop records
-
-`.claude/loop/72-wide-lines/`, `73-nested-lists/`, `74-scheduled-prompts/`, `75-skills/` -
-each with `goal.md`, `observe.md`, `assumption.md` and a `logs/cycle-N.md` per cycle. #72 ran
-5 cycles, #73 3, #74 7, #75 11.
-
-**Note on timestamps:** several early logs in #72, #73 and #74 carry times from an assumed
-clock, running up to an hour ahead. #75's are read. Nothing was decided by a timestamp.
-
-**Nothing is scheduled.** Every cron was deleted as its loop ended.
+The open problem it leaves: **a break that applies cleanly and changes no behaviour prints
+exactly what a surviving test prints.** The only thing that has ever caught one is asking why it
+stayed green.
