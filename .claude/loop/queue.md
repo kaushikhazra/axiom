@@ -24,18 +24,37 @@ cycles resolving each other's conflicts.
 | 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **done** - merged in PR #69, 6 cycles, 2h40m, all 29 criteria. **Seven real defects across two cold reads**, six of them found by feeding hostile input to a modelled terminal rather than by reading code. AC 7 was not met at all - every paragraph longer than the window was drawn on screen twice, while the recorded evidence for it stayed true |
 
 | 17 | [#77](https://github.com/kaushikhazra/axiom/issues/77) the look of it | `77-look` | **done** - merged in PR #79, 8 cycles, all 37 criteria. Ran **outside** the queue, which was empty at the time; recorded here so the row order stays a full history |
-| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **done, unmerged** - 10 cycles, 5h19m (2026-09-01 20:46 → 2026-09-02 02:05). **21 criteria by test, 15 by Kaushik** - never added up. Nineteen tests deleted after they crashed the machine twice; two vacuous tests found by breaks; filed [#83](https://github.com/kaushikhazra/axiom/issues/83). **Cycle 8 has no log - the machine went down during it**, and its tests were committed by the cycle that followed. Merge waits on `manual-pass.md` |
-| 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | **done, unmerged** - 2 cycles, 32 minutes, **all 13 criteria**. The defect was a truncation at the window less two, not a wrap. **Five tests could not have failed and three breaks were no-ops**, every one found by breaking rather than by reading. Merge waits on the manual pass #72, #73 and #74 already owe |
-| 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | **done, unmerged** - 4 cycles, 1h40m, **all 25 criteria**. Found and fixed a defect in #43's own design: one shared `AsyncExitStack` for every session, so killing a *remote* server took a *stdio* one with it. **AC 20 took five breaks and four were no-ops**, one of which showed the test had been measuring httpx's keep-alive expiry rather than axiom closing anything |
+| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **done** - 10 cycles, 5h19m (2026-09-01 20:46 → 2026-09-02 02:05). **21 criteria by test, 15 by Kaushik** - never added up. Nineteen tests deleted after they crashed the machine twice; two vacuous tests found by breaks; filed [#83](https://github.com/kaushikhazra/axiom/issues/83). **Cycle 8 has no log - the machine went down during it**, and its tests were committed by the cycle that followed. **Merged 2026-09-03**, ahead of its manual pass |
+| 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | **done** - 2 cycles, 32 minutes, **all 13 criteria**. The defect was a truncation at the window less two, not a wrap. **Five tests could not have failed and three breaks were no-ops**, every one found by breaking rather than by reading. **Merged 2026-09-02**, and its manual pass was taken the same day - it covered #72 and #73 too |
+| 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | **done** - 4 cycles, 1h40m, **all 25 criteria**. Found and fixed a defect in #43's own design: one shared `AsyncExitStack` for every session, so killing a *remote* server took a *stdio* one with it. **AC 20 took five breaks and four were no-ops**, one of which showed the test had been measuring httpx's keep-alive expiry rather than axiom closing anything. **Merged 2026-09-03**, with row 1 of its manual pass taken against deepwiki and rows 2 to 5 owed |
 
 **The queue is empty again.** Twenty rows, all done. **The cron has been deleted** - see
 **Handing over** for why that is right at the last handover and wrong at every other.
 
 **Rows 18 to 20 ran unattended between 01:35 and 04:30 on 2026-09-02** and produced one shipped
-fix, one converged feature, one new feature, and two follow-up issues. **Five branches are
-unmerged and five manual passes are owed** - #80, #76, #81, and #72/#73/#74 from before. Nothing
-in this run merged anything, deliberately: every row touched code that a person has not yet
-looked at running.
+fix, one converged feature, one new feature, and two follow-up issues.
+
+**On 2026-09-03 that run's no-merge policy was reversed, and the reason is worth keeping.** The
+rule had been that a branch waits for its manual pass. Holding three branches back while master
+moved meant each pass would have been driven against a build that was not the one shipping, and
+the merge afterwards would have been the first time the three met - which is where a regression
+gets found at merge time instead of at test time. So master took all of them, in order, each
+merged into its branch first and the suite run there before it went the other way:
+
+| | | |
+|---|---|---|
+| master, before | 892 passed | 94.3s |
+| \+ #80 | 923 passed | 95.1s |
+| \+ #81 | 959 passed | 154.7s |
+
+No code conflicted. `terminal.py` took #76 in the renderer half and #80 in the reader half;
+#81 is `config.py` and `servers.py` and touches neither. **Every conflict was this file, the
+handoff, and #76's `manual-pass.md`** - the loop's own bookkeeping, carried across branches by
+the convention two rows below, meeting itself at three different ages.
+
+**The passes are still owed, and are now owed against master.** #74 and #80 are the two in
+hand; #81 has rows 2 to 5 left. Anything a pass finds becomes a new issue rather than an
+unmerge.
 
 **What this run is actually evidence for is the break, not the loop.** Across three rows it
 found:
