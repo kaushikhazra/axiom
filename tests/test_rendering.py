@@ -845,23 +845,21 @@ def test_a_reply_that_turns_out_to_be_a_call_never_reaches_the_renderer(
     assert '{"name"' not in printed
     assert "the answer" in printed, "the reply after the call never arrived"
 
-    # **This test used to prove the call happened by finding `read_file(path=x)`
-    # on screen, and #77 AC 22 took that line away** - a turn's calls are not
-    # shown one by one any more. The claim is unchanged and still has to be made,
-    # or "the call text never reached the renderer" would pass for a build that
-    # never made the call at all. The summary line is the observable now.
-    assert "1 tool" in stripped(printed), "the call was not made"
-
-    # AC 26 on the **screen**, not on the bytes. The line that says a tool is
-    # running is written and then taken back, so `read_file` is in the stream
-    # whatever the user ends up seeing - asserting its absence there fails on
-    # correct behaviour, and asserting it on a renderer that never erased would
-    # pass on broken behaviour. Only a screen can tell the two apart.
+    # **This assertion has now been three things, and is back to the first.**
+    # It began by proving the call happened through `read_file(path=x)` on
+    # screen; #77 AC 22 took the per-call line away and it became `1 tool`; #85
+    # put the line back, on evidence from #74's manual pass, and the count is
+    # gone. The claim never changed - without it, "the call text never reached
+    # the renderer" would pass for a build that never made the call at all.
     screen = Screen(80)
     screen.feed(printed)
     left = "\n".join(screen.text())
-    assert "read_file" not in left, "a per-call line was left on screen"
-    assert "  | " not in left, "the tool's output was left on screen"
+    assert "read_file(path=x)" in left, "the call was not made, or not shown"
+
+    # Still true, and not superseded: the `  | ` block is how a *piped* run
+    # shows a tool's output, and a terminal must not get it. #85 changed what a
+    # terminal shows, not which path shows it.
+    assert "  | " not in left, "a piped run's tool output reached a terminal"
 
 
 def test_a_cut_off_reply_does_not_leak_into_the_next_one(monkeypatch, capsys):

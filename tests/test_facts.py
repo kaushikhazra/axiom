@@ -81,9 +81,7 @@ def run(capsys, monkeypatch, typed=None, **stub):
 # --- the clear ---------------------------------------------------------------
 
 
-def test_settling_on_a_model_clears_the_screen(
-    capsys, monkeypatch, choice
-):
+def test_settling_on_a_model_clears_the_screen(capsys, monkeypatch, choice):
     """#77 AC 7."""
     at_a_terminal(monkeypatch)
     out = run(capsys, monkeypatch)
@@ -91,9 +89,7 @@ def test_settling_on_a_model_clears_the_screen(
     assert CLEAR in out.out, "the screen was never cleared"
 
 
-def test_the_facts_are_the_first_thing_after_the_clear(
-    capsys, monkeypatch, choice
-):
+def test_the_facts_are_the_first_thing_after_the_clear(capsys, monkeypatch, choice):
     """#77 AC 8. Not merely present - present *first*.
 
     Asserting the panel is somewhere in the output would pass for a clear that
@@ -121,9 +117,7 @@ def test_the_scrollback_is_not_cleared(capsys, monkeypatch, choice):
     assert CLEAR_SCROLLBACK not in out.out, "scrollback was wiped too"
 
 
-def test_the_screen_is_cleared_once_and_not_again(
-    capsys, monkeypatch, choice
-):
+def test_the_screen_is_cleared_once_and_not_again(capsys, monkeypatch, choice):
     """#77 AC 10. Counted over a session with turns in it, not read off the call.
 
     A clear per turn would lose the conversation as it went, and would look
@@ -289,14 +283,26 @@ def a_turn_calling(results):
     terminal.end_turn()
 
 
-def test_a_turn_shows_nothing_for_any_individual_call(capsys, monkeypatch, choice):
-    """#77 AC 22 and AC 26."""
+def test_every_call_and_every_result_is_on_screen(capsys, monkeypatch, choice):
+    """#85 AC 2, AC 7, AC 17. **This test used to assert the exact opposite.**
+
+    It was #77 AC 22 and AC 26 - "nothing per call", "nothing about a tool call
+    remains on screen except that one line" - and it passed for a year. What
+    overturned it is not a preference: driving #74's manual pass on 2026-09-03,
+    a model scheduled a job and reported it as repeating "indefinitely" while
+    the tool result in front of it said a repeating job stops after seven days.
+    The result had gone to the model and nowhere else, so nothing on screen
+    could contradict the account the user was given.
+
+    Left in place rather than deleted, with its history, because a criterion
+    reversed on evidence is worth more as a record than as an absence.
+    """
     at_a_terminal(monkeypatch)
     a_turn_calling({"a": "alpha", "b": "bravo"})
     left = screen_of(capsys.readouterr().out)
 
-    assert "read_file" not in left, "a per-call line was left on screen"
-    assert "alpha" not in left and "bravo" not in left, "tool output stayed on screen"
+    assert left.count("read_file(") == 2, "the calls are not on screen"
+    assert "alpha" in left and "bravo" in left, "what the tools returned is not shown"
 
 
 def test_the_user_can_see_that_something_is_running(capsys, monkeypatch, choice):
@@ -312,21 +318,35 @@ def test_the_user_can_see_that_something_is_running(capsys, monkeypatch, choice)
     printed = capsys.readouterr().out
 
     assert "read_file" in printed, "nothing said a tool was running"
-    assert printed.index("read_file") < printed.index("1 tool"), "said only afterwards"
+    assert printed.index("read_file") < printed.index("the-result"), "said afterwards"
 
 
-def test_one_line_says_how_many_tools_ran(capsys, monkeypatch, choice):
-    """#77 AC 24."""
+def test_every_tool_that_ran_is_on_screen(capsys, monkeypatch, choice):
+    """#85 AC 11, AC 12, AC 16. **Supersedes #77 AC 24.**
+
+    #77 counted the turn's tools in one line and showed nothing else. #74's
+    manual pass on 2026-09-03 found what that costs: a model scheduled a job,
+    said it would "repeat indefinitely", and the result saying it stops after
+    seven days went to the model and nowhere else, with nothing on screen able
+    to contradict it.
+
+    So the count is gone and the calls are here instead. Asserted on the calls
+    being present *and in order*, because a set of lines in the wrong order is
+    the one way this could be worse than the count it replaces.
+    """
     at_a_terminal(monkeypatch)
     a_turn_calling({"a": "x", "b": "y", "c": "z"})
+    left = screen_of(capsys.readouterr().out)
 
-    assert "3 tools" in screen_of(capsys.readouterr().out)
+    assert left.count("read_file(") == 3, "three calls did not put three lines up"
+    assert not re.search(r"·\s+\d+ tools?\b", left), "the count line is still drawn"
+    assert left.index("x") < left.index("y") < left.index("z"), "out of order"
 
 
 def test_a_turn_that_called_no_tools_says_nothing_about_them(
     capsys, monkeypatch, choice
 ):
-    """#77 AC 25. The boundary that makes AC 24 mean anything."""
+    """#85 AC 1, which #77 AC 25 said first and which has not changed."""
     at_a_terminal(monkeypatch)
     feed(monkeypatch, ["hello", "/exit"])
     main([], using=StubBackend(models=INSTALLED, turns=[["just an answer"]]))
@@ -335,27 +355,38 @@ def test_a_turn_that_called_no_tools_says_nothing_about_them(
     # The summary's shape, not the word - the facts panel says `11 tools
     # including web`, and a bare `"tool" not in left` reads that as a summary.
     assert not re.search(r"·\s+\d+ tools?", left), "a turn with no tools was summarised"
+    assert "(" not in left.split("just an answer")[0].replace("(context", "("), (
+        "a turn with no tools drew a call line"
+    )
 
 
-def test_a_failed_tool_is_counted_and_the_turn_carries_on(
-    capsys, monkeypatch, choice
-):
-    """#77 AC 36. One failing, one succeeding, in the same turn."""
+def test_a_failed_tool_is_marked_and_the_turn_carries_on(capsys, monkeypatch, choice):
+    """#85 AC 10, and #77 AC 36. One failing, one succeeding, in the same turn.
+
+    The mark rather than a colour, because `NO_COLOR` takes a colour away and
+    the criterion is that a failure is *drawn* differently.
+    """
     at_a_terminal(monkeypatch)
     a_turn_calling({"a": "error: no such file", "b": "fine"})
     left = screen_of(capsys.readouterr().out)
 
-    assert "2 tools" in left and "1 failed" in left
+    assert terminal.FAIL_MARK in left, "a failed tool was not marked"
+    assert "error: no such file" in left, "the failure did not say what it was"
+    assert "fine" in left, "the tool that worked was lost with the one that did not"
 
 
-def test_the_prompt_is_the_accent_and_the_typed_line_is_not(capsys, monkeypatch, choice):
+def test_the_prompt_is_the_accent_and_the_typed_line_is_not(
+    capsys, monkeypatch, choice
+):
     """#77 AC 30."""
     at_a_terminal(monkeypatch)
     feed(monkeypatch, ["/exit"])
     main([], using=StubBackend(models=INSTALLED))
     printed = capsys.readouterr().out
 
-    assert re.search(r"\x1b\[[0-9;]*m>\x1b\[0m ", printed), "the prompt carries no accent"
+    assert re.search(r"\x1b\[[0-9;]*m>\x1b\[0m ", printed), (
+        "the prompt carries no accent"
+    )
     assert "\x1b[0m " in printed, "the accent was not closed before the typed line"
 
 
@@ -383,7 +414,9 @@ def test_a_bare_run_says_no_more_than_it_did_before(capsys, monkeypatch, choice)
     at_a_terminal(monkeypatch)
     feed(monkeypatch, ["/exit"])
     main([], using=StubBackend(models=INSTALLED))
-    left = [row for row in screen_of(capsys.readouterr().out).splitlines() if row.strip()]
+    left = [
+        row for row in screen_of(capsys.readouterr().out).splitlines() if row.strip()
+    ]
 
     assert "servers" not in "\n".join(left), "a bare run mentioned servers"
     assert "skills" not in "\n".join(left), "a bare run mentioned skills"
@@ -475,17 +508,19 @@ def test_a_failure_is_dressed_unlike_both(capsys, monkeypatch, choice):
     assert "an answer" not in got.err
 
 
-def test_the_summary_comes_before_the_answer_it_explains(capsys, monkeypatch, choice):
-    """#77 AC 24's placement, found by driving it by hand on 2026-09-01.
+def test_a_tool_is_on_screen_before_the_answer_it_explains(capsys, monkeypatch, choice):
+    """#85 AC 20. **Supersedes #77 AC 24's placement**, and keeps what it was for.
 
-    It used to be drawn at the end of the turn, which put it *below* the answer
-    and between two blank lines - so it read as belonging to the next prompt, and
-    you learned what the answer rested on only after reading it. A real session
-    showed `·  1 tool` under an answer that said "I do not have a tool available",
-    with nothing on screen to resolve the two.
+    #77 found by hand on 2026-09-01 that a count drawn at the end of the turn
+    landed *below* the answer, so `·  1 tool` sat under an answer saying "I do
+    not have a tool available" with nothing on screen to resolve the two. It
+    fixed that by moving the count above the answer.
 
-    Asserted on the rows in order, not on presence: presence was already true of
-    the version this replaces.
+    #85 needs no placement rule at all: a call is drawn when it is made and a
+    result when it arrives, so both are above an answer that comes after them.
+    The ordering is a property of when they are printed rather than a decision
+    about where to print them - which is why this asserts on rows in order and
+    not on a call site.
     """
     at_a_terminal(monkeypatch)
     terminal.note_tool("read_file", {"path": "notes.txt"})
@@ -495,18 +530,20 @@ def test_the_summary_comes_before_the_answer_it_explains(capsys, monkeypatch, ch
     terminal.end_turn()
 
     rows = screen_of(capsys.readouterr().out).splitlines()
-    where_summary = next(i for i, row in enumerate(rows) if "1 tool" in row)
+    where_call = next(i for i, row in enumerate(rows) if "read_file(" in row)
+    where_result = next(i for i, row in enumerate(rows) if row.strip().endswith("ok"))
     where_answer = next(i for i, row in enumerate(rows) if "the answer" in row)
 
-    assert where_summary < where_answer, "the summary is still under the answer"
+    assert where_call < where_result, "the result was drawn before the call"
+    assert where_result < where_answer, "the answer came before the tool it rested on"
 
 
-def test_a_turn_gets_one_summary_and_not_two(capsys, monkeypatch, choice):
-    """#77 AC 24. Two callers reach the summary now, so it can be said twice.
+def test_a_call_is_drawn_once_and_not_twice(capsys, monkeypatch, choice):
+    """#85 AC 11. A turn passes through `show_piece` and `end_turn` both.
 
-    `show_piece` draws it before the answer and `end_turn` draws it for a turn
-    that never produced one. A turn that does produce an answer passes through
-    both, and without the guard would be summarised twice.
+    #77's count needed a flag to survive that - two callers reached it and a
+    turn must not get two lines out of them. #85 draws from one place, so this
+    guards that nobody adds a second.
     """
     at_a_terminal(monkeypatch)
     terminal.note_tool("read_file", {"path": "notes.txt"})
@@ -515,21 +552,21 @@ def test_a_turn_gets_one_summary_and_not_two(capsys, monkeypatch, choice):
     terminal.end_reply()
     terminal.end_turn()
 
-    assert screen_of(capsys.readouterr().out).count("1 tool") == 1
+    assert screen_of(capsys.readouterr().out).count("read_file(") == 1
 
 
-def test_a_turn_that_never_answers_still_accounts_for_its_tools(
-    capsys, monkeypatch, choice
-):
-    """#77 AC 24's other half. Out of rounds, or interrupted.
+def test_a_turn_that_never_answers_still_shows_its_tools(capsys, monkeypatch, choice):
+    """#85 AC 14. Out of rounds, or interrupted.
 
-    Without `end_turn`'s copy, a turn that called tools and then said nothing
-    would leave them unmentioned entirely - the case where a user most wants to
-    know something ran.
+    #77 needed `end_turn` to draw the count for this case, because the count
+    fired off the first fragment of an answer that never came. Drawing as the
+    calls happen removes the case rather than handling it - there is no answer
+    to be early or late relative to.
     """
     at_a_terminal(monkeypatch)
     terminal.note_tool("read_file", {"path": "notes.txt"})
     terminal.show_tool_result("ok")
     terminal.end_turn()
 
-    assert "1 tool" in screen_of(capsys.readouterr().out)
+    left = screen_of(capsys.readouterr().out)
+    assert "read_file(" in left and "ok" in left
