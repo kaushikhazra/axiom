@@ -171,24 +171,87 @@ class Servers:
             self._loop.close()
 
     async def _serve(self) -> None:
+        """Every server, each held open by a task of its own.
+
+        **One task and one stack per server, rather than one stack for all of
+        them** - and that is a correction rather than a preference. #43 held every
+        session in a single `AsyncExitStack`, which was right while every server
+        was a subprocess: a dead subprocess makes its client raise when it is
+        next called, and touches nothing else.
+
+        A remote transport does not fail that politely. `streamable_http_client`
+        runs a task group with a background writer in it, and when the connection
+        dies the group cancels its own scope. Entered on a shared stack, that
+        cancellation reaches the task holding the stack - which held every other
+        server too. **Measured in cycle 4: killing the remote server made
+        `tiny__ping` return "Connection closed" on a subprocess that was still
+        running.** That is #81 AC 14 and #43 AC 24 and AC 25, all broken by one
+        stack.
+
+        A task per server contains it: a cancellation is delivered to the task
+        that owns the failing transport and stops there.
+
+        Leaving still closes everything. `_stop` is awaited by every holder, and
+        `_serve` does not return until each has finished unwinding - so no
+        session, and no subprocess, outlives the run (#43 AC 26, AC 27).
+        """
         self._stop = asyncio.Event()
-        # One stack holding every session open at once. Leaving it closes them
-        # all, in reverse order, whatever happened in between.
-        async with AsyncExitStack() as sessions:
-            for spec in self.specs:
-                await self._open(spec, sessions)
-            self._ready.set()
-            await self._stop.wait()
+        opened = [asyncio.Event() for _ in self.specs]
+        holders = [
+            asyncio.create_task(self._hold(spec, done))
+            for spec, done in zip(self.specs, opened, strict=True)
+        ]
+        for done in opened:
+            await done.wait()
+        self._ready.set()
+        await self._stop.wait()
+        for holder in holders:
+            holder.cancel()
+        await asyncio.gather(*holders, return_exceptions=True)
 
-    async def _open(self, spec: ServerSpec, sessions: AsyncExitStack) -> None:
-        """One server, or a recorded reason it is not there.
+    async def _hold(self, spec: ServerSpec, opened: asyncio.Event) -> None:
+        """One server, open until the run ends or its transport gives up.
 
-        A server that fails to start does not stop axiom: it starts without
-        that server and says which one failed. Consistent with `tools.run()`
-        returning failures rather than raising - a tool that cannot do its job
-        is not a reason to end the session.
+        `opened` is set whether the server answered or not: `_serve` waits for
+        every holder to have *tried*, and a server that failed has already
+        recorded why. Set in a `finally` so a transport that raises on the way up
+        cannot leave the prompt waiting for it.
         """
         try:
+            async with AsyncExitStack() as sessions:
+                await self._open(spec, sessions)
+                opened.set()
+                await self._stop.wait()
+        finally:
+            opened.set()
+
+    def _transport(self, spec: ServerSpec, sessions: AsyncExitStack):
+        """The way in to one server. **The only place that knows there are two.**
+
+        Everything `_open` does after this - the wanted/offered tool filter, the
+        `server__tool` routing map, the declarations, the count reported at
+        startup - is the same for a server axiom started and one that was already
+        answering. That is why there is one `Servers` and one `ServerSpec` rather
+        than two of each (#81 AC 6, AC 7).
+
+        **An address is not a subprocess** (AC 3). Nothing below the `if` runs for
+        one: no `StdioServerParameters`, no `stdio_client`, and no devnull stderr -
+        a server reached by address has no stderr of axiom's to write into.
+
+        `streamable_http_client`, **not** `streamablehttp_client`. The second is
+        what the older documentation says and it is an `ImportError` on mcp 2.1.1;
+        read out of the installed package in `logs/cycle-1.md`.
+
+        Headers and timeouts are not parameters of it - they belong to an
+        `httpx2.AsyncClient`, which is why `create_mcp_http_client` is here. The
+        start bound is applied by `_open`'s `wait_for` rather than by the client,
+        so both kinds are bounded by the same number (AC 11).
+
+        `terminate_on_close` is left at its default of True: it sends a DELETE
+        when the context exits, so leaving axiom closes the session at the other
+        end rather than abandoning it (AC 20).
+        """
+        if not spec.address:
             parameters = StdioServerParameters(
                 command=spec.command,
                 args=list(spec.args),
@@ -206,10 +269,27 @@ class Servers:
             quiet = sessions.enter_context(
                 open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
             )
+            return stdio_client(parameters, errlog=quiet)
+
+        from mcp.client.streamable_http import streamable_http_client
+        from mcp.shared._httpx_utils import create_mcp_http_client
+
+        return streamable_http_client(
+            url=spec.address,
+            http_client=create_mcp_http_client(headers=dict(spec.env) or None),
+        )
+
+    async def _open(self, spec: ServerSpec, sessions: AsyncExitStack) -> None:
+        """One server, or a recorded reason it is not there.
+
+        A server that fails to start does not stop axiom: it starts without
+        that server and says which one failed. Consistent with `tools.run()`
+        returning failures rather than raising - a tool that cannot do its job
+        is not a reason to end the session.
+        """
+        try:
             client = await asyncio.wait_for(
-                sessions.enter_async_context(
-                    Client(stdio_client(parameters, errlog=quiet))
-                ),
+                sessions.enter_async_context(Client(self._transport(spec, sessions))),
                 self.start_timeout,
             )
             listed = await asyncio.wait_for(client.list_tools(), self.start_timeout)

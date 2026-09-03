@@ -635,6 +635,217 @@ def use_input(read=None) -> None:
     _typed = Typed(read=read) if read is not None else None
 
 
+def _compose_continuation():
+    """What marks the second line of a message, and the third (#80 AC 23).
+
+    prompt_toolkit's default is `prompt_width` spaces. That lines the text up
+    and **marks nothing** - so a message part way through looks exactly like one
+    that has already been sent and answered, which is the one thing AC 23 asks
+    it not to look like.
+
+    A marker in the voice's grey instead: quieter than the answer, because it is
+    axiom's furniture rather than the user's words, and visible enough to say
+    "still yours, not sent". Every line staying on screen is what AC 4 and AC 24
+    ask for, and prompt_toolkit does that part already.
+
+    Returned as a callable rather than inlined so it can be tested without a
+    console. An inline lambda here would be an untested one.
+    """
+    from prompt_toolkit.formatted_text import ANSI
+
+    def marker(width: int, line_number: int, wrapped: bool):
+        return ANSI(_grey("…".ljust(max(1, width))))
+
+    return marker
+
+
+_said_how_to_send = False
+
+
+def forget_the_hint() -> None:
+    """Let the hint be said again. For tests, and for a new session."""
+    global _said_how_to_send
+    _said_how_to_send = False
+
+
+def _say_how_to_send() -> None:
+    """How to send, said the first time a message grows a second line (#80 AC 5).
+
+    **Once per session, and that is the whole design.** A user who has just
+    discovered ctrl+enter has also just discovered that enter no longer does what
+    it did a moment ago, which is the one moment the answer is worth having. Said
+    again on the second line it is noise, and by the fourth it is in the way of
+    the thing being written.
+
+    Printed above the prompt through `run_in_terminal`, because the reader owns
+    the screen while it is running and writing underneath it would be drawn over.
+    """
+    global _said_how_to_send
+    if _said_how_to_send:
+        return
+    _said_how_to_send = True
+    from prompt_toolkit.application import run_in_terminal
+
+    run_in_terminal(lambda: say("enter sends, ctrl+enter starts another line"))
+
+
+def compose_keys():
+    """What each key does while a message is being written (#80 AC 2, AC 3).
+
+        enter        c-m                  send it
+        ctrl+enter   c-j, escape+c-j      start another line
+        ctrl+c       c-c                  throw it away, or leave
+
+    **`"c-enter"` is not a key, and binding it finds nothing.** Ctrl+enter
+    arrives as a line feed where enter arrives as a carriage return, so what is
+    bound is ControlJ against ControlM.
+
+    **It is bound twice, because prompt_toolkit has two Windows readers and they
+    deliver it differently.** `Win32Input.__init__` picks between them on
+    `_is_win_vt100_input_enabled()`, which is true whenever the console merely
+    *accepts* `ENABLE_VIRTUAL_TERMINAL_INPUT` - so every modern console takes
+    the VT branch, conhost included:
+
+        ConsoleInputReader        escape, c-j   ctrl state set, so Escape is
+                                                prefixed the way a VT100 marks
+                                                a meta-modified key
+        Vt100ConsoleInputReader   c-j           a bare line feed; the modifier
+                                                is not encoded and there is
+                                                nothing to prefix
+
+    **Binding only the pair is how #80 shipped broken.** A bare ControlJ matched
+    nothing, fell through to prompt_toolkit's own `c-j` default - which does
+    `key_processor.feed(KeyPress(ControlM, "\\r"), first=True)` - and landed on
+    the send binding below. Ctrl+enter sent the message. Found by hand in the
+    manual pass, on the first row that needed a second line; `tests/whatkey.py`
+    names the reader and prints the key.
+
+    A consequence worth knowing rather than discovering: **ctrl+enter and ctrl+J
+    are the same bytes to the console**, so they are the same key to anything
+    reading it. Nothing can separate them. Ctrl+J is not otherwise used here, so
+    the collision costs nothing - but it is a decision, not an accident.
+
+    Separated from `compose` so the table can be read without building a
+    session. A `KeyBindings` is not a `PromptSession`, a pipe input or a key
+    processor, so inspecting it is inside the rule those three are outside of.
+    """
+    from prompt_toolkit.key_binding import KeyBindings
+
+    keys = KeyBindings()
+
+    @keys.add("c-m")
+    def _send(event) -> None:
+        event.current_buffer.validate_and_handle()
+
+    @keys.add("c-j")
+    @keys.add("escape", "c-j")
+    def _newline(event) -> None:
+        _say_how_to_send()
+        event.current_buffer.insert_text("\n")
+
+    @keys.add("c-c")
+    def _abandon(event) -> None:
+        """Throw the message away, or leave if there is nothing to throw.
+
+        #80 AC 25, AC 26 - and the two pull against each other, which is why
+        both are here rather than one.
+
+        ctrl+c has always meant "leave" at an idle prompt, and that was right
+        when a prompt held one line and nothing was ever in progress. With four
+        lines half-written it is wrong: the user means *not that*, not goodbye,
+        and ending the session would take the conversation with it.
+
+        So it depends on whether there is anything to abandon. With text in the
+        buffer it is cleared and the prompt stays; empty, the interrupt goes up
+        exactly as it did before #80, and `read_line` ends the session.
+
+        Nothing is sent either way, and nothing reaches the history - which is
+        AC 27, and it is structural rather than defended: this returns to the
+        reader, and only a message that is *accepted* leaves it.
+        """
+        if event.current_buffer.text:
+            event.current_buffer.reset()
+            return
+        # No `style=` argument, deliberately. prompt_toolkit accepts one here
+        # and the natural value is a class name of the form family-colon-tag -
+        # which is also the shape of a model name, so `test_config`'s guard
+        # against a default model creeping back reads it as one. The guard is
+        # right, the styling is worth nothing, and widening the guard to suit a
+        # cosmetic argument would be trading a real check for no gain.
+        event.app.exit(exception=KeyboardInterrupt)
+
+    return keys
+
+
+def compose(source=None, sink=None) -> str:
+    """A message, however many lines it has (#80 AC 1, AC 2, AC 3).
+
+    `multiline=True` is what lets the buffer hold a second line at all. With it,
+    prompt_toolkit's own default is the opposite of what #80 asks for - enter
+    inserts and escape-enter accepts - so every binding in `compose_keys` is
+    stated rather than left to a default.
+
+    `source` and `sink` exist for tests. prompt_toolkit's `create_pipe_input`
+    delivers key presses without a terminal, which proves what axiom does with
+    a key - **not** that this console delivers it. That second half is the
+    manual pass's, and it is why AC 2 and AC 3 stay off the proved list. The
+    manual pass then found that no console delivered what the tests were
+    feeding; see `compose_keys`.
+
+    Imported here rather than at module scope: a piped run must not pay to
+    load a library it never reaches.
+    """
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.formatted_text import ANSI
+
+    session = PromptSession(
+        multiline=True,
+        key_bindings=compose_keys(),
+        input=source,
+        output=sink,
+        prompt_continuation=_compose_continuation(),
+    )
+    # `ANSI(...)`, not the bare string: prompt_toolkit measures a prompt to
+    # place the cursor, and escape sequences handed to it as text are counted as
+    # visible columns and printed literally. #77 put the accent in there.
+    return session.prompt(ANSI(_prompt()))
+
+
+_compose = None
+
+
+def use_compose(read=None) -> None:
+    """Replace the reader that composes a message, or forget the one in use.
+
+    The counterpart of `use_input`, and for the same reason it exists: a
+    module-level singleton is right for a program with one console and wrong for
+    a test suite.
+
+    It is also **the only way #80 is testable at all.** Every other test in this
+    suite supplies input by monkeypatching `builtins.input`, and a reader that
+    only runs at a terminal is unreachable from all of them - no test process is
+    a terminal. Without this hook the feature could be built and never checked,
+    which is how #77 nearly shipped a panel nothing had looked at.
+
+    `None` forgets it, so the next read goes back to the real one.
+    """
+    global _compose
+    _compose = read
+
+
+def _composer():
+    """The composing reader, or None when this run should read a plain line.
+
+    **Terminal-only, and that is load-bearing rather than tidy.** The golden
+    transcript is 477 lines captured from a `StringIO` and every test drives
+    axiom by feeding it lines; a composer reachable from a piped run changes all
+    of that at once. Same split #77 landed on, for the same reason.
+    """
+    if not _rendering or not sys.stdout.isatty():
+        return None
+    return _compose or compose
+
+
 def read_line(timeout: float | None = None) -> "str | None | object":
     """The next line the user types, or None if they are leaving.
 
@@ -649,7 +860,8 @@ def read_line(timeout: float | None = None) -> "str | None | object":
     """
     if timeout is None:
         try:
-            return input(_prompt()).strip()
+            composer = _composer()
+            return composer().strip() if composer else input(_prompt()).strip()
         except (EOFError, KeyboardInterrupt):
             # Ctrl-C at an idle prompt means leave, same as Ctrl-D.
             print()

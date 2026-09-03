@@ -78,3 +78,86 @@ and it gets built from evidence rather than from a guess.
 Do not write another test that constructs a `PromptSession`, a `create_pipe_input`, or a key
 processor. `tests/test_multiline.py`'s docstring says the same thing, and so does
 `tests/conftest.py`, because the next session will not remember the crash.
+
+---
+
+## What happened - 2026-09-03
+
+**Driven by hand by Kaushik, on `master` with #76, #80 and #81 all merged.** The pass opened
+by failing its central criterion, which is the best thing it could have done.
+
+### AC 2 failed on the first row that needed a second line
+
+**Ctrl+enter sent the message.** Traced, fixed and merged the same sitting - see
+`fix(#80): ctrl+enter is a bare c-j on every console axiom will meet`.
+
+prompt_toolkit has two Windows readers and `Win32Input.__init__` picks between them on
+`_is_win_vt100_input_enabled()`, which asks only whether the console *accepts*
+`ENABLE_VIRTUAL_TERMINAL_INPUT` - true on every modern console, conhost included:
+
+| reader | ctrl+enter arrives as |
+|---|---|
+| `ConsoleInputReader` | `escape, c-j` - ctrl state set, so Escape is prefixed |
+| `Vt100ConsoleInputReader` | `c-j` - a bare line feed, nothing to prefix |
+
+Only the pair was bound. The bare key matched nothing, fell through to prompt_toolkit's own
+`c-j` default - `feed(KeyPress(ControlM, "\r"), first=True)` - and reached the send binding.
+
+**The console was never the problem.** `tests/whatkey.py`, written to settle it, reports
+`ControlJ` for ctrl+enter against `ControlM` for enter. This terminal separates them perfectly
+well; axiom was listening for the wrong shape. **AC 6 is untouched** and stays exactly as
+cycle 10 left it.
+
+**Nothing about the 21 test-proved criteria is in question.** They proved what axiom does
+*given* the key pair, and `compose`'s own docstring said so - "not that this console delivers
+it. That second half is the manual pass's, and it is why AC 2 and AC 3 stay off the proved
+list." It was right, and the thing it warned about is what happened.
+
+### The rows
+
+| AC | Verdict | |
+|---|---|---|
+| 1 | pass | three lines, one message - the model read "three words", not three turns |
+| 2 | pass | after the fix |
+| 3 | pass | enter sends |
+| 4 | pass | every line on screen together |
+| 5 | pass | said once, above the prompt, and not again on the next message |
+| 12 | pass | a one-line message behaves as it always did, with `c-j` newly bound |
+| 18 | pass | a blank line survived into the fence the model echoed back - **and so did one from an earlier message**, which had to travel through the conversation history to get there |
+| 23 | pass | the grey `…` marks a line as still being written |
+| 24 | pass | by "see them all", which is the criterion's other half |
+| 7 | pass | a fourteen-line paste arrived as one `>` and thirteen `…` |
+| 8 | pass | every line in order; the model quoted four of them back by content |
+| 9 | pass | no turn began while the paste was arriving |
+| 25 | pass | two composed lines, ctrl+c - no turn, no reply, and the prompt came back empty |
+| 26 | pass | the next message answered normally, straight after |
+| 27 | pass | **the first real check this criterion has had.** Asked for its previous message, the model named the one typed *after* the abandon. The abandoned buffer never reached it |
+| 10 | pass | a paste cut short of its trailing newline is a complete message, and enter sends it |
+
+**AC 19 and AC 11 were seen too**, though both are on the proved list: a message ending on a
+blank line produced no empty turn after it, and a pasted `/etc/pipeline/config.yaml` sat in the
+message as text rather than being read as a command.
+
+**A pasted blank line takes a different path from a typed one**, and both were seen to survive
+- the typed one in the fence the model echoed back, the pasted one on screen inside the
+traceback. Nothing tested either.
+
+**AC 27's vacuous test is answered.** It asserted that `"throw this away"` was absent from what
+reached the model - a string nothing in the test ever typed, so it passed for every
+implementation there is, including one that sent the abandoned buffer. Driven by hand it holds:
+the model, asked for its previous message, named the one typed after the abandon.
+
+### Where it ends
+
+**All fourteen rows pass**, and four criteria on the *proved* list - AC 5, AC 11, AC 19 and
+AC 23 - were seen on a screen for the first time along the way.
+
+**AC 6 stands unticked, exactly as cycle 10 left it.** The evidence for keeping it there is
+stronger now rather than weaker: `tests/whatkey.py` reports `ControlJ` for ctrl+enter against
+`ControlM` for enter, so this console separates them and the situation the criterion describes
+has still never occurred here. Revisit when axiom first runs somewhere it does.
+
+**One defect, found on the first row that needed a second line, and it was the issue's central
+criterion.** A pass that had been run before the merge would have found the same thing; a pass
+that was never run would have shipped it. The 21 test-proved criteria were all sound - what
+failed was the one thing the tests had said in writing they could not reach.
