@@ -24,13 +24,28 @@ cycles resolving each other's conflicts.
 | 16 | [#60](https://github.com/kaushikhazra/axiom/issues/60) formatted replies | `60-rendered-replies` | **done** - merged in PR #69, 6 cycles, 2h40m, all 29 criteria. **Seven real defects across two cold reads**, six of them found by feeding hostile input to a modelled terminal rather than by reading code. AC 7 was not met at all - every paragraph longer than the window was drawn on screen twice, while the recorded evidence for it stayed true |
 
 | 17 | [#77](https://github.com/kaushikhazra/axiom/issues/77) the look of it | `77-look` | **done** - merged in PR #79, 8 cycles, all 37 criteria. Ran **outside** the queue, which was empty at the time; recorded here so the row order stays a full history |
-| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **running** - restarted 2026-09-02 01:35, fail-safe **2026-09-02 04:00 +0530**. 8 cycles spent outside the queue; cycle 9 took it to 19 of the 23 a test can reach, and filed [#83](https://github.com/kaushikhazra/axiom/issues/83) |
-| 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | queued |
+| 18 | [#80](https://github.com/kaushikhazra/axiom/issues/80) a message of more than one line | `80-multiline` | **done, unmerged** - 10 cycles, 5h19m (2026-09-01 20:46 → 2026-09-02 02:05). **21 criteria by test, 15 by Kaushik** - never added up. Nineteen tests deleted after they crashed the machine twice; two vacuous tests found by breaks; filed [#83](https://github.com/kaushikhazra/axiom/issues/83). **Cycle 8 has no log - the machine went down during it**, and its tests were committed by the cycle that followed. Merge waits on `manual-pass.md` |
+| 19 | [#76](https://github.com/kaushikhazra/axiom/issues/76) an indented code block in full | `76-indented-code` | **running** - started 2026-09-02 02:15, fail-safe **2026-09-02 06:15 +0530** |
 | 20 | [#81](https://github.com/kaushikhazra/axiom/issues/81) an MCP server already running elsewhere | `81-remote-mcp` | queued |
 
-**The queue is running again, from row 18.** Rows 1 to 17 are done. The cron was deleted at
-the last handover, correctly - there was no chain left to end - and has been recreated for
-this run. See **Handing over** for why it must not be deleted again until row 20 finishes.
+**The queue is running, on row 19.** Rows 1 to 18 are done. The cron was deleted at the last
+handover, correctly - there was no chain left to end - and has been recreated for this run.
+See **Handing over** for why it must not be deleted again until row 20 finishes.
+
+**Row 18 left two things behind that rows 19 and 20 inherit.** `.claude/loop/cited.py` reads
+which criteria a test file actually claims, by parsing first lines rather than grepping - two
+greps were wrong about this in opposite directions, one cycle apart. And row 18's own lesson,
+which is not about multi-line messages at all: **three of the four criteria it examined in its
+last cycle had tests measuring something adjacent to what they claimed.** A count satisfied by
+the feature doing nothing, an assertion about a string nothing ever typed, and two criteria
+naming a status code whose tests asserted a substring. Every one was found by a break and none
+by reading.
+
+**Branching, and why row 19's branch is not simply off `master`.** `feature/76-indented-code`
+starts at `master` — row 18's code is unmerged and must not ride along — but `.claude/loop/`
+was carried over from `feature/80-multiline`, because this file and #80's records are the
+loop's own bookkeeping and have to travel or the chain loses its place. Code from `master`,
+bookkeeping from the previous row. Row 20 does the same.
 
 **Rows 18 to 20 are ordered by what is nearly finished, then by blast radius.** #80 has eight
 cycles behind it and a handful of criteria left, none needing a key press. #76 changes one
