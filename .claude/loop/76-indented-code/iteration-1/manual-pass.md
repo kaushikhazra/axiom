@@ -49,3 +49,38 @@ criterion (AC 3) rather than a preference. The alternatives, in order of least s
 
 #72, #73 and #74 are all still waiting on a manual pass, and all three are the same renderer.
 Worth doing in one sitting.
+
+---
+
+## What happened — 2026-09-02
+
+**Driven by hand by Kaushik. Everything satisfies.** This one sitting covers **#76, #72 and
+#73**: they are the same renderer, and the build was `feature/76-indented-code`, which sits
+directly on the master already carrying #72, #73 and #77. 892 tests green in 82s beforehand.
+
+One reply carried all four shapes at once - an indented block, a fenced block beside it, a
+three-level nested list, and an over-wide quote - then the same prompt at half the window
+width, then again under `--no-render` for comparison.
+
+| | Verdict |
+|---|---|
+| Indented block reaches the end of every line, at full and half width | pass |
+| Wraps at the block's own indent rather than column zero | pass |
+| Indented and fenced blocks both read as blocks, neither painted | pass |
+| Nesting: three levels, three indents, shallower returns to its own level | pass |
+| Wide quote wraps with its marker carried onto continuation lines | pass |
+| Streaming draws once - no flicker, nothing redrawn shorter | pass |
+| Words and their order identical against `--no-render` | pass |
+
+**The judgement is answered: an unpainted indented block does read as a block.** Cycle 2
+reasoned it would, from #77 AC 20's position that a block nobody can lex is delimited rather
+than coloured. Seen on a real terminal, the indent is enough. #76 AC 3 holds as built, and
+neither of the alternatives - dimming it, or painting it and reopening #77 AC 20 for fenced
+blocks too - is needed.
+
+**The two measured-and-left items stand unchanged.** The whitespace-only line is erased before
+it reaches the screen, and wide characters are still sliced by character rather than by cell -
+a CJK block can spill a column. No criterion covers it; it remains untested rather than solved.
+
+**#74 is still owed a pass.** It is the scheduler, not the renderer, so it was not part of this
+sitting.

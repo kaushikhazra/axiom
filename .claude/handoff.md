@@ -1,33 +1,57 @@
-# Handoff — three features built and unmerged, five manual passes owed
+# Handoff — axiom is installable by strangers; three manual passes left
 
-Rewritten 2026-09-02 at 04:40, before a restart, at the end of an unattended queue run that
-took rows 18 to 20 between 01:35 and 04:30.
-
-**The next session's job is a manual pass, not more building.** Everything below is green,
-break-proven and committed. None of it has been watched running by a person, and that is the
-only thing standing between it and `master`.
+Rewritten 2026-09-02 at the end of a session that did two things: **published axiom**, and
+**cleared the renderer's manual pass**. Nothing is scheduled and nothing is running.
 
 ## Where things stand
 
-`master` is at `936fd1e` and has not moved. **Six branches are committed and unpushed** — a
-reboot does not lose them, they are local commits, but nothing off this machine has a copy.
+`master` is at **3b9e478 plus this commit, pushed**, and green: **892 passed, 1 deselected,
+~82s**. `tests/baseline/transcript.txt` has not moved.
 
 | branch | issue | state |
 |---|---|---|
-| `feature/81-remote-mcp` | [#81](https://github.com/kaushikhazra/axiom/issues/81) MCP server by address | 25/25 break-proven, 4 cycles |
-| `feature/76-indented-code` | [#76](https://github.com/kaushikhazra/axiom/issues/76) indented code block | 13/13 break-proven, 2 cycles |
-| `feature/80-multiline` | [#80](https://github.com/kaushikhazra/axiom/issues/80) multi-line message | **21 by test, 15 by a person** |
-| `feature/74-scheduled-prompts` | [#74](https://github.com/kaushikhazra/axiom/issues/74) | merged to master already; branch left behind |
-| `feature/73-nested-lists` | [#73](https://github.com/kaushikhazra/axiom/issues/73) | merged already; branch left behind |
-| `feature/72-wide-lines` | [#72](https://github.com/kaushikhazra/axiom/issues/72) | merged already; branch left behind |
+| `feature/80-multiline` | [#80](https://github.com/kaushikhazra/axiom/issues/80) | 21 by test, **15 owed by hand**, unmerged |
+| `feature/81-remote-mcp` | [#81](https://github.com/kaushikhazra/axiom/issues/81) | 25/25 by test, **partly seen today**, unmerged |
 
-The suite on `feature/81-remote-mcp` is **912 passed, 1 deselected, ~128s**. On `master` it is
-876. `tests/baseline/transcript.txt` has not moved in seventeen cycles across five issues.
+Everything else that was outstanding is merged. #72, #73 and #76 are **closed**.
 
-**Nothing is scheduled and nothing is running.** The queue's cron was deleted at its last
-handover, which is the one place that is right — `.claude/loop/queue.md` explains why.
+## What happened today
 
-## Start here
+**1. axiom is public and installable.** A `README.md` is on `master` and is the repo's front
+page; the description and eight topics are set. The install is three commands on a machine
+with nothing on it, and uv brings its own Python:
+
+```
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv tool install --python 3.12 https://github.com/kaushikhazra/axiom/archive/refs/heads/master.zip
+axiom
+```
+
+Every command in the README was run before it was written, and **two would have been wrong
+from memory**:
+
+- `uv tool upgrade` reports *"nothing to upgrade"* for a URL install and never re-fetches.
+  Updating is `uv tool install --force`.
+- `git+https://` needs a git binary a fresh machine does not have. The archive URL does not.
+
+**2. Sitting 1 is done — #72, #73 and #76 in one pass.** Same renderer, one build, one reply
+carrying an indented block, a fenced block beside it, a three-level nested list and an
+over-wide quote; checked at full width, at half, and against `--no-render`. **Everything
+satisfies.** The judgement a test could not make is answered: **an unpainted indented block
+does read as a block**, so #76 AC 3 holds as built and #77 AC 20 stands unchanged. Record in
+`.claude/loop/76-indented-code/iteration-1/manual-pass.md`.
+
+**3. #81 was seen against a real server**, which localhost could never show. `deepwiki` at
+`https://mcp.deepwiki.com/mcp` - third-party, public, no auth, streamable HTTP - attached
+through axiom's own `Servers`, declared three tools, and answered correctly. That is **row 1
+of #81's manual pass, genuinely satisfied**. Two incidental findings:
+
+- A repo DeepWiki had not indexed came back **named, with the reason, session alive** - the
+  closest thing yet to evidence for AC 13.
+- **Three remote tools cost ~307 tokens on every request** (1250 with nothing attached, 1557
+  with deepwiki). First real number behind the `"tools": [...]` filter.
+
+## Start here tomorrow
 
 ```
 cd C:\Projects\.tmp\axiom-manual
@@ -35,70 +59,62 @@ uv run --project C:/Projects/axiom axiom
 ```
 
 **`--project`, not `--directory`.** `--directory` moves the working directory into the repo,
-which CLAUDE.md's tool-testing rule forbids, and then needs `--working-directory` to undo.
+which CLAUDE.md's tool-testing rule forbids.
 
-Each branch carries its own checklist, written by the loop that built it:
+The deepwiki config from today is parked at `.axiom/mcp.json.bak` in that folder - rename it
+back to `mcp.json`. It needs `feature/81-remote-mcp` checked out; `address` does not exist on
+`master`.
 
-- `.claude/loop/80-multiline/iteration-1/manual-pass.md` — **fifteen criteria**, all key
-  presses and pastes
-- `.claude/loop/76-indented-code/iteration-1/manual-pass.md` — one judgement: does an
-  unpainted indented block still read as a block
-- `.claude/loop/81-remote-mcp/iteration-1/manual-pass.md` — everything tested is 127.0.0.1;
-  what is owed is a real server over a real network
+**Two checks were agreed for tomorrow and not done**, both flagged in #81's file as most
+likely to look settled and not be:
 
-**#72, #73 and #74 are still owed a pass from before**, and #72, #73 and #76 are all the same
-renderer. Worth one sitting.
+- **AC 13** - ask deepwiki something and kill the wifi mid-call. Named, reasoned, session
+  alive.
+- **AC 17's judgement** - add `"address": "http://127.0.0.1:9999/mcp"` and restart. You get
+  the not-encrypted line *and* a connection failure. **Is that warning useful, or noise you
+  would learn to skip?** If noise, the criterion changes, and that is Kaushik's to change.
 
-## The order that costs least
+## What is still owed
 
-1. **#76 and #72/#73 together** — one build, one renderer, one look.
-2. **#80** — the key presses. Its fifteen are the longest list and the only ones a test can
-   never reach.
-3. **#81** — needs a real remote MCP server, so it is the one that needs something you do not
-   have on the machine.
+| | |
+|---|---|
+| **#74** | merged already, **owed a manual pass**. The scheduler, not the renderer, so sitting 1 did not touch it. Cheapest one left - no build needed. |
+| **#80** | 15 by hand on a real terminal. The longest list, and the only ones a test can never reach. |
+| **#81** | rows 2-5: slow connection, dropped mid-call, certificate or proxy, nothing left connected on exit. |
 
-Merge each as it passes. Nothing was merged by the loop, deliberately.
+## Two decisions still waiting
 
-## Two decisions waiting
+**#80 AC 6** - *"on a terminal that cannot report ctrl+enter separately from enter…"* Real,
+unimplemented, unverifiable on this console, which reports the key fine (`0a` against `0d`).
+Kept unstruck because striking renumbers thirty criteria, and cycle 7 spent a whole cycle
+repairing eleven citations after the last renumbering. Becomes real on Linux or macOS.
 
-**#80 AC 6** — *"on a terminal that cannot report ctrl+enter separately from enter…"* Real,
-unimplemented, and unverifiable on your console, which reports the key fine. Kept in the issue
-rather than struck, because striking means renumbering thirty criteria and cycle 7 spent a whole
-cycle repairing eleven citations after the last renumbering. It becomes real the first time
-axiom runs on Linux or macOS.
+**#81 AC 17** - see above. Now testable both ways, since today produced an `https` run with no
+warning to compare against.
 
-**#81 AC 17** — the loop decided *told, not refused*, and *told for every `http://` including
-localhost*. The thing to judge in use is whether the line is noise. If every local run says
-`far: http://127.0.0.1:9000/mcp is not encrypted`, that is a warning people learn to skip. If it
-reads that way to you, the criterion changes — and that is yours to change.
+## Two things that are not built, and are worth knowing why
 
-## Two issues this run opened
+**Google and Slack do not exist in `src/axiom/`, and cannot yet.** Gmail, Drive, Calendar and
+Slack all publish remote MCP servers, but every one is OAuth, and `ServerSpec` carries
+`command`, `args`, `env`, `tools` and `address` - **no headers, no token, no browser flow.**
+That is why today's demo had to use a no-auth server. [#82](https://github.com/kaushikhazra/axiom/issues/82)
+is the capability that unblocks all four; after it they are configuration, not code. Not
+started.
 
-- **[#83](https://github.com/kaushikhazra/axiom/issues/83)** — scheduling anything silently
-  switches multi-line input off. `read_line`'s timed path never consults the composer, so a user
-  with a job set gets the old single-line reader and is told nothing. Seventeen criteria; the
-  four that matter are about a job firing while a message is half-written.
-- **[#82](https://github.com/kaushikhazra/axiom/issues/82)** — browser auth, from the earlier
-  conversation about Gmail, Drive, Calendar and Slack. Not started.
+**There is still no permission gate.** `run_command` runs whatever the model asks with no list
+of allowed programs, and `outside()` is visibility only - it reports a path beyond the working
+directory and does not refuse it. **This got sharper today, not softer:** the repo is public
+and installs in three commands. The README says so plainly, which is honesty, not a fix.
+**No issue exists for it.** #82 would store account access on top of it, so the order of those
+two is a real decision.
 
 ## One rule that must not be forgotten
 
-**No test builds a `prompt_toolkit` session** — not a `PromptSession`, not a
+**No test builds a `prompt_toolkit` session** - not a `PromptSession`, not a
 `create_pipe_input`, not a key processor. Nineteen did, and running them took this machine down
 **twice**. `_say_how_to_send` calls `run_in_terminal`, which writes to the *real* console rather
-than the `DummyOutput` a test supplies, so a test feeding `ctrl+enter` reaches out of pytest and
-into the session that launched it. All nineteen were deleted in `32daf51`.
+than the `DummyOutput` a test supplies, so a test feeding `ctrl+enter` reaches out of pytest
+and into the session that launched it. All nineteen were deleted in `32daf51`.
 
-It is written in `tests/test_multiline.py`'s docstring, in `tests/conftest.py`, and in the
-queue's **Standing**, because the next session will not remember the crash.
-
-## What the run is actually evidence for
-
-Not the loop — **the break**. Across three rows it found five tests that could not have failed,
-thirteen no-op breaks, and two real defects in shipped code. Not one came from reading a diff.
-The details are in `.claude/loop/queue.md` under the empty-queue note, and in each row's cycle
-logs.
-
-The open problem it leaves: **a break that applies cleanly and changes no behaviour prints
-exactly what a surviving test prints.** The only thing that has ever caught one is asking why it
-stayed green.
+Written in `tests/test_multiline.py`'s docstring and in `tests/conftest.py`, because the next
+session will not remember the crash.
