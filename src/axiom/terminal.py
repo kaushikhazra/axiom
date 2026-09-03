@@ -689,40 +689,46 @@ def _say_how_to_send() -> None:
     run_in_terminal(lambda: say("enter sends, ctrl+enter starts another line"))
 
 
-def compose(source=None, sink=None) -> str:
-    """A message, however many lines it has (#80 AC 1, AC 2, AC 3).
+def compose_keys():
+    """What each key does while a message is being written (#80 AC 2, AC 3).
 
-        enter        c-m            send it
-        ctrl+enter   escape, c-j    start another line
+        enter        c-m                  send it
+        ctrl+enter   c-j, escape+c-j      start another line
+        ctrl+c       c-c                  throw it away, or leave
 
-    **`"c-enter"` is not a key, and binding it finds nothing.** On Windows
-    ctrl+enter arrives as a line feed with the control state set, and
-    prompt_toolkit turns that into escape-then-ControlJ - the VT100 convention
-    for a meta-modified key. It maps carriage return to ControlM and line feed
-    to ControlJ, then prefixes ControlJ with Escape when either control key is
-    down. Read out of `prompt_toolkit/input/win32.py`; quoted in full in
-    `.claude/loop/80-multiline/iteration-1/logs/cycle-1.md`.
+    **`"c-enter"` is not a key, and binding it finds nothing.** Ctrl+enter
+    arrives as a line feed where enter arrives as a carriage return, so what is
+    bound is ControlJ against ControlM.
 
-    A consequence worth knowing rather than discovering: **ctrl+enter and
-    ctrl+J are the same bytes to the console**, so they are the same key to
-    anything reading it. Nothing can separate them. Ctrl+J is not otherwise
-    used here, so the collision costs nothing - but it is a decision, not an
-    accident.
+    **It is bound twice, because prompt_toolkit has two Windows readers and they
+    deliver it differently.** `Win32Input.__init__` picks between them on
+    `_is_win_vt100_input_enabled()`, which is true whenever the console merely
+    *accepts* `ENABLE_VIRTUAL_TERMINAL_INPUT` - so every modern console takes
+    the VT branch, conhost included:
 
-    `multiline=True` is what lets the buffer hold a second line at all. With
-    it, prompt_toolkit's own default is the opposite of this - enter inserts
-    and escape-enter accepts - so both bindings are stated rather than one.
+        ConsoleInputReader        escape, c-j   ctrl state set, so Escape is
+                                                prefixed the way a VT100 marks
+                                                a meta-modified key
+        Vt100ConsoleInputReader   c-j           a bare line feed; the modifier
+                                                is not encoded and there is
+                                                nothing to prefix
 
-    `source` and `sink` exist for tests. prompt_toolkit's `create_pipe_input`
-    delivers key presses without a terminal, which proves what axiom does with
-    a key - **not** that this console delivers it. That second half is the
-    manual pass's, and it is why AC 2 and AC 3 stay off the proved list.
+    **Binding only the pair is how #80 shipped broken.** A bare ControlJ matched
+    nothing, fell through to prompt_toolkit's own `c-j` default - which does
+    `key_processor.feed(KeyPress(ControlM, "\\r"), first=True)` - and landed on
+    the send binding below. Ctrl+enter sent the message. Found by hand in the
+    manual pass, on the first row that needed a second line; `tests/whatkey.py`
+    names the reader and prints the key.
 
-    Imported here rather than at module scope: a piped run must not pay to
-    load a library it never reaches.
+    A consequence worth knowing rather than discovering: **ctrl+enter and ctrl+J
+    are the same bytes to the console**, so they are the same key to anything
+    reading it. Nothing can separate them. Ctrl+J is not otherwise used here, so
+    the collision costs nothing - but it is a decision, not an accident.
+
+    Separated from `compose` so the table can be read without building a
+    session. A `KeyBindings` is not a `PromptSession`, a pipe input or a key
+    processor, so inspecting it is inside the rule those three are outside of.
     """
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.formatted_text import ANSI
     from prompt_toolkit.key_binding import KeyBindings
 
     keys = KeyBindings()
@@ -731,6 +737,7 @@ def compose(source=None, sink=None) -> str:
     def _send(event) -> None:
         event.current_buffer.validate_and_handle()
 
+    @keys.add("c-j")
     @keys.add("escape", "c-j")
     def _newline(event) -> None:
         _say_how_to_send()
@@ -767,9 +774,33 @@ def compose(source=None, sink=None) -> str:
         # cosmetic argument would be trading a real check for no gain.
         event.app.exit(exception=KeyboardInterrupt)
 
+    return keys
+
+
+def compose(source=None, sink=None) -> str:
+    """A message, however many lines it has (#80 AC 1, AC 2, AC 3).
+
+    `multiline=True` is what lets the buffer hold a second line at all. With it,
+    prompt_toolkit's own default is the opposite of what #80 asks for - enter
+    inserts and escape-enter accepts - so every binding in `compose_keys` is
+    stated rather than left to a default.
+
+    `source` and `sink` exist for tests. prompt_toolkit's `create_pipe_input`
+    delivers key presses without a terminal, which proves what axiom does with
+    a key - **not** that this console delivers it. That second half is the
+    manual pass's, and it is why AC 2 and AC 3 stay off the proved list. The
+    manual pass then found that no console delivered what the tests were
+    feeding; see `compose_keys`.
+
+    Imported here rather than at module scope: a piped run must not pay to
+    load a library it never reaches.
+    """
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.formatted_text import ANSI
+
     session = PromptSession(
         multiline=True,
-        key_bindings=keys,
+        key_bindings=compose_keys(),
         input=source,
         output=sink,
         prompt_continuation=_compose_continuation(),
