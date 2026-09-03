@@ -168,6 +168,44 @@ def test_the_hook_is_not_consulted_without_a_terminal(capsys, monkeypatch, choic
 # --- the reader --------------------------------------------------------------
 
 
+def test_ctrl_enter_is_bound_for_both_of_prompt_toolkits_windows_readers():
+    """No criterion. A regression guard for the defect the manual pass found.
+
+    **This claims no AC on purpose.** AC 2 is "pressing ctrl+enter starts a new
+    line within the message and does not send it", and that is about a console
+    delivering a key. Nothing here presses anything - it reads a binding table.
+    Citing AC 2 would put it on the proved list and it would be the fourth test
+    in this issue to claim something adjacent to what it measures.
+
+    What it does guard is exactly what broke. `Win32Input.__init__` chooses
+    between two readers on `_is_win_vt100_input_enabled()`, and they deliver
+    ctrl+enter differently - `escape, c-j` from `ConsoleInputReader`, a bare
+    `c-j` from `Vt100ConsoleInputReader`. Only the pair was bound. Every test in
+    this file fed the pair through `create_pipe_input` and passed, while the
+    console sent the bare key, which matched nothing, fell through to
+    prompt_toolkit's own `c-j` default - `feed(KeyPress(ControlM, "\\r"))` - and
+    reached the send binding. Ctrl+enter sent the message on every Windows
+    console there is.
+
+    A `KeyBindings` is not a `PromptSession`, a pipe input or a key processor,
+    which is why this is allowed to exist at all. Read `compose_keys`, run
+    `tests/whatkey.py`, and do not delete either binding.
+    """
+    from prompt_toolkit.keys import Keys
+
+    keys = terminal.compose_keys()
+
+    assert keys.get_bindings_for_keys((Keys.ControlJ,)), (
+        "a bare ControlJ is unbound - Vt100ConsoleInputReader's ctrl+enter sends"
+    )
+    assert keys.get_bindings_for_keys((Keys.Escape, Keys.ControlJ)), (
+        "escape+ControlJ is unbound - ConsoleInputReader's ctrl+enter does nothing"
+    )
+    assert keys.get_bindings_for_keys((Keys.ControlM,)), (
+        "ControlM is unbound - enter no longer sends"
+    )
+
+
 def test_a_continuation_line_is_marked_as_still_being_written(monkeypatch):
     """#80 AC 23, and **only** AC 23.
 
