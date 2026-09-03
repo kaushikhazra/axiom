@@ -957,45 +957,20 @@ def end_turn() -> None:
     the turn is genuinely over - not after each tool round, which would break
     a single turn into pieces that look like separate ones.
 
-    This is also where the turn's tools are accounted for (#77 AC 24). Here
-    rather than at the end of the tool rounds, because a turn can go
-    model -> tool -> model -> tool, and the criterion asks for one line when the
-    *turn* finishes rather than one per round. **The counters are reset here
-    whatever happened**, including on the failure path - every route out of a
-    turn passes through this function, and a count that survived one would be
-    added to the next turn's.
+    **The counters are reset here whatever happened**, including on the failure
+    path - every route out of a turn passes through this function, and a count
+    that survived one would be added to the next turn's.
+
+    **The line counting the turn's tools used to be drawn here** (#77 AC 24).
+    #85 AC 15 removes it: the calls and their results are on screen as they
+    happen, so a count is a summary of something the user can already see, and
+    AC 16 - a turn's tools being countable - is satisfied by the lines
+    themselves.
     """
-    global _tool_runs, _tool_failures, _tools_summarised
+    global _tool_runs, _tool_failures
     _stop_working()
-    # Normally already drawn, above the answer, by `show_piece`. This is the
-    # turn that never produced another word - out of rounds, or interrupted -
-    # where without it the tools that ran would go unmentioned entirely.
-    _summarise_tools()
-    _tool_runs, _tool_failures, _tools_summarised = 0, 0, False
+    _tool_runs, _tool_failures = 0, 0
     print()
-
-
-def _summarise_tools() -> None:
-    """The turn's tools, in one line, once (#77 AC 24, AC 25, AC 26).
-
-    Guarded by a flag rather than by where it is called from: two callers reach
-    it - the first fragment of the answer, and the end of a turn that produced no
-    answer - and a turn must not be able to get two lines out of them.
-    """
-    global _tools_summarised
-    if _tools_summarised or not _tool_runs:
-        # AC 25: nothing at all for a turn that called none, which is what makes
-        # the line mean something when it does appear.
-        return
-    if not _rendering or not sys.stdout.isatty():
-        return
-    _tools_summarised = True
-    word = "tool" if _tool_runs == 1 else "tools"
-    failed = f", {_tool_failures} failed" if _tool_failures else ""
-    print(_grey(f"  ·  {_tool_runs} {word}{failed}"))
-
-
-_tools_summarised = False
 
 
 # Lines of a fenced block kept as context for highlighting the next one. See
@@ -1727,22 +1702,18 @@ def show_piece(text: str) -> None:
     if not _rendering or not sys.stdout.isatty():
         print(text, end="", flush=True)
         return
-    # #77 AC 24: the turn's tools are accounted for **before** the answer they
-    # produced, not after it.
+    # **A tool line is never drawn from here any more.** #77 AC 24 put the
+    # turn's count above the answer it explained, and this was where it fired -
+    # on the first fragment of reply following any tool call, so a turn going
+    # model -> tool -> model -> tool still got one line rather than one a round.
     #
-    # It used to be drawn in `end_turn`, which put it below the answer and
-    # between two blank lines - so it read as belonging to the next prompt, and
-    # you learned what the answer rested on only after you had read it. Driven by
-    # hand on 2026-09-01: a turn that ran one tool and answered "I do not have a
-    # tool available" showed `·  1 tool` underneath, and nothing on screen
-    # resolved the contradiction until you scrolled back to look at it again.
-    #
-    # Here rather than at the end of the tool rounds because a turn can go
-    # model -> tool -> model -> tool: this fires on the first fragment of reply
-    # that follows any tool call, which is one line per turn wherever the rounds
-    # fall. `end_turn` still draws it if a turn ended without another word - out
-    # of rounds, or interrupted - so it is never simply lost.
-    _summarise_tools()
+    # #85 draws each call and each result as it happens instead, which puts them
+    # above the answer for the same reason and without a placement rule: a
+    # result printed when it arrives cannot land under the answer it produced.
+    # The problem that placement was solving is still real and is now solved by
+    # ordering rather than by timing - a turn that ran one tool and answered "I
+    # do not have a tool available" shows the call, the result, and then the
+    # contradiction, in that order.
     if _reply is None:
         _reply = Rendered()
     _reply.feed(text)
@@ -1768,12 +1739,68 @@ def end_reply() -> None:
 TOOL_OUTPUT_LIMIT = 2000
 
 
-def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> None:
-    """What is about to run, before it runs.
+TOOL_MARK = "·"  # a tool call, or a result that came back
+FAIL_MARK = "×"  # a result that came back an error (#85 AC 10)
+
+# How many rows of a result reach the screen before the rest becomes a count.
+#
+# **Three, because one was not enough and it was the schedule that proved it.**
+# `schedule_prompt` answers in three lines - what was scheduled, that schedules
+# last only as long as the session, and that a repeating job stops after seven
+# days - and flattening those into a single row cuts the last two off on any
+# terminal under about 110 columns. #74 AC 8 and AC 19 are exactly the two that
+# would have been lost, which are exactly the two the model got wrong on
+# 2026-09-03. A result keeps the shape the tool gave it; only the tail is a
+# count.
+TOOL_RESULT_ROWS = 3
+
+
+def _called(name: str, arguments) -> str:
+    """A call as one string, whatever shape the arguments arrived in.
 
     Values are shown as they are, not repr'd: a Windows path through repr()
     comes out with every backslash doubled, which is not what the user typed
     and not what they would type to check it.
+    """
+    if isinstance(arguments, dict):
+        detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
+    else:
+        # A call announced as text can carry anything at all. Show it as it
+        # came - running it is what reports that it cannot be used.
+        detail = str(arguments)
+    return f"{name}({detail})"
+
+
+def _tool_row(mark: str, text: str) -> None:
+    """One tool line, cut to one row of this terminal (#85 AC 6, AC 8).
+
+    **One row, never two.** A turn that calls three tools leaves six lines, and
+    the moment any of them wraps the block stops being countable at a glance -
+    which is AC 16, and the reason the cut is here rather than left to the
+    terminal.
+
+    Whitespace is collapsed before measuring, so a result that arrived as three
+    lines is one. The `…` says something was left out; without it a cut result
+    reads as the whole of a short one, which is the failure mode #77 AC 26 was
+    trying to avoid by showing nothing at all.
+    """
+    flat = " ".join(text.split())
+    room = _width() - len(f"  {mark}  ") - 1
+    if room > 1 and len(flat) > room:
+        flat = flat[: room - 1] + "…"
+    print(_grey(f"  {mark}  {flat}"))
+
+
+def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> None:
+    """What is about to run, before it runs (#85 AC 2, AC 3, AC 4, AC 5).
+
+    **This used to show nothing at a terminal.** #77 AC 22 and AC 26 took the
+    per-call detail off the screen and left one line counting how many tools
+    ran, and driving #74's manual pass on 2026-09-03 showed what that costs: a
+    model scheduled a job, told the user it would "repeat indefinitely", and the
+    tool result saying it stops after seven days went to the model and nowhere
+    else. Nothing on screen could contradict it. #85 replaces the count with the
+    calls and their results, and supersedes #77 AC 24 and AC 26.
 
     `outside` names paths that land outside the working directory, resolved
     (#41 AC 6). Shown on its own line rather than folded into the arguments,
@@ -1781,21 +1808,19 @@ def note_tool(name: str, arguments: dict, outside: list[str] | None = None) -> N
     actually lands is a different fact. Visibility only - nothing is blocked.
     """
     global _tool_runs
+    called = _called(name, arguments)
     if _rendering and sys.stdout.isatty():
-        # #77 AC 22: nothing per call. What the user gets instead is AC 23 - a
-        # line saying something is running, which is taken back the moment the
-        # result arrives. A tool phase is seconds long and a silent pause reads
-        # as a hang, which `note_starting` already says out loud.
         _tool_runs += 1
+        _stop_working()
+        _tool_row(TOOL_MARK, called)
+        for path in outside or []:
+            _tool_row(TOOL_MARK, f"outside the working directory: {path}")
+        # AC 3 is that the call is on screen before the result. The transient
+        # line under it is #77 AC 23, which #85 leaves alone: a tool phase is
+        # seconds long and a silent pause reads as a hang.
         _start_working(name)
         return
-    if isinstance(arguments, dict):
-        detail = ", ".join(f"{key}={value}" for key, value in arguments.items())
-    else:
-        # A call announced as text can carry anything at all. Show it as it
-        # came - running it is what reports that it cannot be used.
-        detail = str(arguments)
-    say(f"{name}({detail})")
+    say(called)
     for path in outside or []:
         say(f"outside the working directory: {path}")
 
@@ -1856,10 +1881,16 @@ def note_round_limit(rounds: int) -> None:
 def show_tool_result(result: str) -> None:
     """A tool's output, marked so it cannot be read as the model's answer.
 
-    At a terminal this shows **nothing** (#77 AC 26). The per-call detail leaves
-    the screen entirely and one summary line replaces the lot; the detail is
-    bound for a log, which is its own piece of work. What happens here instead is
-    that the transient line is taken back and the outcome is counted.
+    **One line at a terminal, under the call it answers** (#85 AC 7, AC 8,
+    AC 10). This showed nothing between #77 and #85, and what that cost is in
+    `note_tool`'s docstring: the model became the only account of what a tool
+    said, and on 2026-09-03 it gave the wrong one.
+
+    A failure is marked rather than coloured. #77 AC 29 sets a failure apart by
+    the stream it goes to, which is right for a failure of axiom's; a tool that
+    returns an error is an ordinary outcome of a turn that carries on, so it
+    stays on stdout and is set apart by `FAIL_MARK`. A marker survives
+    `NO_COLOR`, which a colour would not.
 
     Not at a terminal it is unchanged, which is what keeps the golden transcript
     still and AC 33 true.
@@ -1869,8 +1900,19 @@ def show_tool_result(result: str) -> None:
         _stop_working()
         # The convention every tool already follows for a failure, and the one a
         # user would recognise: a result that opens by saying it is an error.
-        if result.startswith("error:"):
+        failed = result.startswith("error:")
+        if failed:
             _tool_failures += 1
+        mark = FAIL_MARK if failed else TOOL_MARK
+        # AC 9: a tool that returned nothing still gets a line. Silence here
+        # would be indistinguishable from a tool that never ran, and the pairing
+        # of call and result is what makes the block countable.
+        rows = [row for row in result.splitlines() if row.strip()] or ["(nothing)"]
+        for row in rows[:TOOL_RESULT_ROWS]:
+            _tool_row(mark, row)
+        left = len(rows) - TOOL_RESULT_ROWS
+        if left > 0:
+            _tool_row(mark, f"… {left} more line{'' if left == 1 else 's'}")
         return
     shown = result[:TOOL_OUTPUT_LIMIT]
     for line in shown.splitlines() or [""]:
