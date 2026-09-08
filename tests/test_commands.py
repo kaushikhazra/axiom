@@ -163,3 +163,50 @@ def test_a_cancelled_command_does_not_swallow_the_interrupt():
         mp.setattr(subprocess.Popen, "communicate", interrupt_the_first_wait)
         with pytest.raises(KeyboardInterrupt):
             run(f'{PYTHON} -c "print(1)"')
+def test_a_command_is_handed_no_input_to_read():
+    """The child gets DEVNULL, never axiom's own stdin.
+
+    Asserted on the call rather than on the outcome, because the outcome cannot
+    tell the two apart here: pytest already points this process's fd 0 at
+    nothing, so a child that inherited it would *also* see end-of-input and the
+    test would pass against the bug. Under a real session fd 0 is the console,
+    which is where this goes wrong.
+    """
+    seen = {}
+    real_popen = subprocess.Popen
+
+    def remember(*args, **kwargs):
+        seen.update(kwargs)
+        return real_popen(*args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(subprocess, "Popen", remember)
+        run(f'{PYTHON} -c "print(1)"')
+
+    assert seen.get("stdin") is subprocess.DEVNULL, (
+        "the command inherited axiom's stdin - a program that reads a line will "
+        "wait for one nobody is typing, and burn the whole limit doing it"
+    )
+
+
+def test_a_command_that_reads_input_ends_instead_of_waiting():
+    """Found in #74's manual pass, and it cost ninety seconds of one turn.
+
+    The model asked for `date`, which on Windows prints the date and *then* asks
+    for a new one. With axiom's console behind it there was nothing to read and
+    nobody watching, so it sat until the limit and the model was told the
+    command had been **slow** - when what it had been was blocked.
+
+    A short limit here on purpose: a regression does not fail this by returning
+    the wrong string, it fails it by taking the limit to say so.
+    """
+    started = time.monotonic()
+    result = run(
+        f'{PYTHON} -c "import sys; print(len(sys.stdin.read()))"',
+        tools.Limits(command_timeout=5),
+    )
+    elapsed = time.monotonic() - started
+
+    assert "0" in result, "the command was given something to read"
+    assert "stopped" not in result, "it waited for input instead of ending"
+    assert elapsed < 5, "it blocked on a read nobody was going to answer"

@@ -915,7 +915,22 @@ def take_back_prompt() -> None:
 
     Only the row the prompt is on. Nothing already in the scrollback is touched,
     which is the same promise `_erase` makes for a line being typed.
+
+    **Nothing already written to a file can be taken back**, which is why this
+    is two behaviours rather than one. Redirected, the escape is not a cursor
+    move but four bytes of rubbish, and #74's pass caught them: every scheduled
+    turn in the transcript read `[Kaxiom: scheduled - ...`, with the `> ` it
+    meant to erase still there. A newline is the honest version of the same
+    intent - the turn starts on its own row, and the stranded `> ` above it is
+    the "untidy but not wrong" this docstring already weighed and accepted.
+
+    The guard is `isatty` alone. Rendering and colour are decoration and this is
+    not: `--no-render` at a real console still draws a prompt, and a prompt that
+    was drawn still has to be taken back.
     """
+    if not sys.stdout.isatty():
+        print()
+        return
     print("\r\x1b[K", end="", flush=True)
 
 

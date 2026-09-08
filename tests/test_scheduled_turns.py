@@ -179,3 +179,36 @@ def test_a_scheduled_turn_says_so_in_axioms_own_voice(capsys):
     out = capsys.readouterr().out
     assert out.startswith(terminal.VOICE)
     assert "check the deploy" in out, "the user cannot see what was asked"
+# --- taking the prompt back, for real -------------------------------------
+#
+# Every test above stubs `take_back_prompt`, which is how it shipped printing a
+# cursor escape down a pipe. These two call the real one.
+
+
+def test_the_prompt_is_erased_at_a_terminal(capsys, monkeypatch):
+    """A cursor move is what a console needs: the row is reused, not skipped."""
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    terminal.take_back_prompt()
+
+    printed = capsys.readouterr().out
+    assert printed == "\r\x1b[K"
+
+
+def test_nothing_is_erased_into_a_file(capsys, monkeypatch):
+    """Redirected, the same escape is four bytes of rubbish - #74's pass caught
+    every scheduled turn reading `[Kaxiom: scheduled - ...`, with the `> ` it
+    meant to erase still sitting there.
+
+    Nothing already written to a file can be taken back, so the honest version
+    of the intent is a newline: the turn starts on its own row, and the stranded
+    prompt above it is untidy rather than wrong.
+    """
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+
+    terminal.take_back_prompt()
+
+    printed = capsys.readouterr().out
+    assert "\x1b" not in printed, "an escape sequence went into a file"
+    assert "\r" not in printed, "a carriage return went into a file"
+    assert printed == "\n", "the next line would run on from the prompt"

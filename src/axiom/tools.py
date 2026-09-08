@@ -456,9 +456,29 @@ def _kill_tree(pid: int) -> None:
 
 
 def run_command(command: str, limits: "Limits" = DEFAULT_LIMITS) -> str:
+    """Run a command and say what it did.
+
+    **The child gets no stdin.** Without `DEVNULL` it inherits axiom's own, and
+    a command that reads a line then sits there waiting for one that is never
+    coming - nobody is typing at it, and the person at the keyboard cannot see
+    that it wants them to. Found in #74's manual pass: the model asked for
+    `date`, which on Windows prints the date and *then* asks for a new one. It
+    burned the full limit three times, ninety seconds of one turn, and the model
+    was told the command was **slow** when the truth was that it was blocked.
+
+    Measured either way in one session - the same command, differing only in
+    whether stdin could be read - 30.0s and `error: stopped at the 30 second
+    limit` against 0.02s and `The current date is: 08-09-2026`, which is the
+    answer it wanted all along.
+
+    It also stops a command competing with axiom's own reader for the console,
+    which matters more once something is scheduled and there is a reader thread
+    parked in `input()`.
+    """
     process = subprocess.Popen(  # noqa: S602
         command,
         shell=True,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
