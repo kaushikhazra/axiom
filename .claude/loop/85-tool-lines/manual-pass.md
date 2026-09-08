@@ -1,138 +1,94 @@
 # #85 — the manual pass
 
-No loop folder and no `iteration-1/`, because #85 never had a loop: it was written,
-built and merged in one evening on 2026-09-03 after #74's pass found what it is for.
-This file is the pass, and it lives here so a fresh session finds it next to #74's.
+Settled 2026-09-08. No loop folder and no `iteration-1/`, because #85 never had a
+loop: it was written, built and merged in one evening on 2026-09-03 after #74's pass
+found what it is for.
 
 **The tests cite ten of thirty criteria.** Searched across the whole suite, the only
-#85 numbers any test claims are:
+#85 numbers any test claims are **1, 2, 7, 10, 11, 12, 14, 16, 17, 20**. Twenty are
+cited by nothing, because they are about **what a thing looks like**, and looking is
+all #85 changed.
 
-    1, 2, 7, 10, 11, 12, 14, 16, 17, 20
+## It did not need fifteen rows of typing at a model
 
-Twenty are cited by nothing. Some of those are safe by other means — AC 24, 25 and 26
-are what `tests/baseline/transcript.txt` is for, and it has not moved. The rest are
-uncited because they are about **what a thing looks like**, and #85 changed nothing
-except what a thing looks like.
+A fifteen-row checklist was written first and then thrown away, which is worth
+recording because the reasoning generalises.
 
-## Setup
+Driving #74's pass on the same day left **thirty-six captured tool calls across five
+tools** — `schedule_prompt` 15, `run_command` 13, `list_schedules` 5,
+`cancel_schedule` 2, `fetch_page` 1 — in
+`.claude/loop/74-scheduled-prompts/iteration-1/*.log`. Those transcripts are #85's
+evidence. They were gathered for a different issue and they answer most of this one,
+because every one of them is a call line and a result line drawn by the code under
+test.
 
-    cd C:\Projects\.tmp\axiom-manual
-    uv run --project C:/Projects/axiom axiom --model qwen2.5:7b --no-mcp
+**What a transcript could not reach is the drawing**, and that is one screen rather
+than fifteen turns. `sample.py` calls the same pair a real turn calls — `note_tool`
+then `show_tool_result` — with realistically shaped results:
 
-**`--project`, not `--directory`.** `--directory` moves the working directory into
-the repo, which CLAUDE.md's tool-testing rule forbids.
+    uv run --project C:/Projects/axiom python .claude/loop/85-tool-lines/sample.py
 
-**qwen2.5:7b on purpose.** It answers in seconds where qwen3.5:9b takes one to five
-minutes, and none of these rows is about how the model writes. Switch to 9B only for
-row 14, where the model's *account* is the thing being looked at.
-
-**Write down your window width before you start** — `mode con` gives it. Rows 5 and
-13 both depend on it, and row 13 has a known limit that only bites below about 100
-columns.
-
-**The working tree is on `release/74-manual-pass`** (PR #88). Nothing in it touches
-#85's drawing; it is the better branch to run because the `run_command` stdin fix
-stops `date`-like commands hanging for thirty seconds mid-pass.
-
-## What you are looking at
-
-    ·  run_command(command=ping -n 8 127.0.0.1)
-    ·  Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
-    ·  Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
-    ·  … 9 more lines
-
-`·` is `TOOL_MARK`, `×` is `FAIL_MARK`, both grey, both indented two spaces. Every row
-is cut to **one** terminal row with a trailing `…`. A result gets **three** rows and
-then a count of what is left. So a tool costs **four lines at most** — one call, three
-result.
+No model, no waiting, no schedule to trip over. Resize the window and run it again.
 
 ## The rows
 
-Do them in order. **Leave 13 and 14 until last**: once anything is scheduled the
-session takes the timed-read path, and #83 means multi-line composing is gone until
-you restart.
+| AC | Verdict | Evidence |
+|---|---|---|
+| 1 | pass | turns that called no tool produced no tool line, throughout |
+| 2 | pass | 36 call lines, each naming its tool |
+| **3** | **pass** | `run_command(command=date)` at 11:18:36, its result at **11:19:06**. Thirty seconds apart — the call line demonstrably precedes the result, which is the one thing no still image can show |
+| 4 | pass | `cron=*/1 * * * *, prompt=say TICK, repeating=True` |
+| 5 | pass | `list_schedules()`, and a `schedule_prompt()` the model called with nothing at all |
+| 6 | pass | `sample.py` — a 350-character call cut to one row ending `…` |
+| 7 | pass | every result in every transcript sits under its own call |
+| 8 | pass | `sample.py` — a 24-line result becomes three rows and `… 21 more lines` |
+| 9 | pass | `sample.py` — `(finished with no output)` still gets a row |
+| 10 | pass | `sample.py` — `×` on the error row against `·` on the success above it, same turn |
+| 11, 12, 13 | pass | six `date` calls in one turn, three-round turns, all in order, none interleaved |
+| 14 | pass | model → tool → model → tool seen repeatedly; every round drawn |
+| 15 | pass | the count line appears **nowhere** in any log. The eleven greps that match are all the startup banner |
+| 16 | pass | tools countable by counting call lines |
+| 17, 20 | pass | **four times on 2026-09-08.** The tool said `next at 11:16`, the model said "01:16", and both were on screen. This is the criterion the issue exists for |
+| 18 | pass | the identifier leads the first result row |
+| **19** | **fails below ~90 columns** | see the open judgement |
+| 21 | pass | grey `38;2;112;116;126`, against the answer's default foreground |
+| 22 | pass | every line starts with two spaces and a mark. None starts with `axiom:` |
+| 23 | pass | judged on screen — see below |
+| 24, 25, 26, 27 | pass | golden transcript unmoved, suite green at 964 |
+| 28, 29 | pass | failing tools that did not end the turn, repeatedly |
+| 30 | pass | `exit status 0` on every run |
 
-| # | AC | Type this | It passes if |
-|---|---|---|---|
-| 1 | 1 | `Hello. Do not use any tools.` | Nothing tool-shaped anywhere. No `·`, no count |
-| 2 | 2, 3, 4 | `Run the command: ping -n 8 127.0.0.1` | **The `·  run_command(command=…)` line appears immediately, and the result rows arrive seconds later.** Watch the gap — this is the only row where AC 3 is visible at all |
-| 3 | 5 | `List everything scheduled.` | `·  list_schedules()` — the empty brackets are the criterion |
-| 4 | 9 | `Run the command: cd .` | A result line still appears, saying it finished with no output. Silence here would be indistinguishable from a tool that never ran |
-| 5 | 6 | `Run the command: echo` then paste 300-odd characters of anything | The call line is **one** row, ending `…`. It must not wrap |
-| 6 | 8 | `Run the command: dir C:\Windows\System32` | Three result rows, then `·  … N more lines`. Not a wall of text, and not a silent cut |
-| 7 | 10 | `Read the file nope.txt, and also read ai-news-today.md.` | One `×` row and one `·` row **in the same turn**, so you can compare them side by side. See judgement A |
-| 8 | 11, 12, 13 | `Run three commands, one after another: echo one, echo two, echo three.` | Three call/result pairs, in that order, none interleaved |
-| 9 | 14 | `Read ai-news-today.md, then based on what it says, run echo with the first word of the title.` | **Both** rounds are drawn, not just the first. This is the one #77 got wrong |
-| 10 | 15, 16 | look back at rows 6 and 8 | No `·  3 tools` line anywhere — that is what #85 removed. And you can count the tools by counting call lines |
-| 11 | 21, 22, 23 | look at any row above | The tool lines are dimmer than the answer, none starts with `axiom:`, and none could be mistaken for the model talking |
-| 12 | 28, 29 | `Read the file nope.txt, then tell me a joke.` | The failing tool does not end the turn — the joke still arrives — and the prompt comes back |
-| 13 | 18, 19 | `Schedule a repeating prompt, every minute, that says: say TICK` | The identifier **and** `next at … local` are both on screen. **Then set the window to 80 columns and do it again** — the time is cut mid-date and AC 19 fails. See judgement C |
-| 14 | 17, 20 | with the job scheduled, on **qwen3.5:9b**: `What did you just schedule, and how long will it last?` | Whatever the model says, the four tool rows above it are still there and still right. If the two disagree, both are on screen — that is AC 20, and it is the whole reason #85 exists |
-| 15 | 30 | `/exit`, then `echo %ERRORLEVEL%` | `0`, same as a run that called no tools |
+## The judgements
 
-## The three things only you can answer
+**A — `×` against `·`, and B — four lines a tool: answered by Kaushik, 2026-09-08.**
+Shown the full sample screen: *"all the rows looks very cool to me."* The marks read
+apart, and four lines a tool is a block worth reading rather than one to skim. Both
+open questions from the 2026-09-04 handoff are closed.
 
-These are judgements, not criteria. Nothing in the issue settles them and no test can.
+**C — AC 19 at a narrow window. Open, and it is a real failure rather than a
+judgement about taste.**
 
-**A — is `×` distinct enough from `·` at a glance?** Row 7 puts one of each in the
-same turn. They are the same colour and the same indent; only the glyph differs, and
-at a small font `·` and `×` are both small and central. The question is not whether
-you can tell them apart when looking for it — it is whether a failure **catches your
-eye** when you are not.
-
-**B — is four lines per tool too dense?** Row 8 leaves twelve lines for three trivial
-`echo` calls. Is that a block you skim past, or one you read? If it is the first, the
-visibility #85 bought is spent.
-
-**C — the known limit, and whether it matters.** `schedule_prompt`'s first result row
-is the tail the `…` eats, and it was left visible rather than half-fixed because
-shortening it means changing `_when()`, which is #74's tested contract.
-
-Measured with `say TICK` as the prompt, so 89 characters of result row:
+`schedule_prompt`'s first result row carries the identifier, the schedule, the prompt
+and the next run time, and the prompt sits inside it — so the row's length moves with
+what was scheduled. Measured with `say TICK`, an eight-character prompt, giving 89
+characters:
 
 | window | what survives |
 |---|---|
 | 100+ | the whole row |
-| 90 | `… next at 2026-09-08 22:27…` — the time lives, ` local` is gone |
-| **80** | `… next at 2026-0…` — **AC 19 fails outright** |
+| 90 | `next at 2026-09-08 22:27…` — the time lives, ` local` is gone |
+| **80** | `next at 2026-0…` — **AC 19 fails outright** |
 
-**The threshold moves with the prompt text**, because the prompt is inside the row —
-a job whose prompt is a sentence rather than two words fails at a wider window than
-this. Set your terminal to 80 columns for row 13 and you will see it cleanly. The
-judgement: is 80 columns a real user's window, or a corner?
+**A longer prompt fails at a wider window.** A job whose prompt is a sentence rather
+than two words pushes the cut left by however long the sentence is.
 
-## What not to bother with
+It was left visible rather than half-fixed when #85 shipped, because shortening it
+means changing what `_when()` returns and that is #74's tested contract. The decision
+that is actually open:
 
-**AC 24, 25, 26 and 27 are settled and not yours.** Piped output, `--no-render` output
-and the golden transcript are byte-for-byte assertions, `tests/baseline/transcript.txt`
-has not moved, and the suite is green at 964. Driving them by hand adds nothing.
+- **accept it** — 80 columns is a corner, and the identifier and the seven-day notice
+  both survive on rows of their own; or
+- **file it** — and the fix is either a shorter `_when()` for the screen, or letting
+  a result row wrap where a call row may not.
 
-**AC 7 is really rows 2, 4, 6 and 7 together** — there is no separate thing to do for
-"the result appears under the call it answers"; every row above either shows it or
-does not.
-
-## Record it here
-
-| # | AC | Verdict | |
-|---|---|---|---|
-| 1 | 1 | | |
-| 2 | 2, 3, 4 | | |
-| 3 | 5 | | |
-| 4 | 9 | | |
-| 5 | 6 | | |
-| 6 | 8 | | |
-| 7 | 10 | | |
-| 8 | 11, 12, 13 | | |
-| 9 | 14 | | |
-| 10 | 15, 16 | | |
-| 11 | 21, 22, 23 | | |
-| 12 | 28, 29 | | |
-| 13 | 18, 19 | | |
-| 14 | 17, 20 | | |
-| 15 | 30 | | |
-
-| judgement | | |
-|---|---|---|
-| A — `×` against `·` | | |
-| B — four lines a tool | | |
-| C — the narrow window | | |
+Nothing else in #85 is outstanding.
