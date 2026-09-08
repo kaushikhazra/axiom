@@ -1,151 +1,172 @@
-# Handoff — every branch is merged, #80 is verified, #74 is half done
+# Handoff — #74 and #85 are both manually passed, and PR #88 is open
 
-Rewritten 2026-09-04 at the end of a session that consolidated the repo, drove #80's manual
-pass to completion, and got half way through #74's before stopping for the night. Nothing is
-scheduled and nothing is running.
+Rewritten 2026-09-08 at the end of a session that finished #74's manual pass, fixed the
+two defects it found, and settled #85's. Nothing is scheduled and nothing is running.
 
 ## Where things stand
 
-`master` is green and **pushed through PR #84**, plus two merges made after it: **960 passed,
-1 deselected, ~107s**. `tests/baseline/transcript.txt` has not moved.
-
-**There are no unmerged branches.** That is new. The five that were outstanding yesterday are
-all in.
+`master` is unchanged since PR #86. Everything from today sits on
+**[PR #88](https://github.com/kaushikhazra/axiom/pull/88)**, branch
+`release/74-manual-pass`, at **964 passed, 1 deselected, ~140s**.
+`tests/baseline/transcript.txt` has not moved.
 
 | | |
 |---|---|
-| [#80](https://github.com/kaushikhazra/axiom/issues/80) | merged, **manual pass complete** — 14 rows, one real defect found and fixed |
-| [#81](https://github.com/kaushikhazra/axiom/issues/81) | merged, row 1 of its pass taken; **rows 2–5 owed** |
-| [#74](https://github.com/kaushikhazra/axiom/issues/74) | merged, **9 rows of 21 done**, 12 owed |
-| [#85](https://github.com/kaushikhazra/axiom/issues/85) | new today, built and merged, **not yet manually passed** |
+| [#74](https://github.com/kaushikhazra/axiom/issues/74) | **manual pass complete** — 21 rows, nothing in #74 found broken |
+| [#85](https://github.com/kaushikhazra/axiom/issues/85) | **manual pass complete** — 29 of 30 pass, AC 19 accepted |
+| [#80](https://github.com/kaushikhazra/axiom/issues/80) | complete since 2026-09-03 |
+| [#81](https://github.com/kaushikhazra/axiom/issues/81) | **rows 2–5 deferred by decision** — see below |
+
+**Merge PR #88 first.** It carries both fixes, and everything else assumes them.
 
 ## Start here tomorrow
 
-```
-cd C:\Projects\.tmp\axiom-manual
-uv run --project C:/Projects/axiom axiom
-```
+There is no owed row. The next move is a new issue, not a continuation.
 
-**`--project`, not `--directory`.** `--directory` moves the working directory into the repo,
-which CLAUDE.md's tool-testing rule forbids.
+The two things closest to the surface, both already argued for in this repo and
+neither filed:
 
-`.axiom/mcp.json` is parked as `mcp.json.off` so nothing attaches at startup and the model is
-not juggling three remote tools during a pass. Rename it back for #81's rows.
+**A permission gate.** `run_command` still runs whatever the model asks with no list
+of allowed programs, and `outside()` is visibility only. Today gave three more live
+examples: a model improvised `date` six times unasked, and reached for
+`bash -c`, `/bin/date` and `date 2>&1 | head -5` when the first shapes failed. All
+harmless because the working directory was a sandbox — which is the protection
+CLAUDE.md's rule provides and a stranger following the README does not have.
+[#82](https://github.com/kaushikhazra/axiom/issues/82) would store account access on
+top of this, so the order of the two is a real decision.
 
-**The next row is #74 AC 10**, and it is the one worth the time. *A job never interrupts a turn
-in progress.* No test cites it; cycles 1, 3 and 7 all called it structural and free. There is
-now a clean way to force it — schedule a job a minute out, then ask for something slow enough
-to still be running when it comes due. The full list of the twelve remaining is at the bottom
-of `.claude/loop/74-scheduled-prompts/iteration-1/manual-pass.md`.
+**What the model is told about what it just did.** See "the pattern that is now
+undeniable" below.
 
 ## What happened today
 
-**1. Everything merged, in order, each branch tested before it went the other way.** Master
-took #80 then #81, each merged *into* its branch first and the suite run there, so a broken
-master never existed. No code conflicted — `terminal.py` took #76 in the renderer half and #80
-in the reader half; #81 is `config.py` and `servers.py`. Every conflict was the loop's own
-bookkeeping meeting itself at three different ages.
+**1. #74's manual pass, finished — all 21 rows.** Twelve were owed; all twelve driven.
+Full record with a transcript per row in
+`.claude/loop/74-scheduled-prompts/iteration-1/manual-pass.md`.
 
-| | tests | wall clock |
-|---|---|---|
-| master, before | 892 | 94.3s |
-| \+ #80 | 923 | 95.1s |
-| \+ #81 | 959 | 154.7s |
-| \+ #80's fix | 960 | 126.6s |
-| \+ #85 | 960 | 107.3s |
+**AC 10 was the row worth the time**, and it is why the pass existed. *A job never
+interrupts a turn in progress.* Cycles 1, 3 and 7 all called it structural and free,
+`observe.md` named it as one of the three that would be got wrong, and it was the one
+criterion the loop settled by argument. Four minute boundaries came due inside a single
+turn and not one interrupted.
 
-**2. #80's manual pass found the criterion it was written for.** Ctrl+enter **sent the
-message** — AC 2, on the first row that needed a second line.
+Two things came free that no test asked for. **`mark_run` computing from `now` is
+observable** — four missed boundaries produced one run, not a backlog of four. And
+AC 11's ordering held across four consecutive boundaries with the older job in front
+every time.
 
-prompt_toolkit has two Windows readers and `Win32Input.__init__` picks between them on
-`_is_win_vt100_input_enabled()`, which asks only whether the console *accepts*
-`ENABLE_VIRTUAL_TERMINAL_INPUT` — true on every modern console, conhost included.
-`ConsoleInputReader` delivers ctrl+enter as `escape, c-j`; `Vt100ConsoleInputReader` delivers a
-bare `c-j`. Only the pair was bound, so the bare key fell through to prompt_toolkit's own `c-j`
-default — `feed(KeyPress(ControlM, "\r"))` — and hit the send binding.
+**Nothing in #74 was found broken.**
 
-**No test could have caught it, and `compose`'s docstring said so before it shipped**: tests
-feed keys through `create_pipe_input`, which proves what axiom does *given* a key. `tests/whatkey.py`
-is the instrument that found it — it names the reader in use and prints what each key produces.
-**AC 6 is untouched**: this console reports `ControlJ` against `ControlM`, so it separates them
-perfectly well.
+**2. The instrument, which is reusable.**
+`.claude/loop/74-scheduled-prompts/iteration-1/drive.py` types at a real axiom over a
+**held-open pipe** and stamps every line with the moment its first byte arrived.
 
-All fourteen rows now pass, and four criteria on the *proved* list — AC 5, 11, 19, 23 — were
-seen on a screen for the first time. **AC 27's vacuous test is answered.**
+Holding the pipe open is the whole trick: a pipe fed from a file is never empty, so
+the timed read never returns `WAITING` and `due()` is never reached. Writing into it
+slowly leaves the reader genuinely blocked in `input()`, and the loop consults a real
+clock exactly as it does for a person sitting still.
 
-**3. #74's pass found a collision between two shipped issues.** A model scheduled a repeating
-job and said it would *"repeat indefinitely"*. The tool result in front of it said `a repeating
-job stops after 7 days`. #77 AC 26 had taken tool output off the screen, so that string went to
-the model and nowhere else.
+    drive.py <steps-file> [model]
 
-Every #74 criterion of the form *"axiom says X"* — AC 3, 5, 7, 8 — was being satisfied by a
-string the user never sees. **Both issues were green.** #74's tests assert on the tool
-function's return value, which was correct throughout.
+Two things it taught, both cheap to forget:
 
-**4. #85 was written, built and merged the same evening**, and the four rows re-run against it
-all pass. It draws the call and its result:
+- **`uv run` will not host it.** uv does not relay piped stdin, so the first attempt
+  hung with the banner printed and ollama never spawning a runner. It launches the
+  project interpreter with `-c "import axiom; axiom.main()"` instead.
+- **It has no tty and says so.** The drawing, the composer and `take_back_prompt` as
+  an eye sees them are unreachable from a pipe, and always will be.
 
-```
-·  schedule_prompt(cron=*/1 * * * *, prompt=What time is it now?, repeating=True)
-·  scheduled 7f91449a: 'What time is it now?' on */1 * * * * (repeating), next at …
-·  schedules last only as long as this session
-·  a repeating job stops after 7 days
-```
+**3. Two defects found, fixed, and verified both ways.** Neither is #74's.
 
-Three rows of a result, not one — one was the obvious reading and it was wrong, because
-`schedule_prompt` answers in three lines and flattening them cuts off exactly the two the model
-got wrong. **#77 AC 22, AC 24 and AC 26 are superseded**, recorded as a comment on #77, and
-five tests were rewritten in place carrying why. One now asserts the exact inverse of what it
-used to.
+**`run_command` inherited axiom's stdin.** A command that reads a line then waits is
+waiting on a console nobody is typing at. `date` on Windows prints the date and *then*
+asks for a new one — ninety seconds of one turn across three calls, and the model was
+told the command had been **slow** when what it had been was **blocked**. Measured both
+ways in one session: **30.0s** and a timeout against **0.02s** and
+`The current date is: 08-09-2026`. `stdin=subprocess.DEVNULL`.
 
-## One defect found and not yet filed
+**`take_back_prompt` was the only drawing function with no `isatty` guard.** Redirected,
+its cursor escape is four bytes of rubbish — every scheduled turn read
+`[Kaxiom: scheduled - ...` with the `> ` it meant to erase still there. It emits a
+newline instead. **The sweep is clean**: every other escape in `terminal.py` sits behind
+`_rendering and sys.stdout.isatty()` at its call site.
 
-**`run_command` never closes the child's stdin.** `subprocess.Popen` is called without a
-`stdin=` argument, so the child inherits axiom's console. The model asked for `date`, which on
-Windows prompts for a new date and waits — it blocked for the full 30 second limit, three
-times, 90 seconds of one turn. The model was told "stopped at the 30 second limit", which reads
-as *slow* when the truth is *waiting for input that will never arrive*.
+**One test had to be rewritten because it passed against the bug.** pytest already
+points fd 0 at nothing, so a child inheriting it also saw end-of-input. It now `dup2`s a
+pipe with the write end held open onto fd 0 — readable, never answered, which is what a
+console with nobody typing at it is.
 
-Measured: with a non-console stdin the same command returns in **0.03s** carrying `The current
-date is: 04-09-2026`, which is the answer it wanted. `stdin=subprocess.DEVNULL` is the whole
-fix, and it also stops a command competing for the console with axiom's own reader.
+**4. #85's pass, settled without the checklist that was written for it.** A fifteen-row
+plan was thrown away, and the reasoning generalises: **#74's pass had already left 36
+captured tool calls across five tools**, gathered for a different issue and answering
+most of this one, because every one of them is a call line and a result line drawn by
+the code under test.
 
-**No issue exists for it.** Kaushik's call.
+What a transcript cannot reach is the drawing, and that is one screen rather than
+fifteen turns — `.claude/loop/85-tool-lines/sample.py`, no model and no waiting.
 
-## Still owed
+Both open judgements from the last handoff are closed. Shown the sample screen,
+Kaushik: *"all the rows looks very cool to me."*
 
-| | |
+**AC 19 fails below about ninety columns and that is accepted**, with the reasoning in
+`_tool_row`'s docstring so nobody re-opens it. `schedule_prompt`'s first result row
+carries the prompt inside it, so its length moves with what was scheduled: whole at 100
+columns, ` local` gone at 90, date cut mid-way at 80. Both fixes cost more than the
+loss.
+
+## The pattern that is now undeniable
+
+**The model's account of a tool result is wrong often enough to be the next issue.**
+Four turns today, three different models, and #85 had the truth on screen every time:
+
+| the tool said | the model said |
 |---|---|
-| **#74** | 12 rows. AC 10 first — see above |
-| **#85** | its own manual pass. Two open judgements: is `×` distinct enough from `·` at a glance, and is four rows per tool too dense? |
-| **#81** | rows 2–5: slow connection, dropped mid-call, certificate or proxy, nothing left connected on exit |
+| `next at 2026-09-08 11:16 local` | *"at 01:16 on Sept 8, 2026"* |
+| `*/1 * * * *` | *"scheduled to say FAST every 30 seconds"* |
+| `a repeating job stops after 7 days` | dropped it entirely, having repeated it correctly an hour earlier |
+| eleven tools offered | *"I don't have direct system access to report the actual time"* |
 
-## Two things that are not built, and are worth knowing why
+**It is not uniform across models**, which is the useful part: qwen2.5:7b wrote *"A
+repeating job will stop after 7 days, but it will continue as long as this session is
+active"* — both facts, both right — where qwen3.5:9b garbled the same two an hour
+earlier. So this is a system-prompt problem with a measurable target, not a fact of
+small models.
 
-**Google and Slack cannot exist yet.** All four publish remote MCP servers and every one is
-OAuth; `ServerSpec` carries `command`, `args`, `env`, `tools` and `address` — no headers, no
-token, no browser flow. [#82](https://github.com/kaushikhazra/axiom/issues/82) unblocks all
-four. Not started.
+#85 fixed the half where the user could not see. The half where the *model* is told
+what it just did is untouched and unfiled.
 
-**There is still no permission gate.** `run_command` runs whatever the model asks with no list
-of allowed programs, and `outside()` is visibility only. Today gave a live example of why it
-matters: asked to paste a traceback, the model improvised two `read_file` calls nobody
-requested. Harmless because the working directory was the sandbox — which is the protection
-CLAUDE.md's rule provides and a stranger following the README does not have. **No issue exists
-for it.** #82 would store account access on top of it, so the order of those two is a real
-decision.
+## Still owed, and one thing deliberately not
+
+**#81 rows 2–5 are deferred, not owed.** Kaushik's call, 2026-09-08: *"we pass for now,
+we will see if slow connect causes issues or not."* Slow connection, dropped mid-call,
+certificate or proxy, nothing left connected on exit — all wait for a real symptom
+rather than a rehearsed one. **Do not pick these up as outstanding work.**
+
+**Three notes need a real console and cannot be driven from a pipe.** Typing at a timed
+prompt with something scheduled; the prompt take-back as an eye sees it; and
+[#83](https://github.com/kaushikhazra/axiom/issues/83), multi-line being off while
+anything is scheduled. `drive.py` has no tty.
+
+**Google and Slack still cannot exist.** All four publish remote MCP servers and every
+one is OAuth; `ServerSpec` carries `command`, `args`, `env`, `tools` and `address` — no
+headers, no token, no browser flow. [#82](https://github.com/kaushikhazra/axiom/issues/82)
+unblocks all four. Not started.
 
 ## Rules that must not be forgotten
 
 **No test builds a `prompt_toolkit` session** — not a `PromptSession`, not a
 `create_pipe_input`, not a key processor. Nineteen did and took this machine down twice.
-`tests/whatkey.py` is allowed because it uses the key *parser* only, and its docstring says it
-must not become a test.
+`tests/whatkey.py` is allowed because it uses the key *parser* only, and its docstring
+says it must not become a test.
 
-**Break a criterion before claiming it.** Both defects today were found by a person looking at
-a screen; both suites were green through the whole thing. Today's fix was verified by removing
-the bare `c-j` binding and watching one test go red while the other thirty-one stayed green —
-which is precisely how it shipped.
+**Break a criterion before claiming it.** Both of today's fixes were verified by removing
+them and watching the right test go red — and the stdin test only became real *because*
+that check showed it passing against the bug.
 
-**Commit before you break.** A break undone with `git checkout --` takes uncommitted work with
-it, which happened once today and cost a re-apply.
+**Commit before you break.** A break undone with `git checkout --` takes uncommitted work
+with it.
+
+**Watch the wall clock, not just the green.** Today's suite runs at ~140s against the
+last handoff's 107s. Checked with `--durations`: the slowest fifteen are all pre-existing
+MCP subprocess tests and none of today's four appear, so it is machine state. Worth
+re-checking on a quiet machine.
