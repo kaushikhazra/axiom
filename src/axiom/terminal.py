@@ -1798,6 +1798,20 @@ def _tool_row(mark: str, text: str) -> None:
     lines is one. The `…` says something was left out; without it a cut result
     reads as the whole of a short one, which is the failure mode #77 AC 26 was
     trying to avoid by showing nothing at all.
+
+    **A narrow window costs #85 AC 19, and that was accepted rather than fixed.**
+    `schedule_prompt`'s first result row carries the identifier, the schedule,
+    the prompt *and* the next run time, so its length moves with what was
+    scheduled - 89 characters for a prompt as short as `say TICK`. Measured at
+    #85's manual pass: whole at 100 columns, ` local` gone at 90, and the date
+    cut mid-way at 80. A sentence-long prompt fails wider still.
+
+    Not fixed here, and not in `_when()` either. Shortening what `_when()`
+    returns would change #74's tested contract to buy back one row on a window
+    nobody was found using, and letting a *result* row wrap while a *call* row
+    may not would trade AC 19 for AC 16. Kaushik's call, 2026-09-08: the
+    identifier leads row one and the seven-day notice has a row of its own, so
+    what a narrow window loses is the least of the three. **Leave it.**
     """
     flat = " ".join(text.split())
     room = _width() - len(f"  {mark}  ") - 1

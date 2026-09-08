@@ -65,8 +65,8 @@ Shown the full sample screen: *"all the rows looks very cool to me."* The marks 
 apart, and four lines a tool is a block worth reading rather than one to skim. Both
 open questions from the 2026-09-04 handoff are closed.
 
-**C — AC 19 at a narrow window. Open, and it is a real failure rather than a
-judgement about taste.**
+**C — AC 19 at a narrow window. Accepted by Kaushik, 2026-09-08. Not a defect to
+be filed; a cost that was weighed and taken.**
 
 `schedule_prompt`'s first result row carries the identifier, the schedule, the prompt
 and the next run time, and the prompt sits inside it — so the row's length moves with
@@ -83,12 +83,20 @@ characters:
 than two words pushes the cut left by however long the sentence is.
 
 It was left visible rather than half-fixed when #85 shipped, because shortening it
-means changing what `_when()` returns and that is #74's tested contract. The decision
-that is actually open:
+means changing what `_when()` returns and that is #74's tested contract.
 
-- **accept it** — 80 columns is a corner, and the identifier and the seven-day notice
-  both survive on rows of their own; or
-- **file it** — and the fix is either a shorter `_when()` for the screen, or letting
-  a result row wrap where a call row may not.
+**Accepted, and the reasoning is worth keeping** because the alternative is that
+somebody finds this again in six months and fixes it without knowing what it costs:
 
-Nothing else in #85 is outstanding.
+- shortening `_when()` changes #74's tested contract to buy back one row on a window
+  nobody was found using;
+- letting a *result* row wrap while a *call* row may not trades AC 19 for AC 16, and
+  AC 16 is the one that makes the whole block countable at a glance;
+- of the three things that row carries, the identifier leads it and the seven-day
+  notice has a row of its own. What a narrow window loses is the least of them, and
+  it is the one a user can get back by asking.
+
+Recorded in `_tool_row`'s docstring as well, which is where the cut happens and where
+a future reader would otherwise re-open it.
+
+**Nothing in #85 is outstanding.**
