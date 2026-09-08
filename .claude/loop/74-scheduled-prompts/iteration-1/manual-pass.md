@@ -291,3 +291,107 @@ Both were verified the other way too: removing `stdin=DEVNULL` fails the suite w
 printing a cursor escape without a guard - `_start_working`, `_stop_working` and
 every `Rendered` path sit behind `_rendering and sys.stdout.isatty()` at their call
 sites.
+
+### AC 4, AC 5 and AC 14 - pass
+
+`row-04-one-shot.log`. qwen3.5:9b, asked for a one-off at a named time.
+
+    axiom: schedule_prompt(cron=30 14 * * *, prompt=hello, repeating=False)
+      | scheduled c1e8ac27: 'hello' on 30 14 * * * (once), next at 2026-09-08 14:30 local
+      | schedules last only as long as this session
+
+**AC 4** - once, and the time said back as a time rather than as a cron. **AC 5** -
+`c1e8ac27`, on screen, where AC 16 will need it. The aim was right first try:
+`30 14 * * *` with `repeating=False` from "14:30 today ... once only".
+
+**AC 14** - the listing carries all five things it owes:
+
+    c1e8ac27: 'hello' on 30 14 * * * (once), next at 2026-09-08 14:30 local
+
+identifier, schedule, prompt, whether it repeats, next run.
+
+**AC 7 came free and is sharper than it was.** The session line appears under the
+*first* job of a session and not under the second - `row-11`'s BRAVO gets
+`a repeating job stops after 7 days` alone. Once per session, as written.
+
+**A note, not a failure.** The one-shot turn ended with the model saying nothing at
+all - tool called, result printed, no prose. The user still learns everything,
+because #85 put the three result lines on screen; before #85 this turn would have
+told them nothing whatsoever.
+
+### AC 11 - pass, after the first attempt failed to reach it
+
+**The first attempt never tested the criterion.** On qwen3.5:9b, turns ran two to
+five minutes, so the session was mid-turn at nearly every boundary and the second
+job never got a gap to run in. What that run demonstrated was AC 10 for a third
+time - ALPHA's turn covered 13:59:00 to 14:03:46, four boundaries, uninterrupted -
+and AC 11 not at all.
+
+Both jobs have to come due, run *and* finish inside one minute for the ordering to
+be visible, and that needs seconds-long turns. Re-run on qwen2.5:7b, which has no
+thinking phase. That removes a confound rather than dodging the row: what is under
+test is which job `due()` hands over first, not how the model writes.
+
+Both were genuinely due in the same minute -
+
+    scheduled d2513b91: 'say ALPHA' on */1 * * * * (repeating), next at 2026-09-08 14:09 local
+    scheduled bd2af4d4: 'say BRAVO' on */1 * * * * (repeating), next at 2026-09-08 14:09 local
+
+\- and every boundary from 14:09 to 14:12 read exactly this, four times running:
+
+    >
+    axiom: scheduled - say ALPHA
+    ALPHA
+    >
+    axiom: scheduled - say BRAVO
+    BRAVO
+
+One whole turn, then the other. **Never a scheduled line inside somebody else's
+answer**, and the order held across all four - ALPHA first every time, which is
+`due()` sorting by when a job *became* due and a stable sort keeping the older one
+in front when the two are equal.
+
+The two turns at 14:09 both landed inside the same second. Two complete turns, one
+after the other, in one second - which is the shape AC 11 asks for and the thing a
+slow model made unobservable.
+
+**The erase fix is visible here too.** Every `>` sits on its own row above its
+scheduled line, with no `[K` in front of it, in a transcript written to a pipe.
+
+**And a second model reads the tool result correctly.** qwen2.5:7b wrote *"A
+repeating job will stop after 7 days, but it will continue as long as this session
+is active"* - both facts, both right. qwen3.5:9b garbled the same two an hour
+earlier. Worth remembering when the system-prompt story is picked up: this is not a
+uniform failure across models.
+
+### Where the pass stands after 2026-09-08
+
+**Thirteen of twenty-one rows settled. Eight owed.**
+
+| | |
+|---|---|
+| settled today | 10, 4, 5, 14, 11 - plus 7 and 9 re-confirmed |
+| settled 2026-09-03 | 2, 3, 5, 6, 7, 8, 9, 12, 13 |
+| **owed** | **16, 17, 22, 23, 24, 25, 27, 33** |
+
+The eight left are cheap and none of them needs a real minute to pass:
+
+| | |
+|---|---|
+| 16, 17 | cancel a real identifier; cancel one you invented |
+| 22, 23 | nothing schedule-shaped on disk; nothing survives a restart |
+| 24 | `/model` mid-session, then list - same job, not doubled |
+| 25, 27 | a schedule that is not five fields; a one-shot at a time that has gone |
+| 33 | `/exit` with jobs scheduled, no wait |
+
+**Run them on a fast model.** `drive.py <steps> qwen2.5:7b` takes ten-second turns
+against qwen3.5:9b's two-to-five minutes, and none of these eight is about how the
+model writes. Keep 9B for anything where the *aim* is the question.
+
+**AC 33 needs care.** `/exit` typed mid-turn is not the criterion - the turn finishes
+first, which is AC 10 working. AC 33 is `/exit` typed at an idle prompt with jobs
+scheduled, and the thing to measure is that it does not wait for the next fire.
+
+**One row cannot be driven from a pipe at all.** The three notes under "Three things
+to watch that are not criteria" - typing at a timed prompt, the prompt take-back on a
+real console, and #83 - all need a real terminal. `drive.py` has no tty and says so.

@@ -49,7 +49,16 @@ SANDBOX = Path("C:/Projects/.tmp/axiom-manual")
 # Anything the child buffers is a timestamp we have made up. Python block-buffers
 # stdout the moment it is not a terminal, which would land a whole turn on one
 # instant and make the only thing this script measures worthless.
-CHILD_ENV = {**os.environ, "PYTHONUNBUFFERED": "1"}
+#
+# `PYTHONIOENCODING` for a different reason: a pipe on Windows gets the locale
+# encoding, so an em-dash left axiom as one cp1252 byte and arrived here as a
+# replacement character. That is this script mis-decoding axiom, not axiom
+# mis-writing, and a transcript full of `?` is one nobody can quote from.
+CHILD_ENV = {
+    **os.environ,
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONIOENCODING": "utf-8",
+}
 
 
 class Log:
@@ -126,6 +135,15 @@ def main() -> None:
         "import axiom; axiom.main()",
         "--no-mcp",
     ]
+    # An optional second argument, because some rows are about the *scheduler*
+    # and a thinking model buries them. qwen3.5:9b takes two to five minutes a
+    # turn, which is fine for AC 10 - a long turn is the point there - and fatal
+    # for AC 11, where two jobs have to come due, run and finish inside one
+    # minute for the ordering to be visible at all. Swapping to a model without
+    # a thinking phase removes a confound rather than dodging the row: what is
+    # under test is which job `due()` hands over first, not how the model writes.
+    if len(sys.argv) > 2:
+        argv += ["--model", sys.argv[2]]
     log.write(f"$ {' '.join(argv)}   (cwd {SANDBOX})")
     child = subprocess.Popen(
         argv,

@@ -1,0 +1,24 @@
+   0.00  13:50:08  $ C:\Projects\axiom\.venv\Scripts\python.exe -c import axiom; axiom.main() --no-mcp   (cwd C:\Projects\.tmp\axiom-manual)
+   5.61  13:50:13  axiom: using qwen3.5:9b - your last choice here
+   5.64  13:50:13  axiom: qwen3.5:9b at http://localhost:11434 (context: 262144 tokens, 11 tools including web)
+   5.64  13:50:13  axiom: tools cost about 1253 tokens per request, 0% of the window
+   8.01  13:50:16  || typed: Schedule a one-off prompt for 14:30 today that says exactly: hello. It must run once only and must never repeat.
+   5.64  13:50:16  > 
+ 110.75  13:51:58  axiom: schedule_prompt(cron=30 14 * * *, prompt=hello, repeating=False)
+ 110.78  13:51:58    | scheduled c1e8ac27: 'hello' on 30 14 * * * (once), next at 2026-09-08 14:30 local
+ 110.78  13:51:58    | schedules last only as long as this session
+ 117.31  13:52:05  
+ 117.31  13:52:05  
+ 198.03  13:53:26  || === AC 4 and AC 5 above: scheduled once, 14:30 said back, an identifier to read ===
+ 198.03  13:53:26  || typed: List everything that is scheduled right now.
+ 117.31  13:53:26  > 
+ 206.95  13:53:35  axiom: list_schedules()
+ 206.95  13:53:35    | c1e8ac27: 'hello' on 30 14 * * * (once), next at 2026-09-08 14:30 local
+ 221.30  13:53:51  Currently there is 1 scheduled prompt:
+ 223.31  13:53:51  
+ 223.31  13:53:59  - **c1e8ac27**: `hello` — runs once at 14:30 (2:30 PM) today, will not repeat
+ 231.17  13:53:59  
+ 398.03  13:56:46  || === AC 14 above: identifier, schedule, prompt, repeats or not, next run ===
+ 398.03  13:56:46  || typed: /exit
+ 231.17  13:56:46  > 
+ 398.66  13:56:46  || exit status 0
