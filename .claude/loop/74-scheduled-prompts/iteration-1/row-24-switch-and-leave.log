@@ -1,0 +1,47 @@
+   0.00  14:31:01  $ C:\Projects\axiom\.venv\Scripts\python.exe -c import axiom; axiom.main() --no-mcp --model qwen2.5:7b   (cwd C:\Projects\.tmp\axiom-manual)
+   3.33  14:31:04  axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+   3.33  14:31:04  axiom: tools cost about 1253 tokens per request, 4% of the window
+   8.02  14:31:09  || typed: Schedule a repeating prompt, every minute, whose text is exactly: say KEEP
+   3.33  14:31:09  > 
+  11.17  14:31:12  axiom: schedule_prompt(cron=*/1 * * * *, prompt=say KEEP, repeating=True)
+  11.19  14:31:12    | scheduled 6a964647: 'say KEEP' on */1 * * * * (repeating), next at 2026-09-08 14:32 local
+  11.19  14:31:12    | schedules last only as long as this session
+  11.19  14:31:12    | a repeating job stops after 7 days
+  11.52  14:31:16  I have scheduled a prompt to say "KEEP" every minute. The next instance will be at 2026-09-08 14:32 local time. This repeating job will stop after 7 days.
+  14.86  14:31:16  
+  53.02  14:31:54  || typed: List everything scheduled.
+  14.86  14:31:54  > 
+  54.66  14:31:56  axiom: list_schedules()
+  54.66  14:31:56    | 6a964647: 'say KEEP' on */1 * * * * (repeating), next at 2026-09-08 14:32 local
+  54.97  14:31:56  Here is what is scheduled:
+  55.38  14:31:59  - Repeating prompt to say "KEEP" every minute, next at 2026-09-08 14:32 local.
+  57.59  14:31:59  
+  57.59  14:32:00  > 
+  58.61  14:32:00  axiom: scheduled - say KEEP
+  58.61  14:32:00  
+  59.02  14:32:00  KEEP
+  59.09  14:32:00  
+  98.02  14:32:39  || === the job before the switch ===
+  98.02  14:32:39  || typed: /model qwen2.5-coder:7b
+  59.09  14:32:41  > axiom: now qwen2.5-coder:7b (context: 32768 tokens, 11 tools including web)
+  99.91  14:32:41  axiom: tools cost about 1253 tokens per request, 4% of the window
+  99.91  14:33:00  > 
+ 118.64  14:33:00  axiom: scheduled - say KEEP
+ 118.64  14:33:00  
+ 131.95  14:33:13  KEEP
+ 132.05  14:33:13  
+ 143.02  14:33:24  || === AC 24 above: switched. The schedule may not have moved ===
+ 143.02  14:33:24  || typed: List everything scheduled.
+ 132.05  14:33:24  > 
+ 143.66  14:33:25  Here is what is scheduled:
+ 144.41  14:33:28  - Repeating prompt to say "KEEP" every minute, next at 2026-09-08 14:32 local.
+ 146.81  14:33:28  
+ 146.81  14:34:00  > 
+ 178.66  14:34:00  axiom: scheduled - say KEEP
+ 178.66  14:34:00  
+ 179.20  14:34:00  KEEP
+ 179.39  14:34:00  
+ 198.03  14:34:19  || === AC 24 above: same identifier, once, not doubled ===
+ 213.03  14:34:34  || typed: /exit
+ 179.39  14:34:34  > 
+ 213.42  14:34:34  || exit status 0

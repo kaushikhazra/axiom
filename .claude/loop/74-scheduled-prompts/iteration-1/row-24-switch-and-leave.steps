@@ -1,0 +1,33 @@
+# AC 24 - `/model` mid-session with a job scheduled, then list. The same job,
+#         not cancelled and not doubled.
+# AC 33 - `/exit` with jobs scheduled. Exits at once. No wait, no extra prompt.
+#
+# The switch is to a genuinely different model rather than back to the same one,
+# so `_switch_model` really runs. `jobs` lives outside the loop, so the criterion
+# is that a switch cannot reach it - and a list either side is the way to see it.
+#
+# AC 33 is measured, not eyeballed: `/exit` is typed at an *idle* prompt with a
+# job scheduled, and what matters is the gap between that line and the exit
+# status. Typed mid-turn it would wait for the turn, which is AC 10 working
+# rather than AC 33 failing, so the idle wait above it is load-bearing.
+
+wait: 8
+send: Schedule a repeating prompt, every minute, whose text is exactly: say KEEP
+wait: 45
+
+send: List everything scheduled.
+wait: 45
+mark: === the job before the switch ===
+
+send: /model qwen2.5-coder:7b
+wait: 45
+mark: === AC 24 above: switched. The schedule may not have moved ===
+
+send: List everything scheduled.
+wait: 55
+mark: === AC 24 above: same identifier, once, not doubled ===
+
+# Idle at the prompt with a job still scheduled, so the exit below is AC 33's
+# and not AC 10's.
+idle: 15
+send: /exit

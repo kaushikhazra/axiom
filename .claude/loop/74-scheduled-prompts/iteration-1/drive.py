@@ -176,6 +176,18 @@ def main() -> None:
                     time.sleep(0.05)
             elif verb == "mark":
                 log.write(f"|| {value}", time.monotonic())
+            elif verb == "inspect":
+                # AC 22 is about the disk *while* a job is scheduled, so the
+                # looking has to happen mid-session and land in the transcript
+                # next to the job it is about. Checked afterwards it proves
+                # nothing: the schedule is gone by then and so is the question.
+                here = SANDBOX / value if value else SANDBOX
+                log.write(f"|| inspect {here}", time.monotonic())
+                if not here.exists():
+                    log.write("||   (no such directory)")
+                for found in sorted(here.rglob("*")):
+                    kind = "dir " if found.is_dir() else "file"
+                    log.write(f"||   {kind} {found.relative_to(here)}")
             else:
                 raise SystemExit(f"unknown step {verb!r}")
     finally:

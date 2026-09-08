@@ -1,0 +1,18 @@
+   0.00  14:35:11  $ C:\Projects\axiom\.venv\Scripts\python.exe -c import axiom; axiom.main() --no-mcp --model qwen2.5:7b   (cwd C:\Projects\.tmp\axiom-manual)
+   3.47  14:35:15  axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+   3.47  14:35:15  axiom: tools cost about 1253 tokens per request, 4% of the window
+   8.02  14:35:19  || typed: List everything that is scheduled right now.
+   3.47  14:35:19  > 
+  21.83  14:35:33  axiom: list_schedules()
+  21.83  14:35:33    | nothing is scheduled
+  22.49  14:35:34  Currently, nothing is scheduled.
+  22.91  14:35:34  
+  58.02  14:36:09  || === AC 23 above: nothing. The previous session took its schedule with it ===
+  58.02  14:36:09  || inspect C:\Projects\.tmp\axiom-manual\.axiom
+   0.00  14:36:09  ||   file mcp.json.bak
+   0.00  14:36:09  ||   file mcp.json.off
+   0.00  14:36:09  ||   file model.json
+  58.02  14:36:09  || === AC 23: and nothing schedule-shaped was left behind on disk either ===
+  58.02  14:36:09  || typed: /exit
+  22.91  14:36:10  > 
+  58.41  14:36:10  || exit status 0

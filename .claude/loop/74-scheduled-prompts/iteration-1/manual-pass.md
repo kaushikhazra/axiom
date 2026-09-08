@@ -395,3 +395,127 @@ scheduled, and the thing to measure is that it does not wait for the next fire.
 **One row cannot be driven from a pipe at all.** The three notes under "Three things
 to watch that are not criteria" - typing at a timed prompt, the prompt take-back on a
 real console, and #83 - all need a real terminal. `drive.py` has no tty and says so.
+
+### The last eight rows - all on qwen2.5:7b
+
+**Six pass outright. Two are right but cannot be reached through a model, which
+is the finding.**
+
+**AC 22 - pass.** `row-16-refuse-cancel-disk.log`. With `a30bf385` scheduled and
+firing every minute, `.axiom/` held `mcp.json.bak`, `mcp.json.off`, `model.json` -
+the three that were there before. Nothing schedule-shaped, anywhere. Looked at
+*during* the session by a new `inspect:` step, because looked at afterwards it
+proves nothing: the schedule is gone by then and so is the question.
+
+**AC 17 - pass.** `cancel_schedule(identifier=deadbeef)` returned
+`error: there is no scheduled job 'deadbeef'`, and the listing a moment later
+still held both real jobs. Told, and nothing else changed.
+
+**AC 16 - pass.** `cancelled a30bf385: 'say TICK'`. TICK had fired at 14:23:04 and
+14:24:00; from 14:24:19 to 14:26:53 - **two more boundaries** - nothing fired at
+all. Confirmed, and nothing further ran from it.
+
+**AC 24 - pass, and the behaviour is better evidence than the listing.**
+`row-24-switch-and-leave.log`. `6a964647` scheduled, then `/model
+qwen2.5-coder:7b` mid-session. The job fired at 14:33:00 and again at 14:34:00 -
+**once each minute, across the switch**. Not cancelled, and not doubled, which a
+listing can only assert and a firing job demonstrates.
+
+Worth knowing: the listing *after* the switch was the model reciting the earlier
+tool output from conversation history - it never called `list_schedules` and it
+repeated a stale `next at 14:32`. The row stands on the firing, not on that.
+
+**AC 33 - pass, measured.** `/exit` typed at an idle prompt with `6a964647` still
+scheduled: typed at 213.03s, exit status 0 at 213.42s. **0.39 seconds**, and that
+includes this script closing the pipe and reaping the process. It did not wait for
+the 14:35 fire, and there was no extra prompt.
+
+**AC 23 - pass.** `row-23-nothing-survives.log`, a fresh child started after the
+session above had left. `list_schedules()` returned `nothing is scheduled`, and
+`.axiom/` still held only its three original files. The previous session had been
+firing a job once a minute right up to the moment it exited.
+
+### AC 25 and AC 27 - the strings are right, the path is unreachable
+
+Both refusals are exactly what the criteria ask for:
+
+    error: a schedule has five fields - minute hour day-of-month month day-of-week - and this has 6
+    error: '0 9 8 9 *' names 09:00 on 08 September, which has already passed - the next one is 2027-09-08
+
+**But three live attempts could not get a bad expression as far as the tool**, and
+each failed differently:
+
+| asked for | the model did |
+|---|---|
+| `0 */5 * * * *`, verbatim, unchanged | refused to relay it - *"let's correct the cron expression"* - and never called the tool |
+| `0 9 8 9 *`, verbatim, one-shot | substituted `0 9 15 9 *`, *"to ensure the prompt runs at a future date"* |
+| "every 30 seconds" | emitted `*/1 * * * *` - a valid five-field expression - and then said it had scheduled something *"every 30 seconds"* |
+| "09:00 on 8 September 2026", told not to move it | emitted `0 9 8 9 2026`, caught by the *other* guard: `'0 9 8 9 2026' is not a schedule croniter understands` |
+
+A model that knows cron sanitises before the tool sees anything. So the five-field
+refusal and the already-passed refusal are correct, tested, and in practice reached
+only by a model that is wrong in a way this one is not. That is worth knowing
+before anyone spends effort improving the wording of a string a user will rarely
+meet.
+
+The boundary in `LOOKS_LIKE_A_YEAR` behaves as its comment claims, checked the same
+way: `0 9 1 8 *` in September is 327 days out and refused, `0 9 1 3 *` is 174 days
+out and taken - because a March date asked in September is next March, not a
+mistake.
+
+### The misreporting, a third time
+
+`schedule_prompt(cron=*/1 * * * *, ...)` on screen, and the model's sentence
+underneath: *"A repeating prompt has been scheduled to say FAST every 30 seconds."*
+Axiom said `*/1 * * * *` and `next at 2026-09-08 14:29`. Both were on screen and
+both were right. This is now three models, three separate turns, and the same
+shape every time: the tool result is correct, visible since #85, and the sentence
+below it is not.
+
+---
+
+## The pass is complete - 2026-09-08
+
+**All twenty-one rows are driven. This supersedes the owed list above.**
+
+| | |
+|---|---|
+| pass, 2026-09-03 | 2, 3, 5, 6, 7, 8, 9, 12, 13 |
+| pass, 2026-09-08 | 4, 5, 10, 11, 14, 16, 17, 22, 23, 24, 33 - and 7, 9 re-confirmed |
+| right, but unreachable through a model | 25, 27 |
+| left to the fake clock, correctly | 21 |
+
+**Nothing in #74 was found broken.** The two defects this pass turned up belong to
+other code - `run_command` inheriting stdin, and `take_back_prompt` printing a
+cursor escape into a file - and both are fixed, tested, and confirmed live.
+
+### What the pass was actually for
+
+AC 10 was the row worth the time and it says so in the record: cycles 1, 3 and 7 all
+called it structural and free, `observe.md` named it as one of the three that would
+be got wrong, and it was the one criterion the loop settled by argument. It is now
+settled by a transcript - four minute boundaries came due inside a single turn and
+not one interrupted.
+
+The two things that came free with it are the ones no test asked for. `mark_run`
+computing from `now` rather than from the due time is **observable**: four missed
+boundaries produced one run, not a backlog of four. And AC 11's ordering held across
+four consecutive boundaries with the older job in front every time.
+
+### What is still owed to #74, and it is not a row
+
+**Three of these notes are not criteria and still need a real console.** `drive.py`
+has no tty and says so: typing at a timed prompt, the prompt take-back as an eye
+sees it, and [#83](https://github.com/kaushikhazra/axiom/issues/83). A pipe cannot
+answer any of them.
+
+**The model's account of a tool result is wrong often enough to be a pattern.**
+Three models, four turns, the same shape: `next at 11:16` read back as *"01:16"*,
+`*/1 * * * *` read back as *"every 30 seconds"*, a seven-day warning dropped, and a
+model claiming no system access while holding eleven tools. #85 put the truth on
+screen and it stayed there every time. The remaining half is what the model is told
+about what it just did, and it is not #74's.
+
+**The refusals are effectively unreachable.** A model that knows cron corrects a bad
+expression before the tool sees it, so AC 25's and AC 27's messages - both correct -
+are met mainly by a model wrong in a way these are not.

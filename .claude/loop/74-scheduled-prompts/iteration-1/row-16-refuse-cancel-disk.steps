@@ -1,0 +1,44 @@
+# Five rows in one session, on qwen2.5:7b for ten-second turns:
+#
+#   AC 22 - with a job scheduled, nothing schedule-shaped anywhere in .axiom/
+#   AC 25 - a schedule that is not five fields is refused, and says why
+#   AC 27 - a one-shot at a time that has gone is refused, and says it has passed
+#   AC 17 - cancelling an identifier you invented says there is no such job
+#   AC 16 - cancelling a real one is confirmed, and nothing further runs from it
+#
+# AC 25 and AC 27 hand the model the exact expression. That is not dodging the
+# aim test: what is under test in both is axiom's *refusal*, and getting a bad
+# expression as far as the tool is the precondition, not the criterion. AC 16 and
+# AC 17 do make the model aim, because there the identifier is the whole point.
+#
+# `0 9 8 9 *` is the shape AC 27 actually needs. A daily `0 9 * * *` asked in the
+# afternoon is not "a time that has gone" - it is tomorrow morning, and the code
+# is right to take it. Only a fully pinned moment - minute, hour, day, month -
+# names one instant in a year, which is what `_already_gone` reads.
+
+wait: 8
+send: Schedule a repeating prompt, every minute, whose text is exactly: say TICK
+wait: 45
+mark: === AC 22 below: a job is scheduled right now. Look at the disk ===
+inspect: .axiom
+mark: === AC 22 above ===
+
+send: Schedule a prompt using exactly this cron expression, unchanged: 0 */5 * * * *  - the prompt text is: say SIX
+wait: 45
+mark: === AC 25 above: refused, and the refusal says what was wrong with it ===
+
+send: Schedule a one-off prompt using exactly this cron expression, unchanged: 0 9 8 9 *  - it must run once only, and the prompt text is: say GONE
+wait: 45
+mark: === AC 27 above: refused, and says the time has passed ===
+
+send: Cancel the scheduled prompt whose identifier is deadbeef.
+wait: 45
+mark: === AC 17 above: no such job, and nothing else changed ===
+
+send: List everything scheduled, then cancel the TICK one using its real identifier.
+wait: 60
+mark: === AC 16 above: confirmed. Nothing may fire from here ===
+
+idle: 130
+mark: === AC 16: two boundaries have passed with nothing scheduled. Silence is the result ===
+send: /exit
