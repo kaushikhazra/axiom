@@ -5,6 +5,7 @@ no git, no network, nothing outside tmp_path. The security stories have not
 landed, and CLAUDE.md governs what these are allowed to do.
 """
 
+import os
 import subprocess
 import sys
 import time
@@ -163,6 +164,8 @@ def test_a_cancelled_command_does_not_swallow_the_interrupt():
         mp.setattr(subprocess.Popen, "communicate", interrupt_the_first_wait)
         with pytest.raises(KeyboardInterrupt):
             run(f'{PYTHON} -c "print(1)"')
+
+
 def test_a_command_is_handed_no_input_to_read():
     """The child gets DEVNULL, never axiom's own stdin.
 
@@ -197,15 +200,29 @@ def test_a_command_that_reads_input_ends_instead_of_waiting():
     nobody watching, so it sat until the limit and the model was told the
     command had been **slow** - when what it had been was blocked.
 
-    A short limit here on purpose: a regression does not fail this by returning
-    the wrong string, it fails it by taking the limit to say so.
+    **This test has to build the console it is missing.** Written the obvious
+    way it passed against the bug: pytest already points this process's fd 0 at
+    nothing, so an inheriting child saw end-of-input too and the whole thing was
+    decoration. So fd 0 becomes a pipe with its write end held open - readable,
+    and never answered, which is what a console with nobody typing at it is.
+
+    A short limit on purpose. A regression does not fail this by returning the
+    wrong string; it fails it by taking the limit to say so.
     """
-    started = time.monotonic()
-    result = run(
-        f'{PYTHON} -c "import sys; print(len(sys.stdin.read()))"',
-        tools.Limits(command_timeout=5),
-    )
-    elapsed = time.monotonic() - started
+    reading, writing = os.pipe()  # nothing is ever written to `reading`
+    stood_aside = os.dup(0)
+    try:
+        os.dup2(reading, 0)
+        started = time.monotonic()
+        result = run(
+            f'{PYTHON} -c "import sys; print(len(sys.stdin.read()))"',
+            tools.Limits(command_timeout=5),
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        os.dup2(stood_aside, 0)
+        for spare in (stood_aside, reading, writing):
+            os.close(spare)
 
     assert "0" in result, "the command was given something to read"
     assert "stopped" not in result, "it waited for input instead of ending"
