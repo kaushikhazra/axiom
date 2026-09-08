@@ -1,0 +1,11 @@
+   0.00  11:10:19  $ C:\Projects\axiom\.venv\Scripts\python.exe -c import axiom; axiom.main() --no-mcp   (cwd C:\Projects\.tmp\axiom-manual)
+   5.09  11:10:25  axiom: using qwen3.5:9b - your last choice here
+   5.14  11:10:25  axiom: qwen3.5:9b at http://localhost:11434 (context: 262144 tokens, 11 tools including web)
+   5.14  11:10:25  axiom: tools cost about 1253 tokens per request, 0% of the window
+   6.03  11:10:25  || typed: Reply with exactly one word: ready.
+   5.14  11:10:25  > 
+  12.70  11:10:32  ready
+  12.94  11:10:32  
+  66.03  11:11:25  || typed: /exit
+  12.94  11:11:26  > 
+  66.70  11:11:26  || exit status 0

@@ -175,3 +175,89 @@ Not filed yet - Kaushik's call.
 | 24 | `/model` mid-session, then list - same job, not duplicated |
 | 25, 27 | a schedule that is not five fields; a one-shot at a time that has gone |
 | 33 | `/exit` with jobs scheduled, no wait |
+
+---
+
+## What happened - 2026-09-08, part two
+
+**AC 10 is settled, and it passes.** Transcript in `row-10-turn-in-progress.log`.
+
+### The instrument, and why one was needed
+
+AC 10 asks whether a job *waits*, which is a question about ordering, and ordering is
+the one thing an eye at a terminal is bad at. `drive.py` types at a real axiom over a
+pipe and stamps every line with the moment its first byte arrived.
+
+A piped run normally cannot fire a schedule at all: `_next_line` only looks at the clock
+when the timed read returns `WAITING`, and a pipe fed from a file is never empty, so
+`due()` is never reached. **Holding the pipe open and writing into it slowly** is what
+fixes that - between writes the reader thread is genuinely blocked in `input()`, the
+queue times out after `SCHEDULE_TICK`, and the loop consults a real `datetime.now()`
+exactly as it does for a person sitting still.
+
+It cannot see the drawing. No tty means no composer and no working `take_back_prompt`,
+so how a line *looks* stays a row for a person at a real console.
+
+**`uv run` will not do.** The first run hung with the banner printed and nothing else:
+uv does not relay piped stdin to the child, so axiom sat in `input()` forever and ollama
+never spawned a runner. `drive.py` launches the project interpreter with
+`-c "import axiom; axiom.main()"` instead, resolved from its own location.
+
+### AC 10 - pass
+
+qwen3.5:9b thinks for sixty to ninety seconds before it says anything, which makes this
+row easy rather than hard: with `* * * * *` scheduled, **every** turn straddles a minute
+boundary.
+
+| | |
+|---|---|
+| 11:17:17 | a scheduled turn fires. `mark_run` moves it on - due again at 11:18 |
+| 11:18:25 | the escapement question is typed |
+| 11:18:36 | that turn calls `run_command`. **11:18 has come and gone.** Nothing fires |
+| 11:19:06 | still in the turn, through 11:19. Nothing fires |
+| 11:20:48 | the reply starts streaming, through 11:20. Nothing fires |
+| 11:21:06 to 11:21:56 | five paragraphs stream, through 11:21. Nothing cuts into them |
+| 11:21:56 | the reply ends, the prompt is drawn, **and the job runs** |
+
+**Four boundaries came due while a turn was in progress. Not one interrupted.** The
+criterion three cycles answered by argument now has evidence.
+
+Two things came free with it. **`mark_run` computing from `now` is observable**: four
+missed boundaries produced *one* run at 11:21:56, not a backlog of four - the behaviour
+its docstring claims, seen rather than reasoned. And **AC 9 re-confirmed** on a real
+clock, twice, at 11:16:00 and 11:17:17 with nothing typed.
+
+### Three things found that are not AC 10
+
+**1. `take_back_prompt` is the one drawing function with no tty guard.** Every scheduled
+turn in the transcript reads `[Kaxiom: scheduled - What time is it?`. It prints a bare
+carriage return and an erase-line escape unconditionally, while `_prompt`, `_composer`
+and the rest all check `_rendering and sys.stdout.isatty()` first. So **anyone
+redirecting axiom to a file gets an escape sequence glued to the front of every
+scheduled turn**, and the `> ` it meant to erase stays as well. Same class as #85 -
+something axiom prints landing wrong - and not filed.
+
+**2. The `run_command` stdin defect, reproduced with both halves in one session.** Same
+command, same run, differing only in whether stdin was readable:
+
+| | | |
+|---|---|---|
+| 11:18:36 | pipe still open | **30.0s**, `error: stopped at the 30 second limit` |
+| 11:22:27 | pipe closed | **0.02s**, `The current date is: 08-09-2026` |
+
+`date` on Windows prints the date and then waits for a new one. With a readable stdin it
+waits out the whole limit and the model is told the command was *slow*; with EOF it
+answers instantly and carries the thing the model asked for. Closing the child's stdin
+is still the whole fix, and this is now measured rather than argued. **Still not filed.**
+
+**3. #85 put the truth on screen and the model still garbled it in prose.** The tool
+result said `next at 2026-09-08 11:16 local`. The model wrote *"at 01:16 on Sept 8,
+2026"*, dropped the seven-day warning it had repeated correctly an hour earlier, and
+added *"I don't have direct system access to report the actual time"* while holding
+eleven tools. The screen was right throughout - this is the system-prompt half, and it
+is not #74's.
+
+**One note on the model's aim, not on #74.** It called `schedule_prompt()` with no
+arguments at 11:16:38 and got `error: schedule_prompt was called wrongly -
+schedule_prompt() missing 2 required positional arguments`. The scheduler behaved, the
+model recovered, and the row is unaffected.

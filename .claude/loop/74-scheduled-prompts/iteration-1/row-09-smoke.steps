@@ -1,0 +1,9 @@
+# Does a job fire at all through a pipe? AC 9, and the precondition for AC 10.
+# If nothing appears in the idle stretch, the instrument is wrong, not axiom.
+
+wait: 12
+send: Schedule a prompt to run every minute that asks what time it is.
+wait: 25
+mark: nothing typed from here - anything below arrived on its own
+idle: 95
+send: /exit

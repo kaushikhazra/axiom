@@ -1,0 +1,7 @@
+# Can the pipe drive axiom at all? Nothing to do with #74 - it only has to
+# answer, so that a later silence means something.
+
+wait: 6
+send: Reply with exactly one word: ready.
+wait: 60
+send: /exit

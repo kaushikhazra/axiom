@@ -1,0 +1,25 @@
+# AC 9 and AC 10, in one session, on a real clock.
+#
+# qwen3.5:9b thinks for ninety seconds or more before it says anything, which is
+# the awkward fact that makes this row easy: any turn at all straddles a minute
+# boundary, so a `*/1 * * * *` job is guaranteed to come due mid-turn. The only
+# thing being arranged below is *when* the turn starts, so the boundary lands
+# well inside it rather than at either edge.
+
+wait: 8
+send: Schedule a prompt to run every minute that asks what time it is.
+
+# Long enough for the turn to finish AND for one whole minute to pass with the
+# session sitting at an idle prompt. That stretch is AC 9.
+wait: 190
+mark: === AC 9 above: nothing was typed, so anything up there fired on its own ===
+
+# Start the long turn a quarter of a minute in, so :00 arrives with the reply
+# part written and the model still generating.
+at-second: 25
+send: Write a detailed 400 word explanation of how a mechanical clock escapement works. Do not use any tools.
+idle: 170
+mark: === AC 10 above: did a scheduled turn cut into that reply, or wait for it? ===
+
+idle: 70
+send: /exit
