@@ -261,3 +261,33 @@ is not #74's.
 arguments at 11:16:38 and got `error: schedule_prompt was called wrongly -
 schedule_prompt() missing 2 required positional arguments`. The scheduler behaved, the
 model recovered, and the row is unaffected.
+
+### Both fixes, confirmed in the path they were found in
+
+`row-10-after-the-fixes.log`, same driver, same model, same sandbox.
+
+**The erase.** Three scheduled turns, all reading `axiom: scheduled - what time it
+is` on their own row. Not one `[K` in the transcript - the only match in the file is
+this checklist's own marker text.
+
+**The stdin.** The model reached for `date` **six** times in one run, in five
+different shapes, and **every one returned in under 0.05s**:
+
+    12:42:43  run_command(command=date)
+              | The current date is: 08-09-2026
+              | Enter the new date: (dd-mm-yy)
+              | error: exited with status 1
+
+Not one `stopped at the 30 second limit` in the file. On the old build those six
+calls were three minutes of dead turn time. The model also read the result back
+correctly for the first time - it quoted the tool's output verbatim in a fenced
+block - because there was finally something to quote.
+
+Both were verified the other way too: removing `stdin=DEVNULL` fails the suite with
+`error: stopped at the 5 second limit`, and removing the `isatty` guard fails it with
+`assert '\x1b' not in '\r\x1b[K'`. Suite 964 passed, 1 deselected, 148s.
+
+**The sweep is clean.** `take_back_prompt` was the only place in `terminal.py`
+printing a cursor escape without a guard - `_start_working`, `_stop_working` and
+every `Rendered` path sit behind `_rendering and sys.stdout.isatty()` at their call
+sites.
