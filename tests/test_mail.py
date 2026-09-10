@@ -387,6 +387,191 @@ def test_no_mailbox_says_so_rather_than_crashing(tmp_path):
     assert tools.run("search_mail", {"query": "anything"}) == tools.NO_MAIL
 
 
+# -- reading one message ----------------------------------------------------
+
+
+def encoded(text: str) -> str:
+    """As Gmail sends a body: base64url, padding stripped."""
+    import base64
+
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode().rstrip("=")
+
+
+def part(mime, text=None, filename="", size=None, parts=None):
+    """One node of a Gmail payload tree."""
+    node = {"mimeType": mime, "filename": filename}
+    if text is not None:
+        node["body"] = {"data": encoded(text)}
+    if size is not None:
+        node["body"] = {"size": size}
+    if parts is not None:
+        node["parts"] = parts
+    return node
+
+
+class FakeOneMessage:
+    """`users().messages()` for a single `get(format="full")`."""
+
+    def __init__(self, payload, headers=None):
+        self.payload = payload
+        self.headers = headers or {}
+        self.calls = []
+
+    def get(self, userId, id, format, metadataHeaders=None):  # noqa: A002, N803
+        self.calls.append(("get", id, format))
+        return FakeExecutable(
+            {
+                "payload": {
+                    **self.payload,
+                    "headers": [
+                        {"name": name, "value": value}
+                        for name, value in self.headers.items()
+                    ],
+                }
+                # Deliberately no top-level "headers". Gmail puts them under
+                # `payload` and nowhere else, and a fake that carries them in
+                # both places would pass whichever one the code read.
+            }
+        )
+
+
+def read(payload, tmp_path, headers=None, message_id="m1"):
+    messages = FakeOneMessage(payload, headers)
+    box = mailbox_for(messages, tmp_path)
+    return tools.run("read_mail", {"message_id": message_id}, mailbox=box), messages
+
+
+def test_a_plain_single_part_body_is_read(tmp_path):
+    """AC 18, AC 19 - the shape everything else is measured against."""
+    result, _ = read(
+        part("text/plain", "the difference engine is not the analytical one"),
+        tmp_path,
+        {"From": "Ada", "Subject": "engines", "Date": "Tue, 9 Sep 2026"},
+    )
+    assert "the difference engine is not the analytical one" in result
+    assert "Ada" in result
+    assert "engines" in result
+
+
+def test_padding_that_gmail_stripped_is_put_back(tmp_path):
+    """AC 19. base64url with no padding is what Gmail actually sends, and a
+    body whose length is not a multiple of four raises without this."""
+    for length in range(1, 8):
+        body = "x" * length
+        result, _ = read(part("text/plain", body), tmp_path)
+        assert body in result
+
+
+def test_multipart_alternative_prefers_the_plain_half(tmp_path):
+    """AC 19. Both halves say the same thing; the plain one costs less window
+    and does not teach the model to quote tags."""
+    result, _ = read(
+        part(
+            "multipart/alternative",
+            parts=[
+                part("text/plain", "plain words"),
+                part("text/html", "<p>html words</p>"),
+            ],
+        ),
+        tmp_path,
+    )
+    assert "plain words" in result
+    assert "<p>" not in result
+    assert "html words" not in result
+
+
+def test_html_only_is_stripped_rather_than_handed_over(tmp_path):
+    """AC 19. No plain part anywhere, so the HTML is all there is."""
+    result, _ = read(
+        part(
+            "multipart/alternative",
+            parts=[
+                part("text/html", "<html><body><p>only html here</p></body></html>")
+            ],
+        ),
+        tmp_path,
+    )
+    assert "only html here" in result
+    assert "<p>" not in result
+    assert "<html>" not in result
+
+
+def test_a_text_part_nested_under_a_mixed_part_is_found(tmp_path):
+    """AC 19. An attachment pushes the body a level down, which is the shape a
+    single-level reader gets wrong."""
+    result, _ = read(
+        part(
+            "multipart/mixed",
+            parts=[
+                part(
+                    "multipart/alternative",
+                    parts=[part("text/plain", "buried but readable")],
+                ),
+                part("application/pdf", filename="report.pdf", size=2048),
+            ],
+        ),
+        tmp_path,
+    )
+    assert "buried but readable" in result
+
+
+def test_a_message_with_no_readable_part_says_so(tmp_path):
+    """AC 19's last case. Not an empty string - a model told nothing came back
+    answers from memory, which is the failure #40 exists to prevent."""
+    result, _ = read(part("image/png", filename="", size=99), tmp_path)
+    assert "no part that can be shown as text" in result
+
+
+def test_an_attachment_is_named_not_dropped(tmp_path):
+    """AC 20. Filename, type and size - and nothing fetched."""
+    result, messages = read(
+        part(
+            "multipart/mixed",
+            parts=[
+                part("text/plain", "see attached"),
+                part("application/pdf", filename="report.pdf", size=2048),
+            ],
+        ),
+        tmp_path,
+    )
+    assert "report.pdf" in result
+    assert "application/pdf" in result
+    assert "2048" in result
+    assert "see attached" in result
+
+
+def test_reading_never_fetches_an_attachment(tmp_path):
+    """AC 31. Proved by what the fake was asked for, not by the absence of a
+    file - a test that checks for no file passes on a machine where the write
+    silently failed."""
+    _, messages = read(
+        part(
+            "multipart/mixed",
+            parts=[
+                part("text/plain", "body"),
+                part("application/pdf", filename="big.pdf", size=9_000_000),
+            ],
+        ),
+        tmp_path,
+    )
+    assert [name for name, *_ in messages.calls] == ["get"]
+    assert not hasattr(messages, "attachments")
+
+
+def test_an_empty_id_reaches_google_not_at_all(tmp_path):
+    messages = FakeOneMessage(part("text/plain", "never read"))
+    box = mailbox_for(messages, tmp_path)
+    result = tools.run("read_mail", {"message_id": "  "}, mailbox=box)
+    assert result.startswith("error:")
+    assert messages.calls == []
+
+
+def test_reading_asks_for_the_full_message(tmp_path):
+    """`metadata` would give the headers and no body at all."""
+    _, messages = read(part("text/plain", "words"), tmp_path)
+    assert messages.calls[0][2] == "full"
+
+
 # -- what a refusal costs ---------------------------------------------------
 
 

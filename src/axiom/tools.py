@@ -82,7 +82,7 @@ NO_SKILLS = "error: skills are not available in this session"
 
 # The tools that read the user's mail (#89). Named here so a caller can leave
 # them out without knowing how they are implemented, exactly as WEB_TOOLS is.
-MAIL_TOOLS = frozenset({"search_mail"})
+MAIL_TOOLS = frozenset({"search_mail", "read_mail"})
 
 # What a mail tool says when the session has no mailbox at all - `--no-tools`,
 # or a caller that never built one. Distinct from `Mailbox.problem`, which is
@@ -605,6 +605,135 @@ def _header(message: dict, name: str) -> str:
     return ""
 
 
+def _decoded(part: dict) -> str:
+    """One part's data as text. Empty if there is none or it will not decode.
+
+    **base64url, not base64** - Gmail uses `-` and `_` where base64 uses `+`
+    and `/`, and it strips the padding. `urlsafe_b64decode` wants the padding
+    back, which is what the `=` arithmetic is for; without it a body whose
+    length is not a multiple of four raises rather than decoding.
+
+    Decoded with `errors="replace"`, because a body that is almost readable is
+    worth more to a model than an exception - and a message that arrives in an
+    encoding nobody declared correctly is AC 19's whole point.
+    """
+    import base64
+
+    data = part.get("body", {}).get("data")
+    if not data:
+        return ""
+    try:
+        padded = data + "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _stripped(html: str) -> str:
+    """HTML as something a model can read.
+
+    Only reached when a message has no plain-text part at all. Handing a model
+    raw markup spends the window on tags and teaches it to quote them back.
+
+    `trafilatura` is already a dependency, already used by `fetch_page`, and is
+    better at this than anything written here would be. Its fallback is the raw
+    text rather than nothing, because a body that resisted extraction is still
+    the only body there is.
+    """
+    import re
+
+    extracted = trafilatura.extract(html, include_links=False, include_images=False)
+    if extracted:
+        return extracted
+    return re.sub(r"<[^>]+>", " ", html)
+
+
+def _body_and_attachments(payload: dict) -> tuple[str, list[str]]:
+    """Walk a message's parts once, taking the text and naming the files.
+
+    One walk rather than two, because AC 19 and AC 20 are looking at the same
+    tree and a second pass would be a second chance to disagree with the first.
+
+    **Plain beats HTML**, at any depth. A `multipart/alternative` carries both
+    and they say the same thing, so preferring the plain one costs nothing and
+    saves the window. HTML is kept separately and used only if no plain part
+    turns up anywhere in the tree.
+
+    **Nothing is fetched and nothing is written** (AC 31). An attachment's
+    bytes live behind a separate `attachments().get()` call that is never made -
+    the filename and size are in the part itself, and that is all a model is
+    given.
+    """
+    plain: list[str] = []
+    html: list[str] = []
+    attachments: list[str] = []
+
+    def walk(part: dict) -> None:
+        kind = part.get("mimeType", "")
+        filename = part.get("filename") or ""
+        if filename:
+            # AC 20. Named rather than dropped, exactly as `servers.as_text`
+            # names a block it cannot show - a model told nothing came back
+            # answers from memory instead, which is the failure #40 prevents.
+            size = part.get("body", {}).get("size")
+            measured = f", {size} bytes" if size else ""
+            attachments.append(f"{filename} ({kind or 'unknown type'}{measured})")
+            return
+        for below in part.get("parts") or []:
+            walk(below)
+        if kind == "text/plain":
+            plain.append(_decoded(part))
+        elif kind == "text/html":
+            html.append(_decoded(part))
+
+    walk(payload)
+    text = "\n".join(one for one in plain if one).strip()
+    if not text:
+        text = "\n".join(_stripped(one) for one in html if one).strip()
+    return text, attachments
+
+
+def read_mail(message_id: str, mailbox=None) -> str:  # noqa: ANN001
+    """One message, as text a model can read (AC 18, AC 19, AC 20).
+
+    Metadata first so the model knows whose words these are, then the body,
+    then what came attached. `format="full"` because the parts are the point;
+    `metadata` would give the headers and no body at all.
+    """
+    if mailbox is None:
+        return NO_MAIL
+    if not message_id.strip():
+        return "error: read_mail needs the id of a message to read"
+
+    try:
+        service = mailbox.service(announce=mail_announcer)
+    except mail.Refused as refused:
+        return f"error: {refused}"
+
+    message = (
+        service.users()
+        .messages()
+        .get(userId="me", id=message_id.strip(), format="full")
+        .execute()
+    )
+    payload = message.get("payload", {})
+    text, attached = _body_and_attachments(payload)
+
+    lines = [
+        f"From: {_header(message, 'From')}",
+        f"Date: {_header(message, 'Date')}",
+        f"Subject: {_header(message, 'Subject')}",
+        "",
+        # AC 19's last case. A model told nothing came back invents one; told
+        # the message had no readable part, it can say so.
+        text or "(this message has no part that can be shown as text)",
+    ]
+    if attached:
+        lines.append("")
+        lines.append("Attached: " + "; ".join(attached))
+    return "\n".join(lines)
+
+
 def search_mail(query: str, mailbox=None) -> str:  # noqa: ANN001
     """Messages matching a search, as sender, subject, date and id (AC 17).
 
@@ -816,6 +945,28 @@ REGISTRY: dict[str, Tool] = {
                 "required": ["query"],
             },
             run=search_mail,
+            needs_mail=True,
+        ),
+        Tool(
+            name="read_mail",
+            description=(
+                "Read one of the user's messages by its id, as given by "
+                "search_mail. Returns the sender, date, subject and the body "
+                "as text, and names anything attached. Read-only."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": (
+                            "The id of the message, exactly as search_mail listed it."
+                        ),
+                    }
+                },
+                "required": ["message_id"],
+            },
+            run=read_mail,
             needs_mail=True,
         ),
         Tool(
