@@ -807,6 +807,137 @@ def test_reading_one_message_is_wrapped_too(tmp_path):
     assert "1//0gX" not in result
 
 
+# -- boundaries, switches and the way out -----------------------------------
+
+
+def test_a_message_that_does_not_exist_is_reported_as_such(tmp_path):
+    """AC 25. Distinct from a refusal, deliberately.
+
+    A model told "Google refused the request" gives up on Gmail; told the id is
+    not there, it tries a different id. The wrong lesson is the defect.
+    """
+    result = tools.run(
+        "read_mail", {"message_id": "nope"}, mailbox=blowing(http_error(404), tmp_path)
+    )
+    assert "no message with that id" in result
+    assert "refused" not in result
+    assert tools.run("read_file", {"path": str(tmp_path)}).startswith("error:")
+
+
+def test_no_tools_offers_no_mail_tool_even_when_configured(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 36, first half. Free from `_prepare` returning None - and tested
+    anyway, because "free" is what cycle 2 assumed about AC 1 before the
+    baseline caught it."""
+    monkeypatch.setenv(mail.CLIENT_ID, "made-up-id")
+    monkeypatch.setenv(mail.CLIENT_SECRET, "made-up-secret")
+    out = start(capsys, monkeypatch, tmp_path, argv=["--no-tools"]).out
+    assert "tools" in out.lower()
+    for name in tools.MAIL_TOOLS:
+        assert name not in out
+
+
+def test_no_tools_means_nothing_can_reach_the_flow(capsys, monkeypatch, tmp_path):
+    """AC 36, the half that matters. With nothing declared there is no call
+    that could open a browser - proved by what the model was sent, not by
+    reasoning about it."""
+    monkeypatch.setenv(mail.CLIENT_ID, "made-up-id")
+    monkeypatch.setenv(mail.CLIENT_SECRET, "made-up-secret")
+    from axiom import main, models
+    from conftest import StubBackend, feed
+
+    monkeypatch.setattr(
+        models, "DEFAULT_CHOICE_FILE", tmp_path / ".axiom" / "model.json"
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    made = StubBackend(models=["big:70b"], turns=[["a reply"]])
+    feed(monkeypatch, ["hello", "/exit"])
+    main(["--no-tools", "--model", "big:70b"], using=made)
+    assert made.tools_sent == [None]
+
+
+def test_a_refused_run_still_exits_zero(capsys, monkeypatch, tmp_path):
+    """AC 40. A refusal returns an `error:` string; nothing raises, so no
+    ordinary way out changes its status."""
+    box = mail.Mailbox(
+        client_id="made-up-id",
+        client_secret="made-up-secret",
+        token_file=tmp_path / "token.json",
+        refused="permission was declined, so Gmail is not available this session",
+    )
+    assert tools.run("search_mail", {"query": "x"}, mailbox=box).startswith("error:")
+    # Both ordinary ways out, after a refusal, with no SystemExit raised.
+    for last in ("/exit", None):
+        lines = ["/mail"] if last is None else ["/mail", last]
+        typed(capsys, monkeypatch, tmp_path, lines)
+
+
+def test_the_flow_closes_its_listener_on_the_timeout_path(monkeypatch):
+    """AC 39. `run_local_server`'s `finally` calls `server_close()`, and the
+    timeout path raises from inside the `try`, so it is covered too
+    (`google_auth_oauthlib/flow.py`).
+
+    **This asserts the close happened, not that the port came free**, and that
+    is a correction rather than a preference. The obvious version - bind the
+    port again afterwards and see that it works - was written first and probed:
+    with `server_close` replaced by a no-op it *still rebound*, because
+    refcounting drops the socket when the server goes out of scope. It would
+    have been green against a library that leaked, on the one criterion #43
+    AC 26 and AC 27 exist in this repo because of.
+
+    No network is touched: the authorization URL is built locally and the wait
+    times out before anything is sent.
+    """
+    import wsgiref.simple_server
+
+    from google_auth_oauthlib.flow import InstalledAppFlow, WSGITimeoutError
+
+    closed = []
+    real_close = wsgiref.simple_server.WSGIServer.server_close
+    monkeypatch.setattr(
+        wsgiref.simple_server.WSGIServer,
+        "server_close",
+        lambda self: closed.append(True) or real_close(self),
+    )
+
+    flow = InstalledAppFlow.from_client_config(
+        {
+            "installed": {
+                "client_id": "made-up-id",
+                "client_secret": "made-up-secret",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        },
+        [mail.SCOPE],
+    )
+    with pytest.raises(WSGITimeoutError):
+        flow.run_local_server(
+            port=0,
+            open_browser=False,
+            authorization_prompt_message=None,
+            timeout_seconds=0.1,
+        )
+    assert closed == [True]
+
+
+def test_axiom_asks_for_a_bounded_wait_so_the_listener_cannot_sit_forever():
+    """AC 10 and AC 39 together, on axiom's side of the line.
+
+    The library closes the listener when the wait ends; what makes the wait
+    *end* is `timeout_seconds`, which is axiom's to pass. Left at the library's
+    default of `None` there is no timeout at all, and a user who closed the tab
+    would leave a socket held for the life of the run.
+    """
+    import inspect
+
+    source = inspect.getsource(mail.Mailbox._granted)
+    assert "timeout_seconds=self.timeout" in source
+    assert mail.GRANT_TIMEOUT > 0
+
+
 # -- what a refusal costs ---------------------------------------------------
 
 

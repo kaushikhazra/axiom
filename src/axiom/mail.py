@@ -339,6 +339,11 @@ def failed_call(failed: Exception) -> str:
         )
 
     status = getattr(getattr(failed, "resp", None), "status", None)
+    if status == 404:
+        # AC 25. Distinct from a refusal: a model that asked for an id that is
+        # not there should try a different id, not give up on Gmail. Told
+        # "Google refused the request", it would read the wrong lesson.
+        return "there is no message with that id"
     if status in (401, 403):
         # 403 is both "quota" and "insufficient scope", and Google's own
         # `reason` is the only thing that tells them apart. It comes from the
