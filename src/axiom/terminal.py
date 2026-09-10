@@ -2146,6 +2146,23 @@ def note_no_skill(name: str, available: tuple[str, ...]) -> None:
     say(f"there is no skill named {name}. Available: {listed}")
 
 
+def note_mail_permission() -> None:
+    """Said before the browser opens, never after (#89 AC 2, AC 5).
+
+    Two facts, because both are the user's decision to make and neither is
+    obvious from a Google consent screen: **which** service is asking, and
+    **what** it will be able to do. "Read" is stated rather than implied - the
+    consent screen names a scope, and a scope is not a sentence.
+
+    `say` rather than a raw print, so a redirected run gets the same words down
+    the same path. AC 37 keeps a non-terminal run from reaching here at all;
+    this function does not second-guess that, because a guard in two places is
+    a guard whose real location nobody knows.
+    """
+    say("Gmail is asking for permission to read your mail - opening your browser")
+    say("axiom will be able to read messages, and cannot send, delete or change any")
+
+
 def note_skills_off() -> None:
     """Skills were switched off for this run (AC 38).
 

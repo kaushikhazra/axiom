@@ -9,6 +9,7 @@ from . import (
     compaction,
     config,
     context,
+    mail,
     models,
     schedule,
     servers,
@@ -279,6 +280,7 @@ def _prepare(
     attached: "servers.Servers",
     model: str,
     catalogue: "skills.Catalogue | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> Running:
     """What this model can do, and how much room it has.
 
@@ -305,6 +307,8 @@ def _prepare(
         declarations = _without_unusable_skill_tools(
             declarations, catalogue, settings.skills_enabled
         )
+    if declarations is not None:
+        declarations = tools.without_unusable_mail_tools(declarations, mailbox)
     if declarations is not None:
         # Said before the wait, not after: starting a server can take seconds,
         # and a silent pause reads as a hang. Only when something will actually

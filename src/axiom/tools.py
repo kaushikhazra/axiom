@@ -17,7 +17,7 @@ import httpx
 import psutil
 import trafilatura
 
-from . import schedule, skills
+from . import mail, schedule, skills
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,12 @@ class Tool:
     # as `needs_schedule`: session state, not user settings, and not something
     # a model can reach by naming it in a call.
     needs_library: bool = False
+    # The session's access to the user's mail (#89). Same reasoning again, and
+    # one more thing this time: the mailbox holds the credential, and `run`
+    # refuses any argument a tool did not declare - so arriving by injection is
+    # what makes it impossible for a token to be a tool argument, and therefore
+    # impossible for one to reach `note_tool` and the screen (AC 29).
+    needs_mail: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,38 @@ SKILL_TOOLS = frozenset({"read_skill", "write_skill", "delete_skill", "invoke_sk
 # What a skill tool says when the session has no library. Not a crash and not
 # silence: a model that asked has to be told why nothing happened.
 NO_SKILLS = "error: skills are not available in this session"
+
+# The tools that read the user's mail (#89). Named here so a caller can leave
+# them out without knowing how they are implemented, exactly as WEB_TOOLS is.
+MAIL_TOOLS = frozenset({"search_mail"})
+
+# What a mail tool says when the session has no mailbox at all - `--no-tools`,
+# or a caller that never built one. Distinct from `Mailbox.problem`, which is
+# the richer answer for a run that has one but cannot use it.
+NO_MAIL = "error: mail is not available in this session"
+
+# How many messages one search returns. Axiom's number, not the model's: it is
+# not in the schema, so a model cannot raise it by asking, and AC 24 is about
+# axiom saying how it bounded the answer rather than about the model choosing.
+MAIL_RESULTS = 10
+
+
+def without_unusable_mail_tools(declarations: list[dict], mailbox) -> list[dict]:  # noqa: ANN001
+    """Drop the mail tools when this run has no credentials to use them with.
+
+    Same shape and same measured reason as `_without_unusable_skill_tools`
+    (#75, cycle 3): four skill tools a run could not use cost 396 tokens on
+    every request. A run with nothing configured buying a Gmail tool it can
+    never call is the same waste, and AC 1 says such a run behaves exactly as
+    it does today - which a twelfth tool in the startup line is not.
+
+    Unlike the skill tools there is no `write_skill` equivalent to keep. A
+    catalogue can be filled from inside axiom, so one tool has to survive an
+    empty one; a Google credential cannot, so nothing here is the way in.
+    """
+    if mailbox is not None and mailbox.configured:
+        return declarations
+    return [tool for tool in declarations if tool["function"]["name"] not in MAIL_TOOLS]
 
 
 def working_directory(limits: "Limits") -> Path:
@@ -554,6 +592,74 @@ def invoke_skill(name: str, library=None) -> str:  # noqa: ANN001
     return library.invoke(name)
 
 
+def _header(message: dict, name: str) -> str:
+    """One header from a metadata-format message, or empty.
+
+    Gmail returns headers as a list of `{name, value}` rather than a mapping,
+    and it does not promise a case. Both are handled here so no caller has to.
+    """
+    wanted = name.lower()
+    for header in message.get("payload", {}).get("headers", []):
+        if header.get("name", "").lower() == wanted:
+            return header.get("value", "")
+    return ""
+
+
+def search_mail(query: str, mailbox=None) -> str:  # noqa: ANN001
+    """Messages matching a search, as sender, subject, date and id (AC 17).
+
+    Metadata only. The body is `read_mail`'s job, and asking for it here would
+    pull every matched message in full to print three fields of each.
+    """
+    if mailbox is None:
+        return NO_MAIL
+    # AC 26. Refused before anything is built, so no call is made to Google and
+    # no browser can open for a request that could not have been answered.
+    if not query.strip():
+        return "error: search_mail needs something to search for"
+
+    try:
+        service = mailbox.service(announce=mail_announcer)
+    except mail.Refused as refused:
+        return f"error: {refused}"
+
+    messages = service.users().messages()
+    found = messages.list(userId="me", q=query, maxResults=MAIL_RESULTS).execute()
+    listed = found.get("messages") or []
+    if not listed:
+        # AC 23. A model told nothing came back answers from memory instead of
+        # saying it found nothing - the failure #40 exists to prevent.
+        return f"no messages match {query!r}"
+
+    rows = []
+    for entry in listed:
+        message = messages.get(
+            userId="me",
+            id=entry["id"],
+            format="metadata",
+            metadataHeaders=["From", "Subject", "Date"],
+        ).execute()
+        rows.append(
+            f"{entry['id']}  {_header(message, 'Date')}  "
+            f"{_header(message, 'From')}  {_header(message, 'Subject')}"
+        )
+
+    # AC 24. Said only when the limit actually bound the answer, so a search
+    # returning four does not claim to have been truncated.
+    if found.get("nextPageToken"):
+        rows.append(f"(the first {MAIL_RESULTS}; there are more matches than this)")
+    return "\n".join(rows)
+
+
+# Called before the browser opens, never after (AC 5). A module-level name
+# rather than a lambda so a test can replace it, and so `mail.py` stays free of
+# anything that draws.
+def mail_announcer() -> None:
+    from . import terminal
+
+    terminal.note_mail_permission()
+
+
 def schedule_prompt(cron: str, prompt: str, repeating: bool = True, jobs=None) -> str:
     """Take a job, and say what was taken (#74 AC 3, AC 4, AC 5, AC 7, AC 8)."""
     if jobs is None:
@@ -686,6 +792,31 @@ REGISTRY: dict[str, Tool] = {
             },
             run=run_command,
             needs_limits=True,
+        ),
+        Tool(
+            name="search_mail",
+            description=(
+                "Search the user's own mail and return the sender, subject, "
+                "date and id of each match. Read-only: nothing here can send, "
+                "delete, or change a message. Use the id with read_mail to see "
+                "what one says."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "What to search for. Gmail's own search syntax "
+                            "works, so from:, subject:, after: and is:unread "
+                            "all mean what they do in Gmail."
+                        ),
+                    }
+                },
+                "required": ["query"],
+            },
+            run=search_mail,
+            needs_mail=True,
         ),
         Tool(
             name="search_web",
@@ -883,6 +1014,7 @@ def run(
     limits: Limits = DEFAULT_LIMITS,
     jobs: "schedule.Schedule | None" = None,
     library: "skills.Library | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> str:
     """Run a call and return what the model should be told.
 
@@ -916,6 +1048,8 @@ def run(
             return tool.run(**arguments, jobs=jobs)
         if tool.needs_library:
             return tool.run(**arguments, library=library)
+        if tool.needs_mail:
+            return tool.run(**arguments, mailbox=mailbox)
         return tool.run(**arguments)
     except TypeError as wrong_arguments:
         return f"error: {name} was called wrongly - {wrong_arguments}"
