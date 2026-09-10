@@ -1,0 +1,28 @@
+# AC 11 - two jobs due in the same minute. One runs, then the other. Not
+# interleaved.
+#
+# Run this with a model that does not think first:
+#     drive.py row-11-two-at-once.steps qwen2.5:7b
+#
+# The first attempt used qwen3.5:9b and never reached the criterion. Turns ran
+# two to five minutes, so the session was mid-turn at nearly every boundary and
+# the second job never got a gap to run in - which demonstrated AC 10 a third
+# time and AC 11 not at all. Both jobs have to come due, run and finish inside a
+# minute for the ordering to be visible, and that needs seconds-long turns.
+#
+# What should happen: at the boundary `due()` returns both, `_next_line` takes
+# the older, and the second cannot start until that whole turn has ended - so
+# the transcript reads ALPHA, its reply, BRAVO, its reply. Never a scheduled
+# line inside somebody else's answer.
+
+wait: 8
+send: Schedule a repeating prompt, every minute, whose text is exactly: say ALPHA
+wait: 40
+
+send: Schedule a second repeating prompt, every minute, whose text is exactly: say BRAVO
+wait: 40
+mark: === AC 11 below: both due every minute from here. Nothing is typed ===
+
+idle: 200
+mark: === AC 11 above ===
+send: /exit

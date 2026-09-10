@@ -1,0 +1,18 @@
+# AC 4  - a one-shot at a named time: scheduled once, with the time said back.
+# AC 5  - it comes back with an identifier you can read.
+# AC 14 - the listing: identifier, schedule, prompt, whether it repeats, next run.
+#
+# 14:30 is far enough out that it cannot fire during the run and muddy the
+# listing. Whether the model turns "14:30 today" into `30 14 * * *` and sets
+# repeating false is its aim, and that is part of what this row tests.
+
+wait: 8
+send: Schedule a one-off prompt for 14:30 today that says exactly: hello. It must run once only and must never repeat.
+wait: 190
+mark: === AC 4 and AC 5 above: scheduled once, 14:30 said back, an identifier to read ===
+
+send: List everything that is scheduled right now.
+idle: 200
+mark: === AC 14 above: identifier, schedule, prompt, repeats or not, next run ===
+
+send: /exit

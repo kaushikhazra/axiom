@@ -1,0 +1,17 @@
+# Both fixes, in the path they were found in rather than in the suite.
+#
+# What to look for:
+#   - a scheduled turn that reads `axiom: scheduled - ...` with no `[K` in front
+#   - `date` answering in well under the limit, carrying the date it printed,
+#     instead of `error: stopped at the 30 second limit`
+
+wait: 8
+send: Schedule a prompt to run every minute that asks what time it is.
+wait: 200
+mark: === above: a scheduled turn should have fired, and be clean of [K ===
+
+send: Run the command `date` and tell me exactly what it printed.
+idle: 180
+mark: === above: date should have answered at once, not burned the limit ===
+
+send: /exit

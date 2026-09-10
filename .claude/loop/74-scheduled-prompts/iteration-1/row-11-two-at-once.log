@@ -1,0 +1,67 @@
+   0.00  14:07:20  $ C:\Projects\axiom\.venv\Scripts\python.exe -c import axiom; axiom.main() --no-mcp --model qwen2.5:7b   (cwd C:\Projects\.tmp\axiom-manual)
+   3.89  14:07:24  axiom: qwen2.5:7b at http://localhost:11434 (context: 32768 tokens, 11 tools including web)
+   3.89  14:07:24  axiom: tools cost about 1253 tokens per request, 4% of the window
+   8.03  14:07:28  || typed: Schedule a repeating prompt, every minute, whose text is exactly: say ALPHA
+   3.89  14:07:28  > 
+  48.03  14:08:08  || typed: Schedule a second repeating prompt, every minute, whose text is exactly: say BRAVO
+  71.38  14:08:31  axiom: schedule_prompt(cron=*/1 * * * *, prompt=say ALPHA, repeating=True)
+  71.39  14:08:31    | scheduled d2513b91: 'say ALPHA' on */1 * * * * (repeating), next at 2026-09-08 14:09 local
+  71.39  14:08:31    | schedules last only as long as this session
+  71.39  14:08:31    | a repeating job stops after 7 days
+  71.74  14:08:34  The repeating prompt "say ALPHA" has been scheduled to run every minute. The next run is expected at 2026-09-08 14:09 local time.
+  74.44  14:08:34  
+  74.52  14:08:36  A repeating job will stop after 7 days, but it will continue as long as this session is active.
+  76.11  14:08:36  
+  76.11  14:08:36  > 
+  79.78  14:08:40  axiom: schedule_prompt(cron=*/1 * * * *, prompt=say BRAVO, repeating=True)
+  79.78  14:08:40    | scheduled bd2af4d4: 'say BRAVO' on */1 * * * * (repeating), next at 2026-09-08 14:09 local
+  79.78  14:08:40    | a repeating job stops after 7 days
+  80.16  14:08:43  The repeating prompt "say BRAVO" has been scheduled to run every minute. The next run is expected at 2026-09-08 14:09 local time.
+  83.00  14:08:43  
+  83.06  14:08:44  A repeating job will stop after 7 days.
+  83.80  14:08:44  
+  88.03  14:08:48  || === AC 11 below: both due every minute from here. Nothing is typed ===
+  83.80  14:09:00  > 
+  99.66  14:09:00  axiom: scheduled - say ALPHA
+  99.66  14:09:00  
+ 100.19  14:09:00  ALPHA
+ 100.34  14:09:00  
+ 100.34  14:09:00  > 
+ 100.59  14:09:00  axiom: scheduled - say BRAVO
+ 100.59  14:09:00  
+ 101.02  14:09:01  BRAVO
+ 101.22  14:09:01  
+ 101.22  14:10:00  > 
+ 159.69  14:10:00  axiom: scheduled - say ALPHA
+ 159.69  14:10:00  
+ 160.41  14:10:00  ALPHA
+ 160.55  14:10:00  
+ 160.55  14:10:01  > 
+ 160.81  14:10:01  axiom: scheduled - say BRAVO
+ 160.81  14:10:01  
+ 161.22  14:10:01  BRAVO
+ 161.44  14:10:01  
+ 161.44  14:11:00  > 
+ 219.80  14:11:00  axiom: scheduled - say ALPHA
+ 219.80  14:11:00  
+ 220.59  14:11:01  ALPHA
+ 220.74  14:11:01  
+ 220.74  14:11:01  > 
+ 221.00  14:11:01  axiom: scheduled - say BRAVO
+ 221.00  14:11:01  
+ 221.42  14:11:01  BRAVO
+ 221.62  14:11:01  
+ 221.62  14:12:00  > 
+ 279.88  14:12:00  axiom: scheduled - say ALPHA
+ 279.88  14:12:00  
+ 280.42  14:12:01  ALPHA
+ 280.83  14:12:01  
+ 280.83  14:12:01  > 
+ 281.08  14:12:01  axiom: scheduled - say BRAVO
+ 281.08  14:12:01  
+ 281.66  14:12:02  BRAVO
+ 281.92  14:12:02  
+ 288.03  14:12:08  || === AC 11 above ===
+ 288.03  14:12:08  || typed: /exit
+ 281.92  14:12:08  > 
+ 288.42  14:12:08  || exit status 0

@@ -1,0 +1,29 @@
+# AC 25 and AC 27, second attempt.
+#
+# The first attempt handed the model the bad expression as a literal string and
+# told it not to change it. It changed it anyway, both times - "let's correct the
+# cron expression", "let's use a future date" - so `_checked` and `_already_gone`
+# were never reached and neither row was settled.
+#
+# Asking a model to relay a string it believes is wrong is the weakest way in.
+# This asks for the two things a *user* would ask for that produce a bad call on
+# their own:
+#
+#   AC 25 - "every 30 seconds" has no five-field expression. A model that reaches
+#           for cron's optional seconds field emits six, which is both "not five
+#           fields" and "finer than a minute".
+#   AC 27 - a named date that happens to be today, with the hour already gone.
+#           It has to be fully pinned - minute, hour, day, month - because that is
+#           what `_already_gone` reads; a daily `0 9 * * *` is tomorrow morning
+#           and the code is right to take it.
+
+wait: 8
+send: Schedule a repeating prompt that runs every 30 seconds and says exactly: say FAST
+wait: 55
+mark: === AC 25 above: not five fields, refused, and the refusal says what was wrong ===
+
+send: Schedule a one-off prompt for 09:00 on 8 September 2026, whose text is exactly: say GONE. Encode that exact date and hour. Do not move it to a later date - I am deliberately testing what happens with a time that has already passed today.
+wait: 55
+mark: === AC 27 above: refused, and says it has passed ===
+
+send: /exit

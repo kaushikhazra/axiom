@@ -1,0 +1,16 @@
+   0.00  11:11:36  $ C:\Projects\axiom\.venv\Scripts\python.exe -c import axiom; axiom.main() --no-mcp   (cwd C:\Projects\.tmp\axiom-manual)
+   4.30  11:11:40  axiom: using qwen3.5:9b - your last choice here
+   4.33  11:11:40  axiom: qwen3.5:9b at http://localhost:11434 (context: 262144 tokens, 11 tools including web)
+   4.33  11:11:40  axiom: tools cost about 1253 tokens per request, 0% of the window
+  12.02  11:11:48  || typed: Schedule a prompt to run every minute that asks what time it is.
+   4.33  11:11:48  > 
+  37.02  11:12:13  || nothing typed from here - anything below arrived on its own
+ 106.47  11:13:23  axiom: schedule_prompt(cron=*/1 * * * *, prompt=what time it is, repeating=True)
+ 106.48  11:13:23    | scheduled 4196a76e: 'what time it is' on */1 * * * * (repeating), next at 2026-09-08 11:14 local
+ 106.48  11:13:23    | schedules last only as long as this session
+ 106.48  11:13:23    | a repeating job stops after 7 days
+ 113.38  11:13:42  Done! A prompt has been scheduled to run every minute that asks what time it is. The next execution will be at 11:14 local time. Remember that repeating jobs stop after 7 days, and all schedules last only as long as this session.
+ 125.67  11:13:42  
+ 132.03  11:13:48  || typed: /exit
+ 125.67  11:13:49  > 
+ 132.58  11:13:49  || exit status 0

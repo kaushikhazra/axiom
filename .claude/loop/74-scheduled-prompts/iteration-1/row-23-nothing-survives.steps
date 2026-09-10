@@ -1,0 +1,16 @@
+# AC 23 - leave, start again, ask for the list. Nothing scheduled.
+#
+# A fresh child, started after the session that scheduled `6a964647` has exited.
+# Same sandbox, same `.axiom/`, same everything a schedule could have been
+# written into - and the previous run was firing a job once a minute right up to
+# the moment it left.
+
+wait: 8
+send: List everything that is scheduled right now.
+wait: 50
+mark: === AC 23 above: nothing. The previous session took its schedule with it ===
+
+inspect: .axiom
+mark: === AC 23: and nothing schedule-shaped was left behind on disk either ===
+
+send: /exit
