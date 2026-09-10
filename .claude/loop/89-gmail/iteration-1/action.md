@@ -1,85 +1,60 @@
 # Action
 
-## Correcting cycle 2's log before anything else
+Cycle 3 wired the session, so `search_mail` is reachable by a model in a real run. Its
+constraint: **a search returns ids nobody can open.** AC 17 hands the model a list and AC 18
+is the tool that reads one, and without it the feature is a directory with no doors.
 
-`logs/cycle-2.md` says the suite stood at 986 passed. **It did not when that was written.**
-Five tests in `test_tool_cost.py` were red, and the number in the log came from arithmetic
-on a subset run rather than from a full one. Logs are immutable, so the correction lives
-here.
+**Write `read_mail`. Nothing else.** The `/mail` command is the next cycle's.
 
-Fixed in the same cycle, and the tree is now genuinely at **986 passed, 1 skipped,
-1 deselected, 126.99s**, measured with nothing else running.
+## Before writing anything
 
-**The generalisable part matters more than the miss.** Three places derive an expected
-tool set from `REGISTRY` and each has to learn about every filtered group:
+`gh issue view 89`. Cycle 3 found two claims made against **#90's** numbering, and the only
+reason it found them was reading the issue rather than trusting a copy. Do the same.
 
-| | |
+**Commit before breaking anything.** Cycle 3 lost eight edits to `git checkout --` on
+uncommitted work — the exact failure `assumption.md` names. Knowing the rule did not
+prevent it; committing would have.
+
+## AC 19 is the row this cycle exists for
+
+*"A message's body reaches the model as readable text whatever encoding it arrived in."*
+
+The happy path is one shape and Gmail has several. Handle each, and **write a test per
+shape** — a single "it decodes base64" test would claim the row while covering a fraction
+of it:
+
+| shape | what it is |
 |---|---|
-| `tests/test_switch.py` | `ALL_TOOLS` |
-| `tests/test_tool_cost.py` | `offered()` |
-| `tests/test_characterization.py` | the baseline transcript, indirectly |
+| `text/plain` single part | body in `payload.body.data`, base64url |
+| `multipart/alternative` | plain and HTML siblings; take the plain one |
+| HTML only | no plain part at all — strip it rather than hand the model tags |
+| `multipart/mixed` with an attachment | the text part is nested under another part |
+| nothing decodable | say so; do not return empty |
 
-Adding anything to `MAIL_TOOLS` breaks all three. Two were caught by running the suite and
-the third by not running it. **Run the full suite before writing the count into a log** —
-a subset plus arithmetic is a guess wearing a measurement's clothes.
+base64url, not base64 — `-` and `_` for `+` and `/`. `base64.urlsafe_b64decode` needs the
+padding restored.
 
-Also: **never leave a full-suite run in the background while editing the tree.** One run
-this cycle raced the edits and its result meant nothing, which cost a second run to
-untangle.
+## AC 20 comes free if the walk is written right
 
----
+*"A message that carries an attachment has that attachment named rather than dropped."*
+The same recursive walk that finds the text part sees the attachment parts. Name them —
+filename and size — the way `servers.as_text` names a block it cannot show, and for the
+same reason: **a model told nothing came back answers from memory.** #40 is the precedent
+and it is already cited in `search_mail`.
 
-Cycle 2 built the shape and one tool. Cycle 2's constraint: **nothing builds a `Mailbox`.**
-`search_mail` is reachable from a test and from nowhere else — `_prepare` takes a `mailbox`
-argument that every caller leaves at `None`, so the filter always drops the tool and the
-tool could never run even if it did not.
+## AC 31 is a constraint on how this is written, not a feature
 
-**Wire the session. Do not write the other three tools yet.**
-
-## In order
-
-1. **Build the mailbox once, where the session is built.** `mail.from_environment()`, next
-   to `schedule.Schedule()` and the skills library in the chat loop. One per run, passed
-   down — not rebuilt per call, or the cached service and the `refused` flag both reset
-   every turn and AC 4's "first request" becomes every request.
-
-2. **`interactive` comes from `isatty`, at the point the mailbox is built.** This is AC 37
-   and cycle 1 flagged it as the one the existing discipline does not reach:
-   `terminal.py` guards ten sites and none of them is `run_local_server`. Set it from
-   `sys.stdout.isatty()` — and note that `_rendering` is *not* the right test here.
-   `--no-render` is a user asking for plain output at a real console, and that user can
-   still answer a browser.
-
-3. **Thread `mailbox` through to `tools.run()`.** Follow `jobs` and `library` exactly;
-   they are threaded from the same place for the same reason.
-
-4. **Say why Gmail is not offered, at startup.** AC 23, AC 24 and AC 25 are *"reported at
-   startup"*, and `Mailbox.problem` already produces the sentence. `note_skills` and
-   `note_servers` are the precedent for where it goes and how it reads. **AC 25 —
-   a token Google rejects — is not reachable this way and must not be claimed**: a
-   rejected credential is only discovered by using it, and nothing uses it at startup.
-   Say so in the log rather than quietly counting it.
-
-5. **A test that a real run offers the tool when configured**, through the same path a
-   user takes — not by calling the filter directly, which cycle 2 already covers.
-
-## What is owed and must not be quietly counted
-
-- **AC 15, AC 16, AC 22** need a `/mail` command. `forget()` and `status()` exist and are
-  tested; the criteria are about *the user* reaching them. No command, no row.
-- **AC 29, AC 30** need the sweep, not a single test. Read every place a `google.auth` or
-  `googleapiclient` exception can reach the screen: `run()`'s `except Exception` turning
-  it into `error: {failed}`, the startup problem line, and anything `note_tool` prints.
-  `HttpError.__str__` includes the request URI — check whether an access token can be in
-  it.
-- **AC 12** is unreachable while the app is in Testing. Leave it owed.
+*"The body of a message is never written to disk by axiom."* Gmail's client offers
+`get_media` and attachment downloads. Do not call them. The body is decoded in memory and
+returned as a string, and the test that proves it should assert on what the fake was asked
+for, not on the absence of a file.
 
 ## What proves the cycle moved
 
-A run with `AXIOM_GOOGLE_CLIENT_ID` and `AXIOM_GOOGLE_CLIENT_SECRET` set offers
-`search_mail` and a run without them does not, both observed through the startup line
-rather than through the filter function. A non-terminal run cannot open a browser, proved
-by a test that does not build a `prompt_toolkit` session.
+`read_mail` callable through `tools.run()` against a fake, with a test for each shape in
+the table, an attachment named, and a message that cannot be decoded saying so. Full suite
+green — **a full run, not a subset plus arithmetic.** Cycle 2's log got that wrong and
+cycle 3's had to correct the correction.
 
-First thing to tackle: **find where `schedule.Schedule()` is constructed in the chat loop
-and build the mailbox beside it.** Everything else in this cycle hangs off having one.
+First thing to tackle: **the recursive part walk**, because AC 19, AC 20 and AC 31 are all
+the same function.
