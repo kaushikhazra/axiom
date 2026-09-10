@@ -1,60 +1,66 @@
 # Action
 
-Cycle 3 wired the session, so `search_mail` is reachable by a model in a real run. Its
-constraint: **a search returns ids nobody can open.** AC 17 hands the model a list and AC 18
-is the tool that reads one, and without it the feature is a directory with no doors.
+Cycle 4's constraint: **`forget()` and `status()` exist and no user can reach them.** AC 15,
+AC 16 and AC 22 are about the user doing something, and there is no `/mail`.
 
-**Write `read_mail`. Nothing else.** The `/mail` command is the next cycle's.
+**Build the command. Then do the AC 29 sweep** — it is reading, not writing, and leaving it
+to the end is how it gets claimed rather than done.
 
 ## Before writing anything
 
-`gh issue view 89`. Cycle 3 found two claims made against **#90's** numbering, and the only
-reason it found them was reading the issue rather than trusting a copy. Do the same.
+`gh issue view 89`. Two claims have already been made against #90's numbering.
 
-**Commit before breaking anything.** Cycle 3 lost eight edits to `git checkout --` on
-uncommitted work — the exact failure `assumption.md` names. Knowing the rule did not
-prevent it; committing would have.
+**Commit before breaking.** Cycle 3 lost eight edits; cycle 4 committed first and lost
+nothing.
 
-## AC 19 is the row this cycle exists for
+## The command
 
-*"A message's body reaches the model as readable text whatever encoding it arrived in."*
+`__init__.py:748` onward is a flat if-chain on a single-line `command`, one branch each.
+Follow it exactly — this is a new surface, not a new pattern.
 
-The happy path is one shape and Gmail has several. Handle each, and **write a test per
-shape** — a single "it decodes base64" test would claim the row while covering a fraction
-of it:
+- `/mail` alone — what axiom holds: the account, when it was granted, or that there is
+  none (AC 22). `Mailbox.status()` already returns this and carries no secret.
+- `/mail forget` — revoke (AC 15). The next request asks again (AC 16), which
+  `forget()` already guarantees by clearing both the cache and `_service`.
 
-| shape | what it is |
+**Match the `/skills` before `/skill` ordering rule**, and read the comment that explains
+it: `/skills` is tested by equality *before* `/skill` is tested as a prefix, or `/skills`
+is read as `/skill` with an argument of `s`. The same trap is one letter away here.
+
+**A run with nothing configured must still answer `/mail`.** Say there are no credentials
+rather than nothing at all — a user who typed it is owed a reason. This is not AC 1's
+concern: AC 1 is about startup, and a command the user typed is not startup.
+
+The drawing goes in `terminal.py` beside `show_skills`, not in `mail.py`. `mail.py` has no
+import from `terminal` except inside `mail_announcer`, and that is worth keeping.
+
+## Then the sweep — AC 29 and AC 30
+
+Cycle 1 narrowed this correctly and it has not been done. A token cannot be a tool argument,
+so `note_tool` is safe by construction. **The error paths are not.** Read, and write down
+what each can carry:
+
+| | |
 |---|---|
-| `text/plain` single part | body in `payload.body.data`, base64url |
-| `multipart/alternative` | plain and HTML siblings; take the plain one |
-| HTML only | no plain part at all — strip it rather than hand the model tags |
-| `multipart/mixed` with an attachment | the text part is nested under another part |
-| nothing decodable | say so; do not return empty |
+| `run()`'s `except Exception` | returns `error: {failed}` — what does a `RefreshError` stringify to? |
+| `googleapiclient.errors.HttpError.__str__` | includes the request URI. **Check whether an access token can appear in it.** |
+| `mail._why` | already tested against a leaky `oauthlib` string; confirm it is the only path a flow failure takes |
+| `Mailbox.problem` | names variables, never values — confirm |
 
-base64url, not base64 — `-` and `_` for `+` and `/`. `base64.urlsafe_b64decode` needs the
-padding restored.
+The output is a list in `logs/cycle-5.md` of every path checked and what it carries. **If
+one can leak, fix it and add a test.** If none can, say what was read — a sweep is only
+evidence if it names what it swept.
 
-## AC 20 comes free if the walk is written right
+## Do not claim
 
-*"A message that carries an attachment has that attachment named rather than dropped."*
-The same recursive walk that finds the text part sees the attachment parts. Name them —
-filename and size — the way `servers.as_text` names a block it cannot show, and for the
-same reason: **a model told nothing came back answers from memory.** #40 is the precedent
-and it is already cited in `search_mail`.
-
-## AC 31 is a constraint on how this is written, not a feature
-
-*"The body of a message is never written to disk by axiom."* Gmail's client offers
-`get_media` and attachment downloads. Do not call them. The body is decoded in memory and
-returned as a string, and the test that proves it should assert on what the fake was asked
-for, not on the absence of a file.
+- **AC 12** — unreachable while the app is in Testing.
+- **AC 4 to AC 10** — the flow needs a real browser. They are owed to the manual pass.
+- **AC 3, AC 11** — need a real cached grant.
 
 ## What proves the cycle moved
 
-`read_mail` callable through `tools.run()` against a fake, with a test for each shape in
-the table, an attachment named, and a message that cannot be decoded saying so. Full suite
-green — **a full run, not a subset plus arithmetic.** Cycle 2's log got that wrong and
-cycle 3's had to correct the correction.
+`/mail` and `/mail forget` work in a real run, tested through the same path a user takes.
+The sweep is written down with each path named. Full suite green, measured on a full run.
 
-First thing to tackle: **the recursive part walk**, because AC 19, AC 20 and AC 31 are all
-the same function.
+First thing to tackle: **`/mail` in the command chain**, because the sweep is reading and
+can follow.
