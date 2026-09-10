@@ -341,6 +341,7 @@ def _switch_model(
     run: Running,
     named: str,
     catalogue: "skills.Catalogue | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> "Running | object | None":
     """A model change asked for mid-conversation.
 
@@ -380,7 +381,7 @@ def _switch_model(
         # and falls through to the list (AC 7, AC 8).
         if named in available:
             return _switched_to(
-                model_backend, settings, attached, run, named, catalogue
+                model_backend, settings, attached, run, named, catalogue, mailbox
             )
         terminal.note_model_missing(named, settings.host)
 
@@ -428,7 +429,7 @@ def _switch_model(
         )
         if chosen is not None:
             return _switched_to(
-                model_backend, settings, attached, run, chosen, catalogue
+                model_backend, settings, attached, run, chosen, catalogue, mailbox
             )
         terminal.refuse_model(answer, len(available), names=True)
 
@@ -440,6 +441,7 @@ def _switched_to(
     run: Running,
     chosen: str,
     catalogue: "skills.Catalogue | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> "Running | None":
     """Take the switch, remember it, and say what changed.
 
@@ -451,7 +453,7 @@ def _switched_to(
         terminal.note_unchanged(chosen)
         return None
     _remember(chosen, settings.host)
-    fresh = _prepare(model_backend, settings, attached, chosen, catalogue)
+    fresh = _prepare(model_backend, settings, attached, chosen, catalogue, mailbox)
     terminal.note_switched(
         fresh.model,
         fresh.context,
@@ -625,7 +627,23 @@ def _chat(
     )
     catalogue_now = library.catalogue if library else skills.Catalogue()
 
-    run = _prepare(model_backend, settings, attached, model, catalogue_now)
+    # Before `_prepare`, for the same reason the library is: what a model is
+    # offered depends on whether this run has credentials to use it with.
+    #
+    # **One per run, not one per call.** The mailbox holds the built service and
+    # the record of a refusal, and rebuilding it per turn would reset both - so
+    # AC 4's "the first request that needs Gmail" would become every request,
+    # and a user who declined once would be asked again on the model's next call.
+    #
+    # `interactive` is both streams, not one. `stdin` alone is what
+    # `_settle_model` needs - whether anyone can answer a prompt - and AC 37 is
+    # about output as well: a run whose output is piped has nobody watching a
+    # browser it opened. `_rendering` is deliberately not consulted, because
+    # `--no-render` is a user asking for plain output at a real console, and
+    # that user can still answer Google.
+    mailbox = mail.from_environment(interactive=interactive and sys.stdout.isatty())
+
+    run = _prepare(model_backend, settings, attached, model, catalogue_now, mailbox)
     limits = _limits(settings)
 
     # Read once, before the cost is reported, and refreshed whenever a skill is
@@ -757,6 +775,7 @@ def _chat(
                 run,
                 line[len(MODEL_COMMAND) :].strip(),
                 library.catalogue if library else skills.Catalogue(),
+                mailbox,
             )
             if switched is _LEAVING:
                 return
@@ -1034,7 +1053,12 @@ def _chat(
                         result = attached.run(call.name, arguments)
                     else:
                         result = tools.run(
-                            call.name, call.arguments, limits, jobs, library
+                            call.name,
+                            call.arguments,
+                            limits,
+                            jobs,
+                            library,
+                            mailbox,
                         )
                         # The catalogue in the standing prompt is now stale.
                         # Restated here rather than inside the library, because

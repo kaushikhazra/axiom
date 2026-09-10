@@ -151,6 +151,81 @@ def test_configured_offers_the_mail_tools(monkeypatch):
     assert len(offered) == len(tools.REGISTRY)
 
 
+# -- what a whole run offers, through the path a user takes ----------------
+
+
+def start(capsys, monkeypatch, tmp_path, argv=(), stdout_tty=True):
+    """One axiom run, started and exited, as `test_tool_cost` does it."""
+    from axiom import main, models
+    from conftest import StubBackend, feed
+
+    monkeypatch.setattr(
+        models, "DEFAULT_CHOICE_FILE", tmp_path / ".axiom" / "model.json"
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: stdout_tty)
+    made = StubBackend(models=["big:70b"])
+    feed(monkeypatch, ["/exit"])
+    main([*argv, "--model", "big:70b"], using=made)
+    return capsys.readouterr()
+
+
+def test_a_run_with_no_credentials_says_what_it_always_said(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 1, through the startup line rather than through the filter.
+
+    The count is the observable. A user with no Google account must not be able
+    to tell that #89 shipped.
+    """
+    monkeypatch.delenv(mail.CLIENT_ID, raising=False)
+    monkeypatch.delenv(mail.CLIENT_SECRET, raising=False)
+    out = start(capsys, monkeypatch, tmp_path).out
+    expected = len(tools.REGISTRY) - len(tools.SKILL_TOOLS - {"write_skill"})
+    assert f"{expected - len(tools.MAIL_TOOLS)} tools" in out
+    assert "mail" not in out.lower()
+
+
+def test_a_run_with_credentials_counts_the_mail_tools(capsys, monkeypatch, tmp_path):
+    """AC 2. The startup count includes them - which is what AC 2 asks for,
+    rather than the filter returning the right list."""
+    monkeypatch.setenv(mail.CLIENT_ID, "made-up-id")
+    monkeypatch.setenv(mail.CLIENT_SECRET, "made-up-secret")
+    out = start(capsys, monkeypatch, tmp_path).out
+    expected = len(tools.REGISTRY) - len(tools.SKILL_TOOLS - {"write_skill"})
+    assert f"{expected} tools" in out
+
+
+def test_a_redirected_run_cannot_open_a_browser(capsys, monkeypatch, tmp_path):
+    """AC 37. The guard is set from the streams, at the one place a mailbox is
+    built - not remembered at each call site."""
+    monkeypatch.setenv(mail.CLIENT_ID, "made-up-id")
+    monkeypatch.setenv(mail.CLIENT_SECRET, "made-up-secret")
+    built = []
+    real = mail.from_environment
+    monkeypatch.setattr(
+        mail,
+        "from_environment",
+        lambda interactive=True: built.append(interactive) or real(interactive),
+    )
+    start(capsys, monkeypatch, tmp_path, stdout_tty=False)
+    assert built == [False]
+
+
+def test_a_terminal_run_may_open_a_browser(capsys, monkeypatch, tmp_path):
+    monkeypatch.setenv(mail.CLIENT_ID, "made-up-id")
+    monkeypatch.setenv(mail.CLIENT_SECRET, "made-up-secret")
+    built = []
+    real = mail.from_environment
+    monkeypatch.setattr(
+        mail,
+        "from_environment",
+        lambda interactive=True: built.append(interactive) or real(interactive),
+    )
+    start(capsys, monkeypatch, tmp_path, stdout_tty=True)
+    assert built == [True]
+
+
 # -- the scope is the guarantee --------------------------------------------
 
 
