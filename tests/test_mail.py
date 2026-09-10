@@ -572,6 +572,241 @@ def test_reading_asks_for_the_full_message(tmp_path):
     assert messages.calls[0][2] == "full"
 
 
+# -- the command ------------------------------------------------------------
+
+
+def typed(capsys, monkeypatch, tmp_path, lines, configured=True):
+    """One run, with lines typed at it, as a user would."""
+    from axiom import main, models
+    from conftest import StubBackend, feed
+
+    monkeypatch.setattr(
+        models, "DEFAULT_CHOICE_FILE", tmp_path / ".axiom" / "model.json"
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    if configured:
+        monkeypatch.setenv(mail.CLIENT_ID, "made-up-id")
+        monkeypatch.setenv(mail.CLIENT_SECRET, "made-up-secret")
+    else:
+        monkeypatch.delenv(mail.CLIENT_ID, raising=False)
+        monkeypatch.delenv(mail.CLIENT_SECRET, raising=False)
+    monkeypatch.setenv(mail.TOKEN_FILE, str(tmp_path / "token.json"))
+    made = StubBackend(models=["big:70b"])
+    feed(monkeypatch, [*lines, "/exit"])
+    main(["--model", "big:70b"], using=made)
+    return capsys.readouterr().out, made
+
+
+def test_mail_with_no_grant_says_the_next_request_will_ask(
+    capsys, monkeypatch, tmp_path
+):
+    """AC 22, the state every run starts in."""
+    out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail"])
+    assert "holds no permission" in out
+
+
+def test_mail_with_nothing_configured_still_answers(capsys, monkeypatch, tmp_path):
+    """A user who typed it is owed a reason. AC 1 is about startup."""
+    out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail"], configured=False)
+    assert mail.CLIENT_ID in out
+
+
+def test_mail_names_the_account_it_can_read(capsys, monkeypatch, tmp_path):
+    """AC 22. Which account, and how long the permission runs."""
+    token = tmp_path / "token.json"
+    token.write_text("{}", encoding="utf-8")
+
+    class Held:
+        account = "ada@example.com"
+        expiry = "2026-09-17 11:00"
+
+    monkeypatch.setattr(mail.Mailbox, "stored", lambda self: Held())
+    out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail"])
+    assert "ada@example.com" in out
+    assert "2026-09-17" in out
+
+
+def test_mail_forget_gives_the_permission_back(capsys, monkeypatch, tmp_path):
+    """AC 15, AC 16 - and the file is gone, which is what makes the next
+    request ask."""
+    token = tmp_path / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail forget"])
+    assert "given back" in out
+    assert "will ask again" in out
+    assert not token.exists()
+
+
+def test_mail_forget_with_nothing_held_says_so(capsys, monkeypatch, tmp_path):
+    """Not "forgotten" - that would leave a user believing they revoked
+    something they never granted."""
+    out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail forget"])
+    assert "nothing to give back" in out
+
+
+def test_an_unknown_mail_word_is_named(capsys, monkeypatch, tmp_path):
+    out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail revoke"])
+    assert "no /mail revoke" in out
+
+
+def test_the_mail_command_never_reaches_the_model(capsys, monkeypatch, tmp_path):
+    """Like every other command. `continue` before `messages` is touched."""
+    _, made = typed(capsys, monkeypatch, tmp_path, ["/mail", "/mail forget"])
+    assert made.streamed == []
+
+
+def test_a_message_containing_mail_is_a_message(capsys, monkeypatch, tmp_path):
+    """#49 AC 9's rule, which every command here follows: matched as a whole
+    word, so a message that merely contains it is a message."""
+    _, made = typed(capsys, monkeypatch, tmp_path, ["what does /mail do?"])
+    assert made.streamed != []
+
+
+def test_a_pasted_block_starting_with_mail_is_not_a_command(
+    capsys, monkeypatch, tmp_path
+):
+    """#80 AC 13, AC 14. A command is a message of one line."""
+    _, made = typed(capsys, monkeypatch, tmp_path, ["/mail forget\nand more text"])
+    assert made.streamed != []
+
+
+# -- what a failed call may say ---------------------------------------------
+
+
+class Boom:
+    """A service whose every call raises. The shape a real one has."""
+
+    def __init__(self, blow):
+        self.blow = blow
+
+    def users(self):
+        return self
+
+    def messages(self):
+        return self
+
+    def list(self, **kw):
+        return self
+
+    def get(self, **kw):
+        return self
+
+    def execute(self):
+        raise self.blow
+
+
+def blowing(blow, tmp_path):
+    made = mail.Mailbox(
+        client_id="made-up-id",
+        client_secret="made-up-secret",
+        token_file=tmp_path / "token.json",
+    )
+    made._service = Boom(blow)
+    return made
+
+
+def http_error(status, reason="Rate Limit Exceeded", uri="https://example/x"):
+    from googleapiclient.errors import HttpError
+
+    class Resp:
+        pass
+
+    resp = Resp()
+    resp.status = status
+    resp.reason = reason
+    return HttpError(
+        resp, b'{"error": {"message": "' + reason.encode() + b'"}}', uri=uri
+    )
+
+
+def test_a_refresh_failure_never_carries_the_token_endpoint_response(tmp_path):
+    """AC 29, AC 30, and the defect cycle 5's sweep found.
+
+    `google/oauth2/_client.py:320` raises
+    `RefreshError("No access token in response.", response_data)` - and that
+    response is where the **refresh token** lives. Stringified, a two-argument
+    exception gives its args tuple, so before this the token went into a tool
+    result, to the model and to the screen.
+    """
+    from google.auth.exceptions import RefreshError
+
+    leaky = RefreshError(
+        "No access token in response.",
+        {"refresh_token": "1//0gLEAKED", "scope": "gmail.readonly"},
+    )
+    result = tools.run("search_mail", {"query": "x"}, mailbox=blowing(leaky, tmp_path))
+    assert "1//0gLEAKED" not in result
+    assert "refresh_token" not in result
+    assert "/mail forget" in result
+
+
+def test_an_http_error_never_carries_the_request_uri(tmp_path):
+    """AC 30. `HttpError.__str__` includes `self.uri`. Today the access token
+    travels in a header, but the URI carries the user's search either way and
+    the class of leak is one library detail away."""
+    blow = http_error(
+        429, uri="https://gmail.googleapis.com/v1/messages?q=salary&access_token=ya29.X"
+    )
+    result = tools.run(
+        "search_mail", {"query": "salary"}, mailbox=blowing(blow, tmp_path)
+    )
+    assert "ya29.X" not in result
+    assert "access_token" not in result
+    assert "gmail.googleapis.com" not in result
+
+
+def test_rate_limiting_is_named_as_rate_limiting(tmp_path):
+    """AC 33. What the user does next differs from a refusal - wait, not
+    re-grant - so the two must not read the same."""
+    result = tools.run(
+        "search_mail", {"query": "x"}, mailbox=blowing(http_error(429), tmp_path)
+    )
+    assert "rate limiting" in result
+    assert "forget" not in result
+
+
+def test_a_refusal_says_what_google_said(tmp_path):
+    """AC 33's other half. Google's `reason` comes from the response body, so
+    it carries nothing of ours."""
+    blow = http_error(403, reason="Daily Limit Exceeded")
+    result = tools.run("search_mail", {"query": "x"}, mailbox=blowing(blow, tmp_path))
+    assert "403" in result
+    assert "Daily Limit Exceeded" in result
+
+
+def test_google_being_unreachable_is_reported(tmp_path):
+    """AC 32. No status at all is a transport failure, named by its type
+    rather than by a message that might quote a URL."""
+    from google.auth.exceptions import TransportError
+
+    blow = TransportError("failed to resolve gmail.googleapis.com via 10.0.0.1")
+    result = tools.run("search_mail", {"query": "x"}, mailbox=blowing(blow, tmp_path))
+    assert "could not be reached" in result
+    assert "10.0.0.1" not in result
+
+
+def test_a_failed_call_leaves_every_other_tool_usable(tmp_path):
+    """AC 35. A returned error, never a raised one."""
+    result = tools.run(
+        "search_mail", {"query": "x"}, mailbox=blowing(http_error(500), tmp_path)
+    )
+    assert result.startswith("error:")
+    assert tools.run("read_file", {"path": str(tmp_path)}).startswith("error:")
+
+
+def test_reading_one_message_is_wrapped_too(tmp_path):
+    """The same guarantee on the other tool - a wrapper on one call site and
+    not the other is the shape this defect had in the first place."""
+    from google.auth.exceptions import RefreshError
+
+    leaky = RefreshError("No access token in response.", {"refresh_token": "1//0gX"})
+    result = tools.run(
+        "read_mail", {"message_id": "m1"}, mailbox=blowing(leaky, tmp_path)
+    )
+    assert "1//0gX" not in result
+
+
 # -- what a refusal costs ---------------------------------------------------
 
 

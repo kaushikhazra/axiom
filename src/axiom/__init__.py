@@ -33,6 +33,14 @@ MODEL_COMMAND = "/model"
 SKILL_COMMAND = "/skill"
 SKILLS_COMMAND = "/skills"
 
+# `/mail` says what axiom holds; `/mail forget` gives it back (#89 AC 15, AC 16,
+# AC 22). One command with a word after it rather than two commands, because
+# `/mail` and `/mailforget` would sit one letter apart in the same chain - which
+# is the trap `/skills` and `/skill` already document, and there is no reason to
+# walk into it twice.
+MAIL_COMMAND = "/mail"
+MAIL_FORGET = "forget"
+
 # Returned by a switch when the user ended the session at the list, as opposed
 # to cancelling it. A sentinel rather than a second return value, because the
 # ordinary answers are already "a new Running" and "nothing changed", and
@@ -801,6 +809,22 @@ def _chat(
             if library is None:
                 terminal.note_skills_off()
                 continue
+
+        if command == MAIL_COMMAND or command.startswith(MAIL_COMMAND + " "):
+            asked = command[len(MAIL_COMMAND) :].strip()
+            if asked == MAIL_FORGET:
+                # AC 15, AC 16. `forget` clears the cache and the built service
+                # together, so the next call that needs Gmail finds nothing and
+                # asks - there is no live session to tear down.
+                terminal.note_mail_forgotten(mailbox.forget())
+            elif asked:
+                terminal.note_mail_unknown(asked)
+            else:
+                # AC 22. A run with nothing configured still gets an answer:
+                # AC 1 is about startup, and a command the user typed is not
+                # startup - somebody who asked is owed a reason.
+                terminal.show_mail(mailbox.status(), mailbox.problem)
+            continue
 
         if command == SKILLS_COMMAND:
             terminal.show_skills(

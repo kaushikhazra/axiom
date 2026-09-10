@@ -2146,6 +2146,49 @@ def note_no_skill(name: str, available: tuple[str, ...]) -> None:
     say(f"there is no skill named {name}. Available: {listed}")
 
 
+def show_mail(grant, problem: str) -> None:  # noqa: ANN001
+    """What axiom holds for Google, and nothing it holds it with (#89 AC 22).
+
+    `Grant` has no token field, so there is nothing here to remember not to
+    print - the same reasoning that keeps a credential out of `note_tool`.
+    Structural, not careful.
+
+    A run with nothing configured is answered too. AC 1 is about startup and
+    this is a command the user typed; somebody who asked is owed a reason
+    rather than silence.
+    """
+    if problem:
+        say(problem)
+        return
+    if not grant.held:
+        say("axiom holds no permission for Google - the next request will ask")
+        return
+    who = grant.account or "your Google account"
+    say(f"axiom can read mail for {who}")
+    if grant.granted:
+        say(f"the permission runs until {grant.granted}")
+
+
+def note_mail_forgotten(had_one: bool) -> None:
+    """AC 15, AC 16. What was given back, and what happens next.
+
+    Says which of the two happened. "Forgotten" when there was nothing to
+    forget would leave a user believing they had revoked something they never
+    granted.
+    """
+    if had_one:
+        say("axiom has given back its permission for Google")
+        say("the next request that needs mail will ask again")
+        return
+    say("axiom held no permission for Google, so there was nothing to give back")
+
+
+def note_mail_unknown(asked: str) -> None:
+    """A word after `/mail` that is not one of the ones there are."""
+    say(f"there is no /mail {asked} - say /mail to see what axiom holds, ")
+    say("or /mail forget to give it back")
+
+
 def note_mail_permission() -> None:
     """Said before the browser opens, never after (#89 AC 2, AC 5).
 

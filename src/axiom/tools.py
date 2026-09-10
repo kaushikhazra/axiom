@@ -710,12 +710,15 @@ def read_mail(message_id: str, mailbox=None) -> str:  # noqa: ANN001
     except mail.Refused as refused:
         return f"error: {refused}"
 
-    message = (
-        service.users()
-        .messages()
-        .get(userId="me", id=message_id.strip(), format="full")
-        .execute()
-    )
+    try:
+        message = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id.strip(), format="full")
+            .execute()
+        )
+    except Exception as failed:  # noqa: BLE001
+        return f"error: {mail.failed_call(failed)}"
     payload = message.get("payload", {})
     text, attached = _body_and_attachments(payload)
 
@@ -753,7 +756,13 @@ def search_mail(query: str, mailbox=None) -> str:  # noqa: ANN001
         return f"error: {refused}"
 
     messages = service.users().messages()
-    found = messages.list(userId="me", q=query, maxResults=MAIL_RESULTS).execute()
+    # Every Google call is wrapped, and none of them lets the exception's own
+    # text out - two of Google's exceptions carry a secret in it. See
+    # `mail.failed_call`, which was written after cycle 5 reproduced the leak.
+    try:
+        found = messages.list(userId="me", q=query, maxResults=MAIL_RESULTS).execute()
+    except Exception as failed:  # noqa: BLE001
+        return f"error: {mail.failed_call(failed)}"
     listed = found.get("messages") or []
     if not listed:
         # AC 23. A model told nothing came back answers from memory instead of
@@ -762,12 +771,15 @@ def search_mail(query: str, mailbox=None) -> str:  # noqa: ANN001
 
     rows = []
     for entry in listed:
-        message = messages.get(
-            userId="me",
-            id=entry["id"],
-            format="metadata",
-            metadataHeaders=["From", "Subject", "Date"],
-        ).execute()
+        try:
+            message = messages.get(
+                userId="me",
+                id=entry["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ).execute()
+        except Exception as failed:  # noqa: BLE001
+            return f"error: {mail.failed_call(failed)}"
         rows.append(
             f"{entry['id']}  {_header(message, 'Date')}  "
             f"{_header(message, 'From')}  {_header(message, 'Subject')}"

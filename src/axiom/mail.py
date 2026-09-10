@@ -306,6 +306,69 @@ class Refused(Exception):
     """
 
 
+def failed_call(failed: Exception) -> str:
+    """A failed Google call as one line, with nothing sensitive in it.
+
+    **Measured, not assumed** (#89 AC 29, AC 30). Two of Google's exceptions
+    put a secret into their own text, and `run()`'s `except Exception` turns
+    whatever it catches into `error: {failed}` - which goes to the model *and*
+    to the screen through `note_tool`'s result row:
+
+    - **`RefreshError` carries the token endpoint's whole response.**
+      `google/oauth2/_client.py:320` constructs it as
+      `RefreshError("No access token in response.", response_data)`, and that
+      response is where a **refresh token** lives. Stringified, a two-argument
+      exception gives its args tuple - so the token is in the text. Reproduced
+      in cycle 5 before this existed.
+    - **`HttpError.__str__` includes the request URI.** Today the access token
+      travels in an `authorization` header (`_credentials_base.py:73`) so the
+      URI does not carry one, but the whole class of leak is a library detail
+      away, and the URI carries the user's search terms regardless.
+
+    So **nothing's text is passed through.** The kind of failure is named from
+    the exception's type and its status, both of which are ours to read and
+    neither of which can hold a secret.
+    """
+    name = type(failed).__name__
+    if name == "RefreshError":
+        # AC 34. Revoked at Google's end, or expired because the app is in
+        # Testing. Either way the grant has to be asked for again.
+        return (
+            "Google would not renew the permission - say /mail forget, then "
+            "ask again to grant it"
+        )
+
+    status = getattr(getattr(failed, "resp", None), "status", None)
+    if status in (401, 403):
+        # 403 is both "quota" and "insufficient scope", and Google's own
+        # `reason` is the only thing that tells them apart. It comes from the
+        # response body rather than from the request, so it carries nothing of
+        # ours.
+        return f"Google refused the request ({status}): {_reason_of(failed)}"
+    if status == 429:
+        # AC 33. Named as rate limiting rather than reported as a generic
+        # refusal, because what the user does next differs: wait, not re-grant.
+        return "Google is rate limiting this account - try again in a moment"
+    if status is not None:
+        return f"Google returned {status}: {_reason_of(failed)}"
+
+    # AC 32. No status at all is a transport failure - DNS, a refused
+    # connection, a dropped TLS handshake. The type name says which without
+    # quoting a message that might carry a URL.
+    return f"Google could not be reached ({name})"
+
+
+def _reason_of(failed: Exception) -> str:
+    """Google's own explanation, which comes from the response body.
+
+    Never the URI and never the request. Falls back to the status alone rather
+    than to `str(failed)`, which is the thing this whole function exists to
+    avoid.
+    """
+    reason = getattr(failed, "reason", "")
+    return str(reason).strip() if reason else "no reason given"
+
+
 def _why(failed: Exception) -> str:
     """A failed grant as one line, with nothing sensitive in it.
 
