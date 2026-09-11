@@ -2180,10 +2180,16 @@ def show_mail(grant, problem: str) -> None:  # noqa: ANN001
     if not grant.held:
         say("axiom holds no permission for Google - the next request will ask")
         return
-    who = grant.account or "your Google account"
-    say(f"axiom can read mail for {who}")
-    if grant.granted:
-        say(f"the permission runs until {grant.granted}")
+    if grant.account:
+        say(f"axiom can read mail for {grant.account}")
+        return
+    # Held, but Google could not be asked who it belongs to - offline, or a
+    # grant it has since stopped honouring. Still an answer about what is
+    # held, and still not a name axiom is willing to guess at.
+    say(
+        "axiom holds permission to read your mail, but could not reach Google "
+        "to say for which account"
+    )
 
 
 def note_mail_forgotten(had_one: bool) -> None:

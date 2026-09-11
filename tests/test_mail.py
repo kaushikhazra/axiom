@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from axiom import mail, tools
+from axiom import mail, terminal, tools
 
 
 class FakeExecutable:
@@ -648,18 +648,32 @@ def test_mail_with_nothing_configured_still_answers(capsys, monkeypatch, tmp_pat
 
 
 def test_mail_names_the_account_it_can_read(capsys, monkeypatch, tmp_path):
-    """AC 22. Which account, and how long the permission runs."""
+    """AC 22, end to end, through the real lookup.
+
+    **This test used to pass against a feature that did not work.** It handed
+    `stored` a fake with `account` already set - an attribute real `Credentials`
+    exposes as a read-only property that nothing here can write, so it is empty
+    for every grant axiom has ever stored. The assertion proved the rendering
+    branch works when the name is there; nothing proved the name ever arrives,
+    and in a real run it never did. Driving `/mail` by hand is what found it.
+
+    So the fake stops at the cache, and the name comes back the way it does in
+    a real run - by asking Google.
+    """
     token = tmp_path / "token.json"
     token.write_text("{}", encoding="utf-8")
+    import googleapiclient.discovery
 
-    class Held:
-        account = "ada@example.com"
-        expiry = "2026-09-17 11:00"
+    profile = FakeProfile("ada@example.com")
+    monkeypatch.setattr(mail.Mailbox, "stored", lambda self: FakeStored())
+    monkeypatch.setattr(googleapiclient.discovery, "build", lambda *a, **k: profile)
 
-    monkeypatch.setattr(mail.Mailbox, "stored", lambda self: Held())
     out, _ = typed(capsys, monkeypatch, tmp_path, ["/mail"])
+
     assert "ada@example.com" in out
-    assert "2026-09-17" in out
+    assert profile.asked == 1
+    # The access token's hour was reported here as the permission's life.
+    assert "runs until" not in out
 
 
 def test_mail_forget_gives_the_permission_back(capsys, monkeypatch, tmp_path):
@@ -1010,3 +1024,125 @@ def test_a_failed_flow_never_carries_the_redirect(tmp_path):
     assert "4/0AeanS0" not in said
     assert "secret-code-here" not in said
     assert "declined" in said
+
+
+# -- AC 22: which account, and nothing about a secret ----------------------
+#
+# Untested until now. AC 22 was written up as a row of the manual pass, so the
+# suite never asserted it - and what shipped answered "your Google account" for
+# every run, because the only branch that could name one was unreachable.
+
+
+class FakeProfile:
+    """`users().getProfile()`, and a count of how often it was asked."""
+
+    def __init__(self, address="someone@example.com"):
+        self.address = address
+        self.asked = 0
+
+    def users(self):
+        return self
+
+    def getProfile(self, userId):  # noqa: N802, N803
+        self.asked += 1
+        return FakeExecutable({"emailAddress": self.address})
+
+
+class FakeStored:
+    """What `account()` reads off the cache."""
+
+    def __init__(self, valid=True, expired=False, refresh_token="r"):
+        self.valid = valid
+        self.expired = expired
+        self.refresh_token = refresh_token
+
+
+def with_stored(monkeypatch, box, held, service=None):
+    """Point a mailbox at a cached grant, and at what `build` hands back."""
+    monkeypatch.setattr(type(box), "stored", lambda self: held)
+    if service is not None:
+        import googleapiclient.discovery
+
+        monkeypatch.setattr(googleapiclient.discovery, "build", lambda *a, **k: service)
+
+
+def test_the_account_is_named_by_asking_google(monkeypatch, tmp_path):
+    """AC 22. `Credentials.account` is a read-only property nothing here can
+    set, so it is empty for every grant axiom has ever written - which made the
+    only branch that could name an account unreachable. The name is asked for."""
+    box = mail.Mailbox(client_id="i", client_secret="s", token_file=tmp_path / "t.json")
+    profile = FakeProfile("kaushik@example.com")
+    with_stored(monkeypatch, box, FakeStored(), profile)
+
+    assert box.status().account == "kaushik@example.com"
+    assert profile.asked == 1
+
+
+def test_asking_who_it_belongs_to_never_opens_a_browser(monkeypatch, tmp_path):
+    """A question about what is held must not turn into a grant.
+
+    `service()` falls through to `_granted` when the cache cannot be used, which
+    is right for a tool call and wrong for `/mail` - so this builds from the
+    cache directly and never goes near it.
+    """
+    box = mail.Mailbox(client_id="i", client_secret="s", token_file=tmp_path / "t.json")
+
+    def never(*args, **kwargs):
+        raise AssertionError("/mail opened the browser flow")
+
+    monkeypatch.setattr(type(box), "_granted", never)
+    with_stored(monkeypatch, box, FakeStored(valid=False, refresh_token=""))
+
+    assert box.account() == ""
+
+
+def test_a_failed_lookup_names_nothing_and_leaks_nothing(monkeypatch, tmp_path, capsys):
+    """The leak cycle 5 found, in the one place a new Google call was added.
+
+    Two of Google's exceptions carry a refresh token in their text. This one
+    never reaches a caller, so there is no second place for that to go wrong.
+    """
+    box = mail.Mailbox(client_id="i", client_secret="s", token_file=tmp_path / "t.json")
+    import googleapiclient.discovery
+
+    def explode(*args, **kwargs):
+        raise Exception(  # noqa: TRY002
+            "('No access token in response.', {'refresh_token': '1//0gLEAKED'})"
+        )
+
+    monkeypatch.setattr(type(box), "stored", lambda self: FakeStored())
+    monkeypatch.setattr(googleapiclient.discovery, "build", explode)
+
+    grant = box.status()
+    terminal.show_mail(grant, "")
+    said = capsys.readouterr().out
+
+    assert grant.account == ""
+    assert "1//0gLEAKED" not in said
+    assert "refresh_token" not in said
+
+
+def test_the_status_line_names_the_account(capsys):
+    """AC 22's first half, as the user reads it."""
+    terminal.show_mail(mail.Grant(account="kaushik@example.com", held=True), "")
+    assert "kaushik@example.com" in capsys.readouterr().out
+
+
+def test_the_status_line_does_not_claim_when_the_permission_ends(capsys):
+    """It used to report the access token's hour as the permission's life.
+
+    The grant outlives that token and renews past it silently, so a user reading
+    it would have expected to authorise again every hour. What actually ends a
+    grant is Google's to decide, and axiom cannot see it until it tries.
+    """
+    terminal.show_mail(mail.Grant(account="kaushik@example.com", held=True), "")
+    said = capsys.readouterr().out
+
+    assert "runs until" not in said
+    assert not hasattr(mail.Grant(), "granted")
+
+
+def test_nothing_held_is_said_plainly(capsys):
+    """AC 22, for a run that has granted nothing yet."""
+    terminal.show_mail(mail.Grant(), "")
+    assert "holds no permission" in capsys.readouterr().out

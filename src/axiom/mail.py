@@ -69,7 +69,6 @@ class Grant:
     """
 
     account: str = ""
-    granted: str = ""
     held: bool = False
 
 
@@ -179,16 +178,64 @@ class Mailbox:
         self.token_file.unlink()
         return True
 
-    def status(self) -> Grant:
-        """What axiom holds, without the secret it holds it with (AC 22)."""
+    def account(self) -> str:
+        """Which account the stored grant reads, or empty if it cannot be asked.
+
+        **Asked of Google rather than read from the cache.**
+        `Credentials.account` is populated only when a flow was handed one, and
+        the loopback flow is not - it is a read-only property that no code here
+        can set, so it is empty for every grant axiom has ever written. Reading
+        it was the whole of AC 22's first half, and it never once returned a
+        name.
+
+        **Never runs the browser flow.** The service is built from the stored
+        credentials directly rather than through `service()`, which falls
+        through to `_granted` when they cannot be used. `/mail` is a question
+        about what is held, and a question must not turn into a grant.
+
+        An expired access token is renewed here, which is the same silent
+        renewal AC 12 promises and the ordinary state of a grant more than an
+        hour old - without it the answer would be empty for most of a session.
+
+        Empty on any failure. Nothing from the exception reaches a caller: two
+        of Google's carry a refresh token in their text, which is what
+        `failed_call` exists for, and a name axiom could not look up is not
+        worth a second place for that to go wrong.
+        """
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+
         held = self.stored()
         if held is None:
+            return ""
+        try:
+            if not held.valid and held.expired and held.refresh_token:
+                held.refresh(Request())
+                self._remember(held)
+            service = build("gmail", "v1", credentials=held, cache_discovery=False)
+            profile = service.users().getProfile(userId="me").execute()
+        except Exception:  # noqa: BLE001
+            return ""
+        return profile.get("emailAddress", "")
+
+    def status(self) -> Grant:
+        """What axiom holds, without the secret it holds it with (AC 22).
+
+        **Says nothing about when the permission ends**, because axiom does not
+        know. What it used to report was `Credentials.expiry` - the access
+        token's hour - under the words "the permission runs until", which is a
+        different fact wearing the wrong label: the grant outlives that token
+        and renews past it silently. A user reading it would have expected to
+        authorise again every hour.
+
+        What actually ends a grant is Google's to decide - a revoke, or the
+        seven-day refresh-token expiry that applies while an app is in Testing -
+        and axiom cannot see either until it tries. Saying nothing is the honest
+        answer; the alternative was a number that was never the one it claimed.
+        """
+        if self.stored() is None:
             return Grant()
-        return Grant(
-            account=getattr(held, "account", "") or "",
-            granted=str(getattr(held, "expiry", "") or ""),
-            held=True,
-        )
+        return Grant(account=self.account(), held=True)
 
     def service(self, announce=None):  # noqa: ANN001
         """A Gmail client, granting permission first if that is what it takes.
