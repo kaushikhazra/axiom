@@ -1,7 +1,7 @@
 # Handoff — #89 is in a PR, and six rows need you at a console
 
 Rewritten 2026-09-11 at the end of a session that set up a real Google account, drove
-#89's manual pass against real mail, found three defects doing it, fixed all three, and
+#89's manual pass against real mail, found four defects doing it, fixed all four, and
 opened PR #92. Nothing is scheduled and nothing is running.
 
 ## Where things stand
@@ -44,7 +44,8 @@ sandbox is what broke Row 8 earlier today, and the default is the thing AC 14 is
 
 | | | why here |
 |---|---|---|
-| 1 | **Row 12** (AC 19) — read four real messages: a plain one, an HTML newsletter, one with an attachment, one forwarded several times. No raw `<div>` or `<table>` anywhere | uses the live grant, costs nothing |
+| 1 | **Row 12** (AC 19) — read four real messages: a plain one, an HTML newsletter, one with an attachment, one forwarded several times. No raw `<div>` or `<table>` anywhere. **Say "read" explicitly** — an attempt on 11 Sep searched four times and never opened a message, so the row was not driven | uses the live grant, costs nothing |
+| 1b | **The new search description** — ask *"did IndiaFilings send any attachment in the last month?"*. It should reach for `has:attachment newer_than:1m`. The same question was declined outright yesterday | the only evidence `6a256c6` worked |
 | 2 | **Rows 4, 5, 6** (AC 8, AC 9, AC 10) — decline at the consent screen; close the tab without answering; do nothing for three minutes | one sitting. Each needs `/mail forget` first, and each ends with no grant |
 | 3 | Re-grant normally, and **note the time** | rows 4 to 6 leave nothing stored |
 | 4 | **Row 9** (AC 12) — leave axiom idle past the access token's hour, then ask for mail. It answers with **no browser** | needs a grant more than an hour old |
@@ -59,8 +60,9 @@ now name `hazra.kaushik@gmail.com` and say **nothing** about an expiry.
 
 ## What was found driving it, and fixed
 
-Three defects, none of which a test had caught, all committed with tests probed red
-against the old behaviour.
+Four defects, none of which a test had caught. The three a test can reach were committed
+with tests probed red against the old behaviour; the fourth is a tool description, and
+only a live run can show it worked.
 
 **A header a message does not have, rendered blank** (`bc5b74e`). An old Google Talk
 record kept in Gmail has no `Subject` and no RFC-822 `Date`. `_header` faithfully
@@ -85,6 +87,21 @@ is a question about what is held, and a question must not turn into a grant.
 
 The same commit stops `/mail` reporting the access token's hour as "the permission runs
 until". The grant outlives that token and renews past it silently.
+
+**The operators a model had to guess at** (`6a256c6`). `search_mail` named four operators
+and no formats. A model asked for the last three days wrote `after:3d`; one asked about
+today wrote `after:today`. **Gmail accepts both, ignores the operator rather than
+refusing it**, and returns anything — eighteen months of it, which axiom relayed as "the
+last few days", calling a March 2025 message recent. The same gap had the model decline
+to look for attachments at all, as though no operator for it existed.
+
+`newer_than:` and `older_than:` are why this was worth its tokens: **a relative window
+needs no knowledge of today's date**, which the model does not have and will not until
+#91 lands. Measured at **111 tokens per request**, weighed with the function the startup
+line uses; a first draft cost 145 and was trimmed. Only a configured run pays it.
+
+**No test asserts it, deliberately** — a test that a description contains `newer_than`
+proves a sentence was built and nothing more. Row 1b of the pass is the evidence.
 
 ## The pattern this session is about
 
