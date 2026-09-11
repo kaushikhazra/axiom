@@ -1907,6 +1907,23 @@ def note_round_limit(rounds: int) -> None:
     )
 
 
+def note_no_answer() -> None:
+    """The model ended its turn with nothing to say.
+
+    The other way to get what `note_round_limit` exists to prevent, and the
+    quieter one: the model stops asking for tools and streams no text at all,
+    so the prompt comes back with no answer and nothing said about why. Found
+    driving #89's manual pass, where it followed six tool calls that had all
+    worked - which is the reading that makes the silence worst, because every
+    line on screen says the turn was going fine.
+
+    Said rather than guessed at: axiom does not know whether the model thought
+    it was finished or lost its way, and a message claiming either would be
+    inventing a reason. What it can say is that the turn produced no answer.
+    """
+    say("the model ended the turn without an answer.")
+
+
 def show_tool_result(result: str) -> None:
     """A tool's output, marked so it cannot be read as the model's answer.
 

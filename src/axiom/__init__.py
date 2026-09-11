@@ -1001,6 +1001,7 @@ def _chat(
         # criterion.
         failures: dict[str, list[str]] = {}
         out_of_rounds = False
+        said_nothing = False
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 reply, calls, shown = "", [], 0
@@ -1041,6 +1042,15 @@ def _chat(
                         terminal.show_piece(reply[shown:])
 
                 if not calls:
+                    # A turn can end with nothing to show in two ways, and
+                    # #41 AC 10 guarded only one of them. Running out of
+                    # rounds is the loud way; this is the quiet one - the
+                    # model stops asking for tools and streams no text, and
+                    # the user gets the prompt back with no answer and no
+                    # reason. Found driving #89's manual pass: six read_mail
+                    # calls, then silence, two calls inside an eight-round
+                    # budget so the round notice never fired.
+                    said_nothing = not reply.strip()
                     break
 
                 # The model asked for work before answering. Its own turn goes
@@ -1136,10 +1146,18 @@ def _chat(
         terminal.end_reply()
         if out_of_rounds:
             terminal.note_round_limit(MAX_TOOL_ROUNDS)
+        elif said_nothing:
+            # Never both: running out of rounds also leaves `reply` empty, and
+            # the round notice already says why.
+            terminal.note_no_answer()
         if compaction.looks_truncated(sent_estimate, last_prompt_usage):
             terminal.report_truncated(sent_estimate, last_prompt_usage)
         terminal.show_sources(read, seen)
-        messages.append({"role": "assistant", "content": reply})
+        if reply.strip():
+            # An empty assistant turn is not history - it is the absence of
+            # one, and recording it sends the next request a turn where the
+            # model said nothing, as though it had.
+            messages.append({"role": "assistant", "content": reply})
         if last_usage is not None:
             running_usage = last_usage
         terminal.end_turn()
