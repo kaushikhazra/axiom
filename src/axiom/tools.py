@@ -605,6 +605,22 @@ def _header(message: dict, name: str) -> str:
     return ""
 
 
+def _field(message: dict, name: str) -> str:
+    """One header as it should be shown, naming its absence rather than going blank.
+
+    Not every message has all three. An old Google Talk record kept in Gmail has
+    no `Subject` and no RFC-822 `Date` at all, and `_header` faithfully returns
+    empty for both - which rendered as `Subject:` with nothing after it, in a row
+    that had collapsed to an id and a sender.
+
+    A model cannot tell that from a tool that half worked, and one of them
+    answered "(none listed)" for a date it had simply not been given. This is the
+    same promise the body makes when no part of it can be shown: say the thing is
+    absent, rather than leaving a space where it would have been.
+    """
+    return _header(message, name).strip() or f"(no {name.lower()})"
+
+
 def _decoded(part: dict) -> str:
     """One part's data as text. Empty if there is none or it will not decode.
 
@@ -723,9 +739,9 @@ def read_mail(message_id: str, mailbox=None) -> str:  # noqa: ANN001
     text, attached = _body_and_attachments(payload)
 
     lines = [
-        f"From: {_header(message, 'From')}",
-        f"Date: {_header(message, 'Date')}",
-        f"Subject: {_header(message, 'Subject')}",
+        f"From: {_field(message, 'From')}",
+        f"Date: {_field(message, 'Date')}",
+        f"Subject: {_field(message, 'Subject')}",
         "",
         # AC 19's last case. A model told nothing came back invents one; told
         # the message had no readable part, it can say so.
@@ -781,8 +797,8 @@ def search_mail(query: str, mailbox=None) -> str:  # noqa: ANN001
         except Exception as failed:  # noqa: BLE001
             return f"error: {mail.failed_call(failed)}"
         rows.append(
-            f"{entry['id']}  {_header(message, 'Date')}  "
-            f"{_header(message, 'From')}  {_header(message, 'Subject')}"
+            f"{entry['id']}  {_field(message, 'Date')}  "
+            f"{_field(message, 'From')}  {_field(message, 'Subject')}"
         )
 
     # AC 24. Said only when the limit actually bound the answer, so a search

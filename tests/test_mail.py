@@ -334,6 +334,24 @@ def test_search_returns_sender_subject_and_date(tmp_path):
     assert "m1" in result
 
 
+def test_a_message_with_no_subject_or_date_names_what_is_missing(tmp_path):
+    """AC 17, for a message that has neither.
+
+    An old Google Talk record kept in Gmail has no `Subject` and no RFC-822
+    `Date`. Found driving the manual pass against real mail: the row collapsed to
+    an id and a sender, and the model reported "(none listed)" for a date it had
+    simply never been given - which is a model guessing at a tool that looked
+    half broken.
+    """
+    messages = FakeMessages(["m1"], {"m1": {"From": "Ada <ada@example.com>"}})
+    result = tools.run(
+        "search_mail", {"query": "engine"}, mailbox=mailbox_for(messages, tmp_path)
+    )
+    assert "ada@example.com" in result
+    assert "(no subject)" in result
+    assert "(no date)" in result
+
+
 def test_a_search_matching_nothing_says_so(tmp_path):
     """AC 23. Not an empty string - a model told nothing came back invents."""
     messages = FakeMessages([])
@@ -451,6 +469,23 @@ def test_a_plain_single_part_body_is_read(tmp_path):
     assert "the difference engine is not the analytical one" in result
     assert "Ada" in result
     assert "engines" in result
+
+
+def test_a_read_message_names_a_header_it_does_not_have(tmp_path):
+    """AC 18, for the same message the search row covers.
+
+    The blank case and the whitespace case together: a header that is present and
+    empty is the same absence to whoever reads the result, and `Subject:` with
+    nothing after it is what a reader cannot distinguish from a tool that failed.
+    """
+    result, _ = read(
+        part("text/plain", "you there?"),
+        tmp_path,
+        {"From": "Ada", "Subject": "   "},
+    )
+    assert "you there?" in result
+    assert "Subject: (no subject)" in result
+    assert "Date: (no date)" in result
 
 
 def test_padding_that_gmail_stripped_is_put_back(tmp_path):
