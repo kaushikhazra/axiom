@@ -963,10 +963,42 @@ REGISTRY: dict[str, Tool] = {
                 "properties": {
                     "query": {
                         "type": "string",
+                        # **The longest argument description here, and measured
+                        # at 111 tokens per request** against the version that
+                        # named four operators and no formats.
+                        #
+                        # Bought with two wrong answers in one afternoon. A
+                        # model reaching for a relative window wrote
+                        # `after:3d`, and one reaching for today wrote
+                        # `after:today`; Gmail accepted both, ignored the
+                        # operator, and returned matches up to eighteen months
+                        # old, which axiom relayed as "the last few days". The
+                        # same gap had the model decline to look for
+                        # attachments at all, as though no operator existed.
+                        #
+                        # `newer_than:` is why this is worth the tokens: it is
+                        # a relative window that needs no knowledge of today's
+                        # date, which the model does not have and will not
+                        # until #91 lands.
+                        #
+                        # Only paid by a run that has Gmail configured -
+                        # `without_unusable_mail_tools` drops this declaration
+                        # entirely otherwise, so a run with no credentials
+                        # carries none of it.
                         "description": (
-                            "What to search for. Gmail's own search syntax "
-                            "works, so from:, subject:, after: and is:unread "
-                            "all mean what they do in Gmail."
+                            "What to search for, in Gmail's own search syntax. "
+                            "Plain words match anywhere; operators combine "
+                            "with spaces - from:, to:, subject:, "
+                            "has:attachment, filename:, is:unread, label:. "
+                            "For a window of time use newer_than: or "
+                            "older_than: with a number and d, m or y, so "
+                            "newer_than:3d is the last three days. Prefer "
+                            "those to after: and before:, which take a date "
+                            "written 2026/09/11 and nothing else - a bare word "
+                            "or a duration is not a date, and Gmail ignores "
+                            "the whole operator rather than refusing it. "
+                            "Example: from:infoq newer_than:7d has:attachment. "
+                            "Never send an empty query."
                         ),
                     }
                 },
