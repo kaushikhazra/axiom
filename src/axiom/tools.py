@@ -17,7 +17,7 @@ import httpx
 import psutil
 import trafilatura
 
-from . import schedule, skills
+from . import mail, schedule, skills
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,12 @@ class Tool:
     # as `needs_schedule`: session state, not user settings, and not something
     # a model can reach by naming it in a call.
     needs_library: bool = False
+    # The session's access to the user's mail (#89). Same reasoning again, and
+    # one more thing this time: the mailbox holds the credential, and `run`
+    # refuses any argument a tool did not declare - so arriving by injection is
+    # what makes it impossible for a token to be a tool argument, and therefore
+    # impossible for one to reach `note_tool` and the screen (AC 29).
+    needs_mail: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,6 +79,38 @@ SKILL_TOOLS = frozenset({"read_skill", "write_skill", "delete_skill", "invoke_sk
 # What a skill tool says when the session has no library. Not a crash and not
 # silence: a model that asked has to be told why nothing happened.
 NO_SKILLS = "error: skills are not available in this session"
+
+# The tools that read the user's mail (#89). Named here so a caller can leave
+# them out without knowing how they are implemented, exactly as WEB_TOOLS is.
+MAIL_TOOLS = frozenset({"search_mail", "read_mail"})
+
+# What a mail tool says when the session has no mailbox at all - `--no-tools`,
+# or a caller that never built one. Distinct from `Mailbox.problem`, which is
+# the richer answer for a run that has one but cannot use it.
+NO_MAIL = "error: mail is not available in this session"
+
+# How many messages one search returns. Axiom's number, not the model's: it is
+# not in the schema, so a model cannot raise it by asking, and AC 24 is about
+# axiom saying how it bounded the answer rather than about the model choosing.
+MAIL_RESULTS = 10
+
+
+def without_unusable_mail_tools(declarations: list[dict], mailbox) -> list[dict]:  # noqa: ANN001
+    """Drop the mail tools when this run has no credentials to use them with.
+
+    Same shape and same measured reason as `_without_unusable_skill_tools`
+    (#75, cycle 3): four skill tools a run could not use cost 396 tokens on
+    every request. A run with nothing configured buying a Gmail tool it can
+    never call is the same waste, and AC 1 says such a run behaves exactly as
+    it does today - which a twelfth tool in the startup line is not.
+
+    Unlike the skill tools there is no `write_skill` equivalent to keep. A
+    catalogue can be filled from inside axiom, so one tool has to survive an
+    empty one; a Google credential cannot, so nothing here is the way in.
+    """
+    if mailbox is not None and mailbox.configured:
+        return declarations
+    return [tool for tool in declarations if tool["function"]["name"] not in MAIL_TOOLS]
 
 
 def working_directory(limits: "Limits") -> Path:
@@ -554,6 +592,231 @@ def invoke_skill(name: str, library=None) -> str:  # noqa: ANN001
     return library.invoke(name)
 
 
+def _header(message: dict, name: str) -> str:
+    """One header from a metadata-format message, or empty.
+
+    Gmail returns headers as a list of `{name, value}` rather than a mapping,
+    and it does not promise a case. Both are handled here so no caller has to.
+    """
+    wanted = name.lower()
+    for header in message.get("payload", {}).get("headers", []):
+        if header.get("name", "").lower() == wanted:
+            return header.get("value", "")
+    return ""
+
+
+def _field(message: dict, name: str) -> str:
+    """One header as it should be shown, naming its absence rather than going blank.
+
+    Not every message has all three. An old Google Talk record kept in Gmail has
+    no `Subject` and no RFC-822 `Date` at all, and `_header` faithfully returns
+    empty for both - which rendered as `Subject:` with nothing after it, in a row
+    that had collapsed to an id and a sender.
+
+    A model cannot tell that from a tool that half worked, and one of them
+    answered "(none listed)" for a date it had simply not been given. This is the
+    same promise the body makes when no part of it can be shown: say the thing is
+    absent, rather than leaving a space where it would have been.
+    """
+    return _header(message, name).strip() or f"(no {name.lower()})"
+
+
+def _decoded(part: dict) -> str:
+    """One part's data as text. Empty if there is none or it will not decode.
+
+    **base64url, not base64** - Gmail uses `-` and `_` where base64 uses `+`
+    and `/`, and it strips the padding. `urlsafe_b64decode` wants the padding
+    back, which is what the `=` arithmetic is for; without it a body whose
+    length is not a multiple of four raises rather than decoding.
+
+    Decoded with `errors="replace"`, because a body that is almost readable is
+    worth more to a model than an exception - and a message that arrives in an
+    encoding nobody declared correctly is AC 19's whole point.
+    """
+    import base64
+
+    data = part.get("body", {}).get("data")
+    if not data:
+        return ""
+    try:
+        padded = data + "=" * (-len(data) % 4)
+        return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _stripped(html: str) -> str:
+    """HTML as something a model can read.
+
+    Only reached when a message has no plain-text part at all. Handing a model
+    raw markup spends the window on tags and teaches it to quote them back.
+
+    `trafilatura` is already a dependency, already used by `fetch_page`, and is
+    better at this than anything written here would be. Its fallback is the raw
+    text rather than nothing, because a body that resisted extraction is still
+    the only body there is.
+    """
+    import re
+
+    extracted = trafilatura.extract(html, include_links=False, include_images=False)
+    if extracted:
+        return extracted
+    return re.sub(r"<[^>]+>", " ", html)
+
+
+def _body_and_attachments(payload: dict) -> tuple[str, list[str]]:
+    """Walk a message's parts once, taking the text and naming the files.
+
+    One walk rather than two, because AC 19 and AC 20 are looking at the same
+    tree and a second pass would be a second chance to disagree with the first.
+
+    **Plain beats HTML**, at any depth. A `multipart/alternative` carries both
+    and they say the same thing, so preferring the plain one costs nothing and
+    saves the window. HTML is kept separately and used only if no plain part
+    turns up anywhere in the tree.
+
+    **Nothing is fetched and nothing is written** (AC 31). An attachment's
+    bytes live behind a separate `attachments().get()` call that is never made -
+    the filename and size are in the part itself, and that is all a model is
+    given.
+    """
+    plain: list[str] = []
+    html: list[str] = []
+    attachments: list[str] = []
+
+    def walk(part: dict) -> None:
+        kind = part.get("mimeType", "")
+        filename = part.get("filename") or ""
+        if filename:
+            # AC 20. Named rather than dropped, exactly as `servers.as_text`
+            # names a block it cannot show - a model told nothing came back
+            # answers from memory instead, which is the failure #40 prevents.
+            size = part.get("body", {}).get("size")
+            measured = f", {size} bytes" if size else ""
+            attachments.append(f"{filename} ({kind or 'unknown type'}{measured})")
+            return
+        for below in part.get("parts") or []:
+            walk(below)
+        if kind == "text/plain":
+            plain.append(_decoded(part))
+        elif kind == "text/html":
+            html.append(_decoded(part))
+
+    walk(payload)
+    text = "\n".join(one for one in plain if one).strip()
+    if not text:
+        text = "\n".join(_stripped(one) for one in html if one).strip()
+    return text, attachments
+
+
+def read_mail(message_id: str, mailbox=None) -> str:  # noqa: ANN001
+    """One message, as text a model can read (AC 18, AC 19, AC 20).
+
+    Metadata first so the model knows whose words these are, then the body,
+    then what came attached. `format="full"` because the parts are the point;
+    `metadata` would give the headers and no body at all.
+    """
+    if mailbox is None:
+        return NO_MAIL
+    if not message_id.strip():
+        return "error: read_mail needs the id of a message to read"
+
+    try:
+        service = mailbox.service(announce=mail_announcer)
+    except mail.Refused as refused:
+        return f"error: {refused}"
+
+    try:
+        message = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id.strip(), format="full")
+            .execute()
+        )
+    except Exception as failed:  # noqa: BLE001
+        return f"error: {mail.failed_call(failed)}"
+    payload = message.get("payload", {})
+    text, attached = _body_and_attachments(payload)
+
+    lines = [
+        f"From: {_field(message, 'From')}",
+        f"Date: {_field(message, 'Date')}",
+        f"Subject: {_field(message, 'Subject')}",
+        "",
+        # AC 19's last case. A model told nothing came back invents one; told
+        # the message had no readable part, it can say so.
+        text or "(this message has no part that can be shown as text)",
+    ]
+    if attached:
+        lines.append("")
+        lines.append("Attached: " + "; ".join(attached))
+    return "\n".join(lines)
+
+
+def search_mail(query: str, mailbox=None) -> str:  # noqa: ANN001
+    """Messages matching a search, as sender, subject, date and id (AC 17).
+
+    Metadata only. The body is `read_mail`'s job, and asking for it here would
+    pull every matched message in full to print three fields of each.
+    """
+    if mailbox is None:
+        return NO_MAIL
+    # AC 26. Refused before anything is built, so no call is made to Google and
+    # no browser can open for a request that could not have been answered.
+    if not query.strip():
+        return "error: search_mail needs something to search for"
+
+    try:
+        service = mailbox.service(announce=mail_announcer)
+    except mail.Refused as refused:
+        return f"error: {refused}"
+
+    messages = service.users().messages()
+    # Every Google call is wrapped, and none of them lets the exception's own
+    # text out - two of Google's exceptions carry a secret in it. See
+    # `mail.failed_call`, which was written after cycle 5 reproduced the leak.
+    try:
+        found = messages.list(userId="me", q=query, maxResults=MAIL_RESULTS).execute()
+    except Exception as failed:  # noqa: BLE001
+        return f"error: {mail.failed_call(failed)}"
+    listed = found.get("messages") or []
+    if not listed:
+        # AC 23. A model told nothing came back answers from memory instead of
+        # saying it found nothing - the failure #40 exists to prevent.
+        return f"no messages match {query!r}"
+
+    rows = []
+    for entry in listed:
+        try:
+            message = messages.get(
+                userId="me",
+                id=entry["id"],
+                format="metadata",
+                metadataHeaders=["From", "Subject", "Date"],
+            ).execute()
+        except Exception as failed:  # noqa: BLE001
+            return f"error: {mail.failed_call(failed)}"
+        rows.append(
+            f"{entry['id']}  {_field(message, 'Date')}  "
+            f"{_field(message, 'From')}  {_field(message, 'Subject')}"
+        )
+
+    # AC 24. Said only when the limit actually bound the answer, so a search
+    # returning four does not claim to have been truncated.
+    if found.get("nextPageToken"):
+        rows.append(f"(the first {MAIL_RESULTS}; there are more matches than this)")
+    return "\n".join(rows)
+
+
+# Called before the browser opens, never after (AC 5). A module-level name
+# rather than a lambda so a test can replace it, and so `mail.py` stays free of
+# anything that draws.
+def mail_announcer() -> None:
+    from . import terminal
+
+    terminal.note_mail_permission()
+
+
 def schedule_prompt(cron: str, prompt: str, repeating: bool = True, jobs=None) -> str:
     """Take a job, and say what was taken (#74 AC 3, AC 4, AC 5, AC 7, AC 8)."""
     if jobs is None:
@@ -686,6 +949,85 @@ REGISTRY: dict[str, Tool] = {
             },
             run=run_command,
             needs_limits=True,
+        ),
+        Tool(
+            name="search_mail",
+            description=(
+                "Search the user's own mail and return the sender, subject, "
+                "date and id of each match. Read-only: nothing here can send, "
+                "delete, or change a message. Use the id with read_mail to see "
+                "what one says."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        # **The longest argument description here, and measured
+                        # at 111 tokens per request** against the version that
+                        # named four operators and no formats.
+                        #
+                        # Bought with two wrong answers in one afternoon. A
+                        # model reaching for a relative window wrote
+                        # `after:3d`, and one reaching for today wrote
+                        # `after:today`; Gmail accepted both, ignored the
+                        # operator, and returned matches up to eighteen months
+                        # old, which axiom relayed as "the last few days". The
+                        # same gap had the model decline to look for
+                        # attachments at all, as though no operator existed.
+                        #
+                        # `newer_than:` is why this is worth the tokens: it is
+                        # a relative window that needs no knowledge of today's
+                        # date, which the model does not have and will not
+                        # until #91 lands.
+                        #
+                        # Only paid by a run that has Gmail configured -
+                        # `without_unusable_mail_tools` drops this declaration
+                        # entirely otherwise, so a run with no credentials
+                        # carries none of it.
+                        "description": (
+                            "What to search for, in Gmail's own search syntax. "
+                            "Plain words match anywhere; operators combine "
+                            "with spaces - from:, to:, subject:, "
+                            "has:attachment, filename:, is:unread, label:. "
+                            "For a window of time use newer_than: or "
+                            "older_than: with a number and d, m or y, so "
+                            "newer_than:3d is the last three days. Prefer "
+                            "those to after: and before:, which take a date "
+                            "written 2026/09/11 and nothing else - a bare word "
+                            "or a duration is not a date, and Gmail ignores "
+                            "the whole operator rather than refusing it. "
+                            "Example: from:infoq newer_than:7d has:attachment. "
+                            "Never send an empty query."
+                        ),
+                    }
+                },
+                "required": ["query"],
+            },
+            run=search_mail,
+            needs_mail=True,
+        ),
+        Tool(
+            name="read_mail",
+            description=(
+                "Read one of the user's messages by its id, as given by "
+                "search_mail. Returns the sender, date, subject and the body "
+                "as text, and names anything attached. Read-only."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "message_id": {
+                        "type": "string",
+                        "description": (
+                            "The id of the message, exactly as search_mail listed it."
+                        ),
+                    }
+                },
+                "required": ["message_id"],
+            },
+            run=read_mail,
+            needs_mail=True,
         ),
         Tool(
             name="search_web",
@@ -883,6 +1225,7 @@ def run(
     limits: Limits = DEFAULT_LIMITS,
     jobs: "schedule.Schedule | None" = None,
     library: "skills.Library | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> str:
     """Run a call and return what the model should be told.
 
@@ -916,6 +1259,8 @@ def run(
             return tool.run(**arguments, jobs=jobs)
         if tool.needs_library:
             return tool.run(**arguments, library=library)
+        if tool.needs_mail:
+            return tool.run(**arguments, mailbox=mailbox)
         return tool.run(**arguments)
     except TypeError as wrong_arguments:
         return f"error: {name} was called wrongly - {wrong_arguments}"

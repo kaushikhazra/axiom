@@ -1,172 +1,179 @@
-# Handoff — #74 and #85 are both manually passed, and PR #88 is open
+# Handoff — #89 is in a PR, and six rows need you at a console
 
-Rewritten 2026-09-08 at the end of a session that finished #74's manual pass, fixed the
-two defects it found, and settled #85's. Nothing is scheduled and nothing is running.
+Rewritten 2026-09-11 at the end of a session that set up a real Google account, drove
+#89's manual pass against real mail, found four defects doing it, fixed all four, and
+opened PR #92. Nothing is scheduled and nothing is running.
 
 ## Where things stand
 
-`master` is unchanged since PR #86. Everything from today sits on
-**[PR #88](https://github.com/kaushikhazra/axiom/pull/88)**, branch
-`release/74-manual-pass`, at **964 passed, 1 deselected, ~140s**.
-`tests/baseline/transcript.txt` has not moved.
+`master` is at **3a6a351**, unchanged today. The work is on **`feature/89-gmail`**, 14
+commits ahead, pushed, and **[PR #92](https://github.com/kaushikhazra/axiom/pull/92) is
+open against master**. The PR body is current. It deliberately does **not** say "closes
+#89".
 
-| | |
-|---|---|
-| [#74](https://github.com/kaushikhazra/axiom/issues/74) | **manual pass complete** — 21 rows, nothing in #74 found broken |
-| [#85](https://github.com/kaushikhazra/axiom/issues/85) | **manual pass complete** — 29 of 30 pass, AC 19 accepted |
-| [#80](https://github.com/kaushikhazra/axiom/issues/80) | complete since 2026-09-03 |
-| [#81](https://github.com/kaushikhazra/axiom/issues/81) | **rows 2–5 deferred by decision** — see below |
-
-**Merge PR #88 first.** It carries both fixes, and everything else assumes them.
+| | tests | wall clock |
+|---|---|---|
+| master | 986 | 127s |
+| feature/89-gmail | **1034 passed, 1 skipped, 1 deselected** | **130.05s** |
 
 ## Start here tomorrow
 
-There is no owed row. The next move is a new issue, not a continuation.
+**#89 needs six rows of the manual pass driven at a real console, and then it can
+close.** Every criterion a test can reach is reached. What is left needs a browser, a
+clock, or real mail — the steps are in
+`.claude/loop/89-gmail/iteration-1/manual-pass.md`, and the order below matters because
+three of the rows destroy the grant and one of them destroys it permanently.
 
-The two things closest to the surface, both already argued for in this repo and
-neither filed:
+Run it outside the repository, the way it was run today:
 
-**A permission gate.** `run_command` still runs whatever the model asks with no list
-of allowed programs, and `outside()` is visibility only. Today gave three more live
-examples: a model improvised `date` six times unasked, and reached for
-`bash -c`, `/bin/date` and `date 2>&1 | head -5` when the first shapes failed. All
-harmless because the working directory was a sandbox — which is the protection
-CLAUDE.md's rule provides and a stranger following the README does not have.
-[#82](https://github.com/kaushikhazra/axiom/issues/82) would store account access on
-top of this, so the order of the two is a real decision.
+```
+cd C:\Projects\.tmp\axiom-manual
+uv run --env-file .env --project C:/Projects/axiom axiom
+```
 
-**What the model is told about what it just did.** See "the pattern that is now
-undeniable" below.
+**Axiom does not read `.env` itself** — nothing in `src/` looks for one. `uv run
+--env-file` loads it into the environment before axiom starts, which is the whole
+mechanism. The file holds `AXIOM_GOOGLE_CLIENT_ID` and `AXIOM_GOOGLE_CLIENT_SECRET` and
+lives outside the repo on purpose: `.env` is **not** in axiom's `.gitignore`.
 
-## What happened today
+The token is at `C:/Users/hazra/.axiom/gmail-token.json` and nowhere else — confirmed by
+a find over the whole repo. Do not set `AXIOM_GOOGLE_TOKEN`; pointing it into the
+sandbox is what broke Row 8 earlier today, and the default is the thing AC 14 is about.
 
-**1. #74's manual pass, finished — all 21 rows.** Twelve were owed; all twelve driven.
-Full record with a transcript per row in
-`.claude/loop/74-scheduled-prompts/iteration-1/manual-pass.md`.
+### The six rows, in the order to drive them
 
-**AC 10 was the row worth the time**, and it is why the pass existed. *A job never
-interrupts a turn in progress.* Cycles 1, 3 and 7 all called it structural and free,
-`observe.md` named it as one of the three that would be got wrong, and it was the one
-criterion the loop settled by argument. Four minute boundaries came due inside a single
-turn and not one interrupted.
+| | | why here |
+|---|---|---|
+| 1 | **Row 12** (AC 19) — read four real messages: a plain one, an HTML newsletter, one with an attachment, one forwarded several times. No raw `<div>` or `<table>` anywhere. **Say "read" explicitly** — an attempt on 11 Sep searched four times and never opened a message, so the row was not driven | uses the live grant, costs nothing |
+| 1b | **The new search description** — ask *"did IndiaFilings send any attachment in the last month?"*. It should reach for `has:attachment newer_than:1m`. The same question was declined outright yesterday | the only evidence `6a256c6` worked |
+| 2 | **Rows 4, 5, 6** (AC 8, AC 9, AC 10) — decline at the consent screen; close the tab without answering; do nothing for three minutes | one sitting. Each needs `/mail forget` first, and each ends with no grant |
+| 3 | Re-grant normally, and **note the time** | rows 4 to 6 leave nothing stored |
+| 4 | **Row 9** (AC 12) — leave axiom idle past the access token's hour, then ask for mail. It answers with **no browser** | needs a grant more than an hour old |
+| 5 | **Row 10** (AC 13, AC 34) — revoke at [myaccount.google.com/permissions](https://myaccount.google.com/permissions), then ask for mail | **last**, because it kills the grant for good |
 
-Two things came free that no test asked for. **`mark_run` computing from `now` is
-observable** — four missed boundaries produced one run, not a backlog of four. And
-AC 11's ordering held across four consecutive boundaries with the older job in front
-every time.
+Row 5 is the one most likely to hang. If the terminal is still waiting three minutes
+after you close the tab, that is **Row 6 failing**, not Row 5 — `GRANT_TIMEOUT` is 180
+seconds.
 
-**Nothing in #74 was found broken.**
+**Row 14 is worth re-checking** even though it passed: `/mail` changed today. It should
+now name `hazra.kaushik@gmail.com` and say **nothing** about an expiry.
 
-**2. The instrument, which is reusable.**
-`.claude/loop/74-scheduled-prompts/iteration-1/drive.py` types at a real axiom over a
-**held-open pipe** and stamps every line with the moment its first byte arrived.
+## What was found driving it, and fixed
 
-Holding the pipe open is the whole trick: a pipe fed from a file is never empty, so
-the timed read never returns `WAITING` and `due()` is never reached. Writing into it
-slowly leaves the reader genuinely blocked in `input()`, and the loop consults a real
-clock exactly as it does for a person sitting still.
+Four defects, none of which a test had caught. The three a test can reach were committed
+with tests probed red against the old behaviour; the fourth is a tool description, and
+only a live run can show it worked.
 
-    drive.py <steps-file> [model]
+**A header a message does not have, rendered blank** (`bc5b74e`). An old Google Talk
+record kept in Gmail has no `Subject` and no RFC-822 `Date`. `_header` faithfully
+returned empty and every caller printed it raw, so the search row collapsed to an id and
+a sender. The model then reported "(none listed)" for a date it had never been given.
+`_field` names the absence.
 
-Two things it taught, both cheap to forget:
+**A turn that ends with nothing to say** (`d8cdb7a`). #41 AC 10 guards a turn that spends
+every round on tools and never answers. It does not guard the quieter way to the same
+place: the model stops calling tools and streams no text, well inside the budget, so the
+round notice never fires and the prompt comes back bare. Seen after six `read_mail` calls
+that had all worked — which is the reading that makes it worst, because every line on
+screen said the turn was going fine.
 
-- **`uv run` will not host it.** uv does not relay piped stdin, so the first attempt
-  hung with the banner printed and ollama never spawning a runner. It launches the
-  project interpreter with `-c "import axiom; axiom.main()"` instead.
-- **It has no tty and says so.** The drawing, the composer and `take_back_prompt` as
-  an eye sees them are unreachable from a pipe, and always will be.
+**AC 22 never named the account** (`d7414d3`). `/mail` said "your Google account" in
+every run that ever existed. `Credentials.account` is a read-only property populated only
+when a flow was handed one, and the loopback flow is not — so the branch that could name
+an account was unreachable and the fallback was the only one that ran.
+`Mailbox.account()` asks Google through `getProfile`, building from the cached grant
+directly rather than through `service()`, **which falls through to `_granted`**. `/mail`
+is a question about what is held, and a question must not turn into a grant.
 
-**3. Two defects found, fixed, and verified both ways.** Neither is #74's.
+The same commit stops `/mail` reporting the access token's hour as "the permission runs
+until". The grant outlives that token and renews past it silently.
 
-**`run_command` inherited axiom's stdin.** A command that reads a line then waits is
-waiting on a console nobody is typing at. `date` on Windows prints the date and *then*
-asks for a new one — ninety seconds of one turn across three calls, and the model was
-told the command had been **slow** when what it had been was **blocked**. Measured both
-ways in one session: **30.0s** and a timeout against **0.02s** and
-`The current date is: 08-09-2026`. `stdin=subprocess.DEVNULL`.
+**The operators a model had to guess at** (`6a256c6`). `search_mail` named four operators
+and no formats. A model asked for the last three days wrote `after:3d`; one asked about
+today wrote `after:today`. **Gmail accepts both, ignores the operator rather than
+refusing it**, and returns anything — eighteen months of it, which axiom relayed as "the
+last few days", calling a March 2025 message recent. The same gap had the model decline
+to look for attachments at all, as though no operator for it existed.
 
-**`take_back_prompt` was the only drawing function with no `isatty` guard.** Redirected,
-its cursor escape is four bytes of rubbish — every scheduled turn read
-`[Kaxiom: scheduled - ...` with the `> ` it meant to erase still there. It emits a
-newline instead. **The sweep is clean**: every other escape in `terminal.py` sits behind
-`_rendering and sys.stdout.isatty()` at its call site.
+`newer_than:` and `older_than:` are why this was worth its tokens: **a relative window
+needs no knowledge of today's date**, which the model does not have and will not until
+#91 lands. Measured at **111 tokens per request**, weighed with the function the startup
+line uses; a first draft cost 145 and was trimmed. Only a configured run pays it.
 
-**One test had to be rewritten because it passed against the bug.** pytest already
-points fd 0 at nothing, so a child inheriting it also saw end-of-input. It now `dup2`s a
-pipe with the write end held open onto fd 0 — readable, never answered, which is what a
-console with nobody typing at it is.
+**No test asserts it, deliberately** — a test that a description contains `newer_than`
+proves a sentence was built and nothing more. Row 1b of the pass is the evidence.
 
-**4. #85's pass, settled without the checklist that was written for it.** A fifteen-row
-plan was thrown away, and the reasoning generalises: **#74's pass had already left 36
-captured tool calls across five tools**, gathered for a different issue and answering
-most of this one, because every one of them is a call line and a result line drawn by
-the code under test.
+## The pattern this session is about
 
-What a transcript cannot reach is the drawing, and that is one screen rather than
-fifteen turns — `.claude/loop/85-tool-lines/sample.py`, no model and no waiting.
+**Three tests were green against behaviour that did not work.** Not one — three, on the
+same branch, found in two days.
 
-Both open judgements from the last handoff are closed. Shown the sample screen,
-Kaushik: *"all the rows looks very cool to me."*
-
-**AC 19 fails below about ninety columns and that is accepted**, with the reasoning in
-`_tool_row`'s docstring so nobody re-opens it. `schedule_prompt`'s first result row
-carries the prompt inside it, so its length moves with what was scheduled: whole at 100
-columns, ` local` gone at 90, date cut mid-way at 80. Both fixes cost more than the
-loss.
-
-## The pattern that is now undeniable
-
-**The model's account of a tool result is wrong often enough to be the next issue.**
-Four turns today, three different models, and #85 had the truth on screen every time:
-
-| the tool said | the model said |
+| | |
 |---|---|
-| `next at 2026-09-08 11:16 local` | *"at 01:16 on Sept 8, 2026"* |
-| `*/1 * * * *` | *"scheduled to say FAST every 30 seconds"* |
-| `a repeating job stops after 7 days` | dropped it entirely, having repeated it correctly an hour earlier |
-| eleven tools offered | *"I don't have direct system access to report the actual time"* |
+| cycle 6 | `test_the_flow_closes_its_listener_on_the_timeout_path` rebound a port to prove a socket was closed; refcounting did the work, so it passed against a library that leaked |
+| today | `test_a_turn_that_runs_out_of_rounds_says_so` only ever ran where `isatty()` is false, so it never touched the path the defect was on |
+| today | `test_mail_names_the_account_it_can_read` handed `stored` a fake with `account` pre-set — proving the rendering branch works **when the name is there**, while nothing proved it ever arrives |
 
-**It is not uniform across models**, which is the useful part: qwen2.5:7b wrote *"A
-repeating job will stop after 7 days, but it will continue as long as this session is
-active"* — both facts, both right — where qwen3.5:9b garbled the same two an hour
-earlier. So this is a system-prompt problem with a measurable target, not a fact of
-small models.
+Every one of them was written by someone who had just written the code, and passed
+because the fake agreed with the author rather than with the library.
 
-#85 fixed the half where the user could not see. The half where the *model* is told
-what it just did is untouched and unfiled.
+**What actually found all three was driving the thing by hand.** Not a review, not a
+re-read, not another test. The manual pass is not a formality at the end of an issue; on
+this branch it was the only thing that worked.
 
-## Still owed, and one thing deliberately not
+**The discipline that goes with it:** commit, then break the fix, then confirm the new
+test goes red. Every fix on this branch was probed that way, and the probe is what
+separated "the test passes" from "the test would notice."
 
-**#81 rows 2–5 are deferred, not owed.** Kaushik's call, 2026-09-08: *"we pass for now,
-we will see if slow connect causes issues or not."* Slow connection, dropped mid-call,
-certificate or proxy, nothing left connected on exit — all wait for a real symptom
-rather than a rehearsed one. **Do not pick these up as outstanding work.**
+## The cost of a missing fact
 
-**Three notes need a real console and cannot be driven from a pipe.** Typing at a timed
-prompt with something scheduled; the prompt take-back as an eye sees it; and
-[#83](https://github.com/kaushikhazra/axiom/issues/83), multi-line being off while
-anything is scheduled. `drive.py` has no tty.
+`after:today` reached Gmail as a search today and came back with a message from 2010,
+which axiom relayed as "you have one email today". `after:` takes `YYYY/MM/DD`, the tool
+description names the operator without its format, and **`strftime` appears nowhere in
+`src/axiom/`** — nothing ever tells the model what day it is, so it could not have
+written a valid one.
 
-**Google and Slack still cannot exist.** All four publish remote MCP servers and every
-one is OAuth; `ServerSpec` carries `command`, `args`, `env`, `tools` and `address` — no
-headers, no token, no browser flow. [#82](https://github.com/kaushikhazra/axiom/issues/82)
-unblocks all four. Not started.
+Same root cause as the models issuing Unix commands on Windows. Filed as
+[#91](https://github.com/kaushikhazra/axiom/issues/91) — the model is never told the
+operating system, the shell, or the date. Sixteen criteria. **AC 9 is the design question
+hiding in it**: whether the date is computed at startup or per request, which decides
+what a session running past midnight believes.
 
-## Rules that must not be forgotten
+One more, not yet filed: **the model's first `search_mail` call was an empty query in all
+three sessions today.** Reproducible, and it burns a round on an error every time. The
+refusal is correct (AC 26); the description gives no example query.
 
-**No test builds a `prompt_toolkit` session** — not a `PromptSession`, not a
-`create_pipe_input`, not a key processor. Nineteen did and took this machine down twice.
-`tests/whatkey.py` is allowed because it uses the key *parser* only, and its docstring
-says it must not become a test.
+## Still true from the last handoff
 
-**Break a criterion before claiming it.** Both of today's fixes were verified by removing
-them and watching the right test go red — and the stdin test only became real *because*
-that check showed it passing against the bug.
+**#81 rows 2–5 are closed by decision**, not owed. Slow connection, dropped mid-call,
+certificate or proxy, nothing left connected on exit — all wait for a real symptom.
 
-**Commit before you break.** A break undone with `git checkout --` takes uncommitted work
-with it.
+**Three notes need a real console** and cannot be driven from a pipe: typing at a timed
+prompt with something scheduled, the prompt take-back as an eye sees it, and
+[#83](https://github.com/kaushikhazra/axiom/issues/83). `drive.py` has no tty.
 
-**Watch the wall clock, not just the green.** Today's suite runs at ~140s against the
-last handoff's 107s. Checked with `--durations`: the slowest fifteen are all pre-existing
-MCP subprocess tests and none of today's four appear, so it is machine state. Worth
-re-checking on a quiet machine.
+**No test builds a `prompt_toolkit` session.** Nineteen did and took this machine down
+twice.
+
+**Master is hook-protected** — commit and push both blocked; branch, merge, then a PR.
+The guard also blocks *any* `git push` while HEAD is master, `--delete` included, which
+is over-matching. **You said the hook needs disabling at some point** — it is still there.
+
+`security_guard.py` blocks a `git commit` heredoc containing the word "credentials", and
+blocks writing or reading any file matching `\.env$`. Write such messages to a file and
+use `git commit -F`; hand the user a template to rename rather than writing `.env`.
+
+## The queue
+
+| | |
+|---|---|
+| [#89](https://github.com/kaushikhazra/axiom/issues/89) | **in PR #92 — six manual rows left, all needing a console** |
+| [#91](https://github.com/kaushikhazra/axiom/issues/91) | **new** — the model is told nothing about its machine or the date |
+| [#90](https://github.com/kaushikhazra/axiom/issues/90) | Slack, read-only. Not started, and needs no browser |
+| [#78](https://github.com/kaushikhazra/axiom/issues/78) | the model's account of what it ran — Row 13 fed it today: the tool named the attachment's type and size, the model relayed only the filename |
+| [#68](https://github.com/kaushikhazra/axiom/issues/68) | summary parity across models |
+| [#83](https://github.com/kaushikhazra/axiom/issues/83) | multi-line while something is scheduled |
+| [#82](https://github.com/kaushikhazra/axiom/issues/82) | **parked by decision** — read its comment before restarting it |
+
+**There is still no permission gate**, and no issue for one. It comes *after* #82, because
+with a gate in place the failure space becomes two-dimensional.

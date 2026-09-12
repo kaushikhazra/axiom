@@ -1907,6 +1907,23 @@ def note_round_limit(rounds: int) -> None:
     )
 
 
+def note_no_answer() -> None:
+    """The model ended its turn with nothing to say.
+
+    The other way to get what `note_round_limit` exists to prevent, and the
+    quieter one: the model stops asking for tools and streams no text at all,
+    so the prompt comes back with no answer and nothing said about why. Found
+    driving #89's manual pass, where it followed six tool calls that had all
+    worked - which is the reading that makes the silence worst, because every
+    line on screen says the turn was going fine.
+
+    Said rather than guessed at: axiom does not know whether the model thought
+    it was finished or lost its way, and a message claiming either would be
+    inventing a reason. What it can say is that the turn produced no answer.
+    """
+    say("the model ended the turn without an answer.")
+
+
 def show_tool_result(result: str) -> None:
     """A tool's output, marked so it cannot be read as the model's answer.
 
@@ -2144,6 +2161,72 @@ def note_no_skill(name: str, available: tuple[str, ...]) -> None:
         say(f"name a skill: /skill <name>. Available: {listed}")
         return
     say(f"there is no skill named {name}. Available: {listed}")
+
+
+def show_mail(grant, problem: str) -> None:  # noqa: ANN001
+    """What axiom holds for Google, and nothing it holds it with (#89 AC 22).
+
+    `Grant` has no token field, so there is nothing here to remember not to
+    print - the same reasoning that keeps a credential out of `note_tool`.
+    Structural, not careful.
+
+    A run with nothing configured is answered too. AC 1 is about startup and
+    this is a command the user typed; somebody who asked is owed a reason
+    rather than silence.
+    """
+    if problem:
+        say(problem)
+        return
+    if not grant.held:
+        say("axiom holds no permission for Google - the next request will ask")
+        return
+    if grant.account:
+        say(f"axiom can read mail for {grant.account}")
+        return
+    # Held, but Google could not be asked who it belongs to - offline, or a
+    # grant it has since stopped honouring. Still an answer about what is
+    # held, and still not a name axiom is willing to guess at.
+    say(
+        "axiom holds permission to read your mail, but could not reach Google "
+        "to say for which account"
+    )
+
+
+def note_mail_forgotten(had_one: bool) -> None:
+    """AC 15, AC 16. What was given back, and what happens next.
+
+    Says which of the two happened. "Forgotten" when there was nothing to
+    forget would leave a user believing they had revoked something they never
+    granted.
+    """
+    if had_one:
+        say("axiom has given back its permission for Google")
+        say("the next request that needs mail will ask again")
+        return
+    say("axiom held no permission for Google, so there was nothing to give back")
+
+
+def note_mail_unknown(asked: str) -> None:
+    """A word after `/mail` that is not one of the ones there are."""
+    say(f"there is no /mail {asked} - say /mail to see what axiom holds, ")
+    say("or /mail forget to give it back")
+
+
+def note_mail_permission() -> None:
+    """Said before the browser opens, never after (#89 AC 2, AC 5).
+
+    Two facts, because both are the user's decision to make and neither is
+    obvious from a Google consent screen: **which** service is asking, and
+    **what** it will be able to do. "Read" is stated rather than implied - the
+    consent screen names a scope, and a scope is not a sentence.
+
+    `say` rather than a raw print, so a redirected run gets the same words down
+    the same path. AC 37 keeps a non-terminal run from reaching here at all;
+    this function does not second-guess that, because a guard in two places is
+    a guard whose real location nobody knows.
+    """
+    say("Gmail is asking for permission to read your mail - opening your browser")
+    say("axiom will be able to read messages, and cannot send, delete or change any")
 
 
 def note_skills_off() -> None:
