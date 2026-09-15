@@ -1,26 +1,63 @@
-# Handoff — #89 has two more fixes and four rows left, none of them urgent
+# Handoff — #91 is done and in a PR; #89 still has four rows that need a console
 
-Rewritten 2026-09-15 at the end of a session that drove the manual pass against real
-mail, found two more defects doing it, fixed both, and pushed them to PR #92. Nothing is
-scheduled and nothing is running.
+Rewritten 2026-09-15, late, at the end of a second sitting that finished #91 whole and
+answered #89's one open question without a browser. Nothing is scheduled and nothing is
+running.
 
 ## Where things stand
 
-`master` is at **3a6a351**, unchanged. The work is on **`feature/89-gmail`**, 16 commits
-ahead, pushed, with [PR #92](https://github.com/kaushikhazra/axiom/pull/92) open against
-master. It still deliberately does **not** say "closes #89".
+`master` is at **3a6a351**, unchanged. Two branches, both pushed, stacked:
+
+| branch | PR | against | |
+|---|---|---|---|
+| `feature/89-gmail` | [#92](https://github.com/kaushikhazra/axiom/pull/92) | master | 17 commits. Four manual rows left |
+| `feature/91-machine-and-day` | [#94](https://github.com/kaushikhazra/axiom/pull/94) | **`feature/89-gmail`** | one commit. All sixteen criteria covered |
+
+Neither says "closes". **#94 is based on #89's branch, not master** — the one comment it
+touches in `search_mail`'s description exists only there — so #92 lands first.
 
 | | tests | wall clock |
 |---|---|---|
 | master | 986 | 127s |
-| feature/89-gmail | **1035 passed, 1 skipped, 1 deselected** | 146.44s |
+| feature/89-gmail | 1035 passed, 1 skipped, 1 deselected | 146.44s |
+| feature/91-machine-and-day | **1052 passed, 1 skipped, 1 deselected** | 156.83s |
 
-Two commits today, both found by driving the pass rather than by reading anything:
+Three commits on #89's branch, the first two found by driving the pass rather than by
+reading anything:
 
 | | |
 |---|---|
 | `e3f435b` | the `in:` operator, so "my inbox" means the inbox |
 | `5458226` | a stub plain part no longer hides the letter beside it |
+| `e13085c` | the `qwen2.5:7b` probe, and a transcript fix in `drive.py` |
+
+## #91 is finished — read the one thing that was tried and removed
+
+All sixteen criteria: nine settled by tests, six by a live probe on two models, one by
+both. The write-up is `.claude/loop/91-machine-and-day/iteration-1/probes/told.md`.
+
+The model is now told, in one sentence rebuilt every turn, what system it is on, which
+shell its commands are handed to, and today's date. `ornith:9b` and `qwen2.5:7b` both
+name Windows and `cmd.exe`, both reach for `dir` rather than `ls` first time, and *"any
+mail that arrived today?"* now produces `after:2026-09-15 before:2026-09-16` — checked
+against the mailbox, nine for nine, where `after:today` returns one unrelated message
+from 2025.
+
+**A repair was tried and measured worse.** The probe caught `qwen2.5:7b` retyping the
+working directory into `dir` and dropping a dot, so the prompt gained *"a command you run
+starts there — so a bare name is enough"*. Four runs of one question:
+
+| prompt | run 1 | run 2 |
+|---|---|---|
+| without the clause | `run_command(dir /b)` ✅ | `run_command(dir /b)` ✅ |
+| with the clause | printed `dir /b` **as prose** ❌ | printed `dir /b /a-d` **as prose** ❌ |
+
+Advice about how to *write* a command reads as an invitation to write one, and the model
+stopped calling the tool. Removed; the table is in `system_prompt`'s docstring. **When
+the same good idea occurs to you, run the probe before believing it.**
+
+It costs 52 tokens a request, 1250 → 1302, and the recorded baseline moves with it —
+including two scenarios with a 350-token debug window that now reach compaction.
 
 ## The time pressure is gone — read this before planning the next sitting
 
@@ -168,9 +205,10 @@ already in the description. It does not matter for the fix; it would matter if a
 operator ever needs adding. Full note and the reproducing script:
 `.claude/loop/89-gmail/iteration-1/probes/`.
 
-## #78 got four data points, and they disagree with each other
+## #78 got five data points, and they disagree with each other
 
-All today, all relaying a tool result the transcript shows axiom supplied correctly:
+All today. The first four relay a tool result the transcript shows axiom supplied
+correctly; the last one had no tool result at all, which is a different animal:
 
 | | |
 |---|---|
@@ -178,10 +216,18 @@ All today, all relaying a tool result the transcript shows axiom supplied correc
 | `gemma4:e2b`, next turn | read three, said *"these are the ones I was able to read immediately"* — honest, same model, same question |
 | `ornith:9b` | relayed `estimate.pdf (51 KB)` correctly, then ten minutes later was handed `Invoice_0191-13744770559.pdf (application/octet-stream, 31864 bytes)` and said *"I don't have a way to read the PDF attachment directly"*, naming none of it |
 | `qwen2.5:7b` | stamped the Uber receipt `11:14:01 IST`. The tool line says `06:08:28 +0000`; `11:14:01 +0530` is the message **two rows up**. A field crossing between neighbours, not invention |
+| `qwen2.5:7b`, #91's probe | asked to list a directory, printed `Dir /b .\` and then **four filenames that do not exist** — `ronics.txt`, `readme.md`, `settings.conf`, `toolkit.json`. No tool line, because no tool was called. Invention from nothing, and the only tell is the missing call line |
 
 **The fabrication is not deterministic and not a property of the model.** #85 fixed the
 visibility half — the tool line shows what really happened — and what is left is a system
 prompt problem. A test that pins it will have to pin the prompt, not the output.
+
+**The fifth one is worth a second look before #78 is designed.** Four of these are a model
+mis-stating a result it was given; the fifth is a model that never called anything and
+wrote a plausible result anyway. Only the absence of a call line separates it from real
+work, and absence is exactly what a reader does not notice. Whatever #78 ends up doing
+about the prompt, ask what it does about **a turn that claims a command's output while
+making no call at all** — the prose looked identical to the run that worked.
 
 ## Still true from the last handoff
 
@@ -208,7 +254,7 @@ use `git commit -F`; hand the user a template to rename rather than writing `.en
 | | |
 |---|---|
 | [#89](https://github.com/kaushikhazra/axiom/issues/89) | **in PR #92 — four manual rows left, all needing a console, none needing a clock** |
-| [#91](https://github.com/kaushikhazra/axiom/issues/91) | the model is told nothing about its machine or the date |
+| [#91](https://github.com/kaushikhazra/axiom/issues/91) | **done, in PR #94** — merges after #92 |
 | [#90](https://github.com/kaushikhazra/axiom/issues/90) | Slack, read-only. Not started, and needs no browser |
 | [#78](https://github.com/kaushikhazra/axiom/issues/78) | the model's account of what it ran — **four fresh data points above, and they disagree** |
 | [#68](https://github.com/kaushikhazra/axiom/issues/68) | summary parity across models — today's four-model split is evidence for it |
