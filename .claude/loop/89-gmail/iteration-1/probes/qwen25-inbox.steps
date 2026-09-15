@@ -1,0 +1,14 @@
+# Does the folder operator survive without a thinking phase?
+#
+# `e3f435b` put `in:` into `search_mail`'s description. `ornith:9b` used it and
+# thinks; `gemma4:e2b` did not and does not. qwen2.5:7b is dense and
+# non-thinking, so it is the one run that separates "the description works" from
+# "reasoning rescued it".
+#
+# One question, read-only. What is being read is the tool line: `in:inbox` or a
+# bare `inbox`.
+
+mark: qwen2.5:7b, one question, watching the search_mail query
+send: what's in my inbox?
+wait: 300
+send: /exit

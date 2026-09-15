@@ -149,20 +149,26 @@ shape:
 |---|---|---|---|
 | `gemma4:e2b` | ~2B (`e2b` is *effective* 2B) | no | `query=inbox` — **even after `e3f435b` loaded**, confirmed by the cost line moving 1600 → 1633 |
 | `ornith:9b` | 9.0B, `qwen35`, no vision tower | yes | `query=in:inbox`, ten for ten against ground truth |
+| `qwen2.5:7b` | 7.6B, dense | **no** | `query=is:inbox` — a third answer, **twelve for twelve** against ground truth. Twice, identically |
 
 `gemma4:e2b` called `read_mail` correctly three times with ids copied exactly from the
 search output — so it can call a tool and thread a value between calls. What it could not
 do is **compose a query string with operator syntax**, which is closer to writing a small
 DSL than to filling a parameter. That looks like the floor.
 
-**Untested, and worth one run:** `qwen2.5:7b` is dense and *non-thinking*, so it is the
-only model in the list that isolates whether the description works on its own merits or
-whether reasoning rescues it. If it writes `inbox`, the fix should move `in:inbox` into
-the description's single `Example:` line — small models pattern-match the example far
-harder than the prose, which is also why `newer_than:` worked, since that one **is** in
-the example.
+**That run happened, and the description holds.** `qwen2.5:7b` was the one model that
+isolates whether the description works on its own merits or whether reasoning rescues it —
+dense, non-thinking. It wrote `is:inbox`, which Gmail honours: identical to the INBOX
+label, twelve for twelve, in order, where a bare `inbox` returns none of them. **The
+contingency is dead** — moving `in:inbox` into the `Example:` line would fix something
+that is not broken. The floor sits between ~2B and 7B, not at thinking.
 
-## #78 got three data points, and they disagree with each other
+One run cannot say whether it read `in:` and wrote `is:` anyway, or extended the `is:unread`
+already in the description. It does not matter for the fix; it would matter if a third
+operator ever needs adding. Full note and the reproducing script:
+`.claude/loop/89-gmail/iteration-1/probes/`.
+
+## #78 got four data points, and they disagree with each other
 
 All today, all relaying a tool result the transcript shows axiom supplied correctly:
 
@@ -171,6 +177,7 @@ All today, all relaying a tool result the transcript shows axiom supplied correc
 | `gemma4:e2b` | read **one** message, printed `**Summary:**` for **ten** — nine of them reworded subject lines |
 | `gemma4:e2b`, next turn | read three, said *"these are the ones I was able to read immediately"* — honest, same model, same question |
 | `ornith:9b` | relayed `estimate.pdf (51 KB)` correctly, then ten minutes later was handed `Invoice_0191-13744770559.pdf (application/octet-stream, 31864 bytes)` and said *"I don't have a way to read the PDF attachment directly"*, naming none of it |
+| `qwen2.5:7b` | stamped the Uber receipt `11:14:01 IST`. The tool line says `06:08:28 +0000`; `11:14:01 +0530` is the message **two rows up**. A field crossing between neighbours, not invention |
 
 **The fabrication is not deterministic and not a property of the model.** #85 fixed the
 visibility half — the tool line shows what really happened — and what is left is a system
@@ -203,8 +210,8 @@ use `git commit -F`; hand the user a template to rename rather than writing `.en
 | [#89](https://github.com/kaushikhazra/axiom/issues/89) | **in PR #92 — four manual rows left, all needing a console, none needing a clock** |
 | [#91](https://github.com/kaushikhazra/axiom/issues/91) | the model is told nothing about its machine or the date |
 | [#90](https://github.com/kaushikhazra/axiom/issues/90) | Slack, read-only. Not started, and needs no browser |
-| [#78](https://github.com/kaushikhazra/axiom/issues/78) | the model's account of what it ran — **three fresh data points above, and they disagree** |
-| [#68](https://github.com/kaushikhazra/axiom/issues/68) | summary parity across models — today's three-model split is evidence for it |
+| [#78](https://github.com/kaushikhazra/axiom/issues/78) | the model's account of what it ran — **four fresh data points above, and they disagree** |
+| [#68](https://github.com/kaushikhazra/axiom/issues/68) | summary parity across models — today's four-model split is evidence for it |
 | [#83](https://github.com/kaushikhazra/axiom/issues/83) | multi-line while something is scheduled |
 | [#82](https://github.com/kaushikhazra/axiom/issues/82) | **parked by decision** — read its comment before restarting it |
 

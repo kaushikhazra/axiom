@@ -1,0 +1,4 @@
+# A drive.py run against a real mailbox writes its transcript here, and this
+# repository is public. The transcripts stay out; the notes beside them carry
+# the finding and `ground_truth.py` reproduces the check.
+*.log
