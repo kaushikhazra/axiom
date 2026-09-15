@@ -6,9 +6,12 @@ return the same structured call for the same declaration, so a per-model branch
 would be inventing a difference that is not there.
 """
 
+import os
+import platform
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import ddgs
@@ -172,6 +175,35 @@ def outside(arguments: dict, limits: "Limits") -> list[str]:
     return found
 
 
+def machine_and_day(now: datetime | None = None) -> str:
+    """The machine this is running on and the date on it, as one sentence.
+
+    Read at the moment it is asked for, never cached. A session left open over
+    midnight is told the new date on its next request, which only works because
+    nothing here is computed once at startup (#91 AC 9).
+
+    **The shell is derived, not read.** `run_command` passes `shell=True`, which
+    is `COMSPEC` on Windows and `/bin/sh` everywhere else. Naming it from
+    `os.name` rather than quoting `COMSPEC` keeps the value of an environment
+    variable out of the prompt (AC 15) and keeps a path outside the working
+    directory out of it too (AC 16) - `COMSPEC` holds `C:\\WINDOWS\\system32\\
+    cmd.exe`, and the model needs the name, not the path.
+
+    `Darwin` is said as `macOS` for the same reason the limits are said in
+    seconds: this is a fact the user could be told back in their own words, and
+    the kernel's name is not the one they use.
+    """
+    system = platform.system()
+    said = {"Darwin": "macOS"}.get(system, system or "an unknown system")
+    shell = "cmd.exe" if os.name == "nt" else "/bin/sh"
+    today = (now or datetime.now()).strftime("%A %d %B %Y")
+    return (
+        f"You are running on {said}. Commands you run are handed to {shell}, "
+        f"so write what that shell accepts. Today is {today}, as of this "
+        f"request. These are facts about the machine, not settings."
+    )
+
+
 def system_prompt(limits: "Limits", skills: str = "") -> str:
     """What the model is told before it does anything.
 
@@ -189,6 +221,31 @@ def system_prompt(limits: "Limits", skills: str = "") -> str:
     in, from the same list, it called `read_file` instead. A duration reads as
     a fact and a path reads as something to go and look up.
 
+    **Saying that commands start there too made it worse, and was removed.**
+    #91's probe caught qwen2.5:7b running `dir C:\\Projects\\tmp\\axiom-manual`
+    - the right program for this shell, and a path it retyped by hand and got
+    wrong, dropping the dot from `.tmp`. The obvious repair was to add "a
+    command you run starts there - so a bare name is enough". Measured, four
+    runs of one question:
+
+    | prompt | what the model did |
+    |---|---|
+    | without the sentence | `run_command(dir /b)`, twice, exit 0 first time |
+    | with the sentence | printed `dir /b` **as prose**, twice, calling nothing |
+
+    Advice about how to *write* a command reads as an invitation to write one,
+    and the model wrote it out instead of calling the tool - a worse failure
+    than the one being fixed, and a silent one. The original mistype has not
+    recurred in a single-turn session; it is #78's territory, not this
+    sentence's. Do not re-add it without running that probe again.
+
+    The machine and the day are part of it rather than a second system message,
+    for the reason `skills` is: there is then exactly one thing to weigh when
+    the cost of a request is reported, so the figure on screen cannot describe
+    a prompt other than the one being sent (#91 AC 13, AC 14). It also means the
+    result is only current for as long as the day is - see `machine_and_day`,
+    and the caller that rebuilds this each turn.
+
     `skills` is the catalogue - one line per skill, name and description only,
     never a skill's instructions. It arrives as text rather than as a list of
     skills so that this module does not have to know what a skill is; and it is
@@ -201,6 +258,8 @@ def system_prompt(limits: "Limits", skills: str = "") -> str:
         f"You are working in {working_directory(limits)}. Files you create or "
         "change go there. Use a path somewhere else only when the user names "
         "one, and when they do, use it exactly as they wrote it.\n"
+        "\n"
+        f"{machine_and_day()}\n"
         "\n"
         "The limits you are working within:\n"
         f"- a command is stopped if it runs longer than "
@@ -999,8 +1058,14 @@ REGISTRY: dict[str, Tool] = {
                         #
                         # `newer_than:` is why this is worth the tokens: it is
                         # a relative window that needs no knowledge of today's
-                        # date, which the model does not have and will not
-                        # until #91 lands.
+                        # date.
+                        #
+                        # Since #91 the model does have the date - it is in the
+                        # standing prompt - so `after:` is reachable now in a
+                        # way it was not when this was written. The preference
+                        # stands anyway: a relative window cannot be got wrong
+                        # by a model that miscounts days, and `after:` silently
+                        # returns eighteen months of mail when it is.
                         #
                         # `in:` was added after the same failure reached the
                         # most obvious question there is. Asked "what's in my

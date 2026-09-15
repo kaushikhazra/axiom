@@ -1,0 +1,27 @@
+# #91's behaviour half: what a model does with what it is now told.
+#
+# AC 1, 2, 3, 4, 6 and 7 are answers and commands, not sentences axiom builds -
+# a test asserting the prompt contains "cmd.exe" proves a string was assembled
+# and nothing more. These are asked of a live model instead.
+#
+# Non-destructive throughout, per CLAUDE.md: it is asked to name things and to
+# list a directory, never to change one. The working directory is the sandbox,
+# which drive.py sets.
+
+mark: AC 1 and AC 2 - the machine and the shell
+send: what operating system are you running on, and which shell runs the commands you run?
+wait: 90
+
+mark: AC 6 - the day
+send: what is today's date?
+wait: 75
+
+mark: AC 3 and AC 4 - the command has to work the first time
+send: list the files in the directory you are working in
+wait: 120
+
+mark: AC 7 - a date in Gmail's format, and not the word today
+send: do I have any mail that arrived today?
+wait: 180
+
+send: /exit

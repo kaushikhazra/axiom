@@ -1,0 +1,3 @@
+# A drive.py run against a real mailbox writes its transcript here, and this
+# repository is public. The notes beside them carry the findings.
+*.log

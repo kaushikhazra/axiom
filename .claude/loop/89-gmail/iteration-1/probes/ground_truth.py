@@ -58,12 +58,27 @@ def main() -> None:
     creds = Credentials.from_authorized_user_file(str(TOKEN), [SCOPE])
     service = build("gmail", "v1", credentials=creds, cache_discovery=False)
 
-    asked = [
-        ("label INBOX (ground truth)", {"labelIds": ["INBOX"]}),
-        ("q=in:inbox", {"q": "in:inbox"}),
-        ("q=is:inbox", {"q": "is:inbox"}),
-        ("q=inbox", {"q": "inbox"}),
-    ]
+    # Queries named on the command line replace the folder set below, so a
+    # query a model actually wrote can be checked without editing this file -
+    # which is the only way this stays usable for the next operator that turns
+    # up. The first one given is the ground truth the rest are compared to.
+    given = sys.argv[1:]
+    asked = (
+        [
+            (
+                f"q={q}" if q else "label INBOX",
+                {"q": q} if q else {"labelIds": ["INBOX"]},
+            )
+            for q in given
+        ]
+        if given
+        else [
+            ("label INBOX (ground truth)", {"labelIds": ["INBOX"]}),
+            ("q=in:inbox", {"q": "in:inbox"}),
+            ("q=is:inbox", {"q": "is:inbox"}),
+            ("q=inbox", {"q": "inbox"}),
+        ]
+    )
     truth: list[str] = []
     for title, listing in asked:
         print(f"\n== {title}")
