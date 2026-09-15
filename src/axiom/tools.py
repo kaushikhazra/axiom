@@ -94,6 +94,13 @@ NO_MAIL = "error: mail is not available in this session"
 # axiom saying how it bounded the answer rather than about the model choosing.
 MAIL_RESULTS = 10
 
+# How far the plain half of a `multipart/alternative` may fall behind its HTML
+# sibling before it is read as a placeholder rather than an alternative. Four,
+# because the two halves are supposed to be the same words: stripped HTML runs
+# a little longer than its plain twin - link targets, alt text - but nothing
+# legitimate runs four times longer. See `_body_and_attachments`.
+STUB_RATIO = 4
+
 
 def without_unusable_mail_tools(declarations: list[dict], mailbox) -> list[dict]:  # noqa: ANN001
     """Drop the mail tools when this run has no credentials to use them with.
@@ -670,10 +677,19 @@ def _body_and_attachments(payload: dict) -> tuple[str, list[str]]:
     One walk rather than two, because AC 19 and AC 20 are looking at the same
     tree and a second pass would be a second chance to disagree with the first.
 
-    **Plain beats HTML**, at any depth. A `multipart/alternative` carries both
-    and they say the same thing, so preferring the plain one costs nothing and
-    saves the window. HTML is kept separately and used only if no plain part
-    turns up anywhere in the tree.
+    **Plain beats HTML**, at any depth - unless the plain part is a stub. A
+    `multipart/alternative` is *meant* to carry the same words twice, so
+    preferring the plain one costs nothing and saves the window. A sender is
+    free to break that, and they do: a school's mailing to parents carried its
+    whole letter in 887 bytes of HTML beside a ten byte `text/plain` part.
+    Falling back only on an empty plain part let those ten bytes through as the
+    message, and the model reported it as blank.
+
+    So the test is relative, not a length. A real plain alternative is never a
+    small fraction of its own HTML sibling - `STUB_RATIO` is the margin, and
+    eleven characters against ten stays on the plain half. Erring toward HTML
+    is the safe direction: the cost of taking it wrongly is a noisier body,
+    and the cost of taking plain wrongly is a message that reads as empty.
 
     **Nothing is fetched and nothing is written** (AC 31). An attachment's
     bytes live behind a separate `attachments().get()` call that is never made -
@@ -704,8 +720,13 @@ def _body_and_attachments(payload: dict) -> tuple[str, list[str]]:
 
     walk(payload)
     text = "\n".join(one for one in plain if one).strip()
-    if not text:
-        text = "\n".join(_stripped(one) for one in html if one).strip()
+    # Stripped unconditionally rather than only when the plain half is empty,
+    # because "is this a stub?" cannot be answered without knowing what the
+    # other half would have said. A regex pass over markup already in memory,
+    # against a body that reads as blank - the trade is not close.
+    readable = "\n".join(_stripped(one) for one in html if one).strip()
+    if len(text) * STUB_RATIO < len(readable):
+        text = readable
     return text, attachments
 
 

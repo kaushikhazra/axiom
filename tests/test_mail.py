@@ -515,6 +515,40 @@ def test_multipart_alternative_prefers_the_plain_half(tmp_path):
     assert "html words" not in result
 
 
+def test_a_stub_plain_part_does_not_hide_the_letter_beside_it(tmp_path):
+    """AC 19. `alternative` only means alternative when both halves say the
+    same thing, and a sender is free to break that.
+
+    Found by reading real mail: a school's mailing to parents carried a ten
+    byte `text/plain` part and its entire letter in an 887 byte `text/html`
+    one. The HTML fallback fired only when the plain half stripped to nothing,
+    and ten bytes is not nothing, so `read_mail` returned ten characters and
+    the model reported the message as empty. Nobody had written a fake that
+    stubbed a part rather than omitting it.
+
+    The guard is relative, not a length: a genuine plain alternative is never
+    a small fraction of its own HTML sibling, and the test above - eleven
+    characters against ten - stays on the plain half because of it.
+    """
+    result, _ = read(
+        part(
+            "multipart/alternative",
+            parts=[
+                part("text/plain", "HTML only."),
+                part(
+                    "text/html",
+                    "<html><body><p>Dear Parents, in order to plan for the "
+                    "next terms, we are writing with a reminder of our "
+                    "notification of leaving deadline.</p></body></html>",
+                ),
+            ],
+        ),
+        tmp_path,
+    )
+    assert "notification of leaving deadline" in result
+    assert "<p>" not in result
+
+
 def test_html_only_is_stripped_rather_than_handed_over(tmp_path):
     """AC 19. No plain part anywhere, so the HTML is all there is."""
     result, _ = read(
