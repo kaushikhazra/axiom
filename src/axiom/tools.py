@@ -981,6 +981,21 @@ REGISTRY: dict[str, Tool] = {
                         # date, which the model does not have and will not
                         # until #91 lands.
                         #
+                        # `in:` was added after the same failure reached the
+                        # most obvious question there is. Asked "what's in my
+                        # inbox?", a model wrote the bare word `inbox` - a
+                        # full-text term, not a folder - and Gmail answered
+                        # with ten messages, two of them carrying no INBOX
+                        # label at all, while missing the twelve newest that
+                        # did, five of which had arrived that morning. They
+                        # matched because a newsletter says "delivered
+                        # directly to your inbox" in its own body. `label:`
+                        # being listed made it worse: it looks like the folder
+                        # operator and is not one for INBOX. The negative
+                        # clause is deliberate - naming `in:` alone leaves the
+                        # bare word looking like a shorthand for it. Measured
+                        # at 33 tokens, by the same route as the 111 above.
+                        #
                         # Only paid by a run that has Gmail configured -
                         # `without_unusable_mail_tools` drops this declaration
                         # entirely otherwise, so a run with no credentials
@@ -990,6 +1005,9 @@ REGISTRY: dict[str, Tool] = {
                             "Plain words match anywhere; operators combine "
                             "with spaces - from:, to:, subject:, "
                             "has:attachment, filename:, is:unread, label:. "
+                            "For a folder use in:, so in:inbox is the inbox "
+                            "itself - the bare word inbox is not, it matches "
+                            "the text of messages that mention it. "
                             "For a window of time use newer_than: or "
                             "older_than: with a number and d, m or y, so "
                             "newer_than:3d is the last three days. Prefer "
