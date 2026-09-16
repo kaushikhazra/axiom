@@ -1,4 +1,4 @@
-# Handoff — #91 is done and in a PR; #89 still has four rows that need a console
+# Handoff — #91 is done, #89 needs a console, and publishing is parked at a decision
 
 Rewritten 2026-09-15, late, at the end of a second sitting that finished #91 whole and
 answered #89's one open question without a browser. Nothing is scheduled and nothing is
@@ -58,6 +58,51 @@ the same good idea occurs to you, run the probe before believing it.**
 
 It costs 52 tokens a request, 1250 → 1302, and the recorded baseline moves with it —
 including two scenarios with a 350-token debug window that now reach compaction.
+
+## Parked mid-discussion 2026-09-16: how axiom reaches someone else's machine
+
+**Pick this up first.** Nothing is filed and no code is written — it stopped at a
+decision.
+
+**The gap.** Gmail's client id and secret reach axiom only as environment variables,
+and the manual pass gets them there with `uv run --env-file` from a file outside the
+repo. On anyone else's machine there is no such wrapper. Axiom never reads a `.env`
+itself, and should not start — a `.env` in a project folder is the file that gets
+committed by accident.
+
+**Kaushik's direction: a published Google app.** Adding each user as a test user by
+email is ruled out for a real product, and so, by implication, is asking every user to
+create their own Cloud project.
+
+What Google's own pages said on 16 Sep:
+
+| | |
+|---|---|
+| `gmail.readonly` | **restricted**. So is `gmail.metadata` — no Gmail scope that reads mail avoids it |
+| verification | public homepage and privacy policy on a domain he owns, domain verified in Search Console, a demo video, scope justification, Limited Use compliance. Re-verified every 12 months |
+| security assessment (CASA) | required for apps that *"access data from or through a third-party server"*. **Axiom has no server** — mail goes Google → the user's machine → local Ollama — so on that wording it needs verification but not the assessment |
+| if a reviewer disagrees | CASA Tier 2, quoted by third-party labs at roughly $1,200–1,500+ a year. A vendor figure, not Google's |
+
+**The risk to settle before committing.** Whether axiom counts as having no server is
+the reviewer's call, and three paths let mail content leave the machine: the model
+putting mail text into `web_search` or `fetch_page`; `AXIOM_HOST` pointed at a remote
+Ollama; remote MCP servers from #81. That makes **the missing permission gate** part of
+this story, not a separate one — a gate that stops mail content reaching the network is
+the evidence a reviewer would want.
+
+**A tension to raise, not resolve:** the homepage and privacy policy must be public,
+and axiom's audience has so far been kept out of anything public.
+
+**Separately, whatever the answer:** the values need a home that does not depend on a
+launcher. Proposed `~/.axiom/google.json`, beside `gmail-token.json`, environment
+winning over the file, and a startup line naming which source took effect. For a
+published app the client id would ship with axiom and this file becomes an override —
+a Desktop-app client secret is not confidential by Google's own account of installed
+apps.
+
+Sources: [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes),
+[restricted scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification),
+[verification requirements](https://support.google.com/cloud/answer/13464321?hl=en).
 
 ## The time pressure is gone — read this before planning the next sitting
 
