@@ -9,6 +9,7 @@ from . import (
     compaction,
     config,
     context,
+    mail,
     models,
     schedule,
     servers,
@@ -31,6 +32,14 @@ MODEL_COMMAND = "/model"
 # an argument of `s`.
 SKILL_COMMAND = "/skill"
 SKILLS_COMMAND = "/skills"
+
+# `/mail` says what axiom holds; `/mail forget` gives it back (#89 AC 15, AC 16,
+# AC 22). One command with a word after it rather than two commands, because
+# `/mail` and `/mailforget` would sit one letter apart in the same chain - which
+# is the trap `/skills` and `/skill` already document, and there is no reason to
+# walk into it twice.
+MAIL_COMMAND = "/mail"
+MAIL_FORGET = "forget"
 
 # Returned by a switch when the user ended the session at the list, as opposed
 # to cancelling it. A sentinel rather than a second return value, because the
@@ -279,6 +288,7 @@ def _prepare(
     attached: "servers.Servers",
     model: str,
     catalogue: "skills.Catalogue | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> Running:
     """What this model can do, and how much room it has.
 
@@ -305,6 +315,8 @@ def _prepare(
         declarations = _without_unusable_skill_tools(
             declarations, catalogue, settings.skills_enabled
         )
+    if declarations is not None:
+        declarations = tools.without_unusable_mail_tools(declarations, mailbox)
     if declarations is not None:
         # Said before the wait, not after: starting a server can take seconds,
         # and a silent pause reads as a hang. Only when something will actually
@@ -337,6 +349,7 @@ def _switch_model(
     run: Running,
     named: str,
     catalogue: "skills.Catalogue | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> "Running | object | None":
     """A model change asked for mid-conversation.
 
@@ -376,7 +389,7 @@ def _switch_model(
         # and falls through to the list (AC 7, AC 8).
         if named in available:
             return _switched_to(
-                model_backend, settings, attached, run, named, catalogue
+                model_backend, settings, attached, run, named, catalogue, mailbox
             )
         terminal.note_model_missing(named, settings.host)
 
@@ -424,7 +437,7 @@ def _switch_model(
         )
         if chosen is not None:
             return _switched_to(
-                model_backend, settings, attached, run, chosen, catalogue
+                model_backend, settings, attached, run, chosen, catalogue, mailbox
             )
         terminal.refuse_model(answer, len(available), names=True)
 
@@ -436,6 +449,7 @@ def _switched_to(
     run: Running,
     chosen: str,
     catalogue: "skills.Catalogue | None" = None,
+    mailbox: "mail.Mailbox | None" = None,
 ) -> "Running | None":
     """Take the switch, remember it, and say what changed.
 
@@ -447,7 +461,7 @@ def _switched_to(
         terminal.note_unchanged(chosen)
         return None
     _remember(chosen, settings.host)
-    fresh = _prepare(model_backend, settings, attached, chosen, catalogue)
+    fresh = _prepare(model_backend, settings, attached, chosen, catalogue, mailbox)
     terminal.note_switched(
         fresh.model,
         fresh.context,
@@ -621,7 +635,23 @@ def _chat(
     )
     catalogue_now = library.catalogue if library else skills.Catalogue()
 
-    run = _prepare(model_backend, settings, attached, model, catalogue_now)
+    # Before `_prepare`, for the same reason the library is: what a model is
+    # offered depends on whether this run has credentials to use it with.
+    #
+    # **One per run, not one per call.** The mailbox holds the built service and
+    # the record of a refusal, and rebuilding it per turn would reset both - so
+    # AC 4's "the first request that needs Gmail" would become every request,
+    # and a user who declined once would be asked again on the model's next call.
+    #
+    # `interactive` is both streams, not one. `stdin` alone is what
+    # `_settle_model` needs - whether anyone can answer a prompt - and AC 37 is
+    # about output as well: a run whose output is piped has nobody watching a
+    # browser it opened. `_rendering` is deliberately not consulted, because
+    # `--no-render` is a user asking for plain output at a real console, and
+    # that user can still answer Google.
+    mailbox = mail.from_environment(interactive=interactive and sys.stdout.isatty())
+
+    run = _prepare(model_backend, settings, attached, model, catalogue_now, mailbox)
     limits = _limits(settings)
 
     # Read once, before the cost is reported, and refreshed whenever a skill is
@@ -753,6 +783,7 @@ def _chat(
                 run,
                 line[len(MODEL_COMMAND) :].strip(),
                 library.catalogue if library else skills.Catalogue(),
+                mailbox,
             )
             if switched is _LEAVING:
                 return
@@ -778,6 +809,22 @@ def _chat(
             if library is None:
                 terminal.note_skills_off()
                 continue
+
+        if command == MAIL_COMMAND or command.startswith(MAIL_COMMAND + " "):
+            asked = command[len(MAIL_COMMAND) :].strip()
+            if asked == MAIL_FORGET:
+                # AC 15, AC 16. `forget` clears the cache and the built service
+                # together, so the next call that needs Gmail finds nothing and
+                # asks - there is no live session to tear down.
+                terminal.note_mail_forgotten(mailbox.forget())
+            elif asked:
+                terminal.note_mail_unknown(asked)
+            else:
+                # AC 22. A run with nothing configured still gets an answer:
+                # AC 1 is about startup, and a command the user typed is not
+                # startup - somebody who asked is owed a reason.
+                terminal.show_mail(mailbox.status(), mailbox.problem)
+            continue
 
         if command == SKILLS_COMMAND:
             terminal.show_skills(
@@ -954,6 +1001,7 @@ def _chat(
         # criterion.
         failures: dict[str, list[str]] = {}
         out_of_rounds = False
+        said_nothing = False
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 reply, calls, shown = "", [], 0
@@ -994,6 +1042,15 @@ def _chat(
                         terminal.show_piece(reply[shown:])
 
                 if not calls:
+                    # A turn can end with nothing to show in two ways, and
+                    # #41 AC 10 guarded only one of them. Running out of
+                    # rounds is the loud way; this is the quiet one - the
+                    # model stops asking for tools and streams no text, and
+                    # the user gets the prompt back with no answer and no
+                    # reason. Found driving #89's manual pass: six read_mail
+                    # calls, then silence, two calls inside an eight-round
+                    # budget so the round notice never fired.
+                    said_nothing = not reply.strip()
                     break
 
                 # The model asked for work before answering. Its own turn goes
@@ -1030,7 +1087,12 @@ def _chat(
                         result = attached.run(call.name, arguments)
                     else:
                         result = tools.run(
-                            call.name, call.arguments, limits, jobs, library
+                            call.name,
+                            call.arguments,
+                            limits,
+                            jobs,
+                            library,
+                            mailbox,
                         )
                         # The catalogue in the standing prompt is now stale.
                         # Restated here rather than inside the library, because
@@ -1084,10 +1146,18 @@ def _chat(
         terminal.end_reply()
         if out_of_rounds:
             terminal.note_round_limit(MAX_TOOL_ROUNDS)
+        elif said_nothing:
+            # Never both: running out of rounds also leaves `reply` empty, and
+            # the round notice already says why.
+            terminal.note_no_answer()
         if compaction.looks_truncated(sent_estimate, last_prompt_usage):
             terminal.report_truncated(sent_estimate, last_prompt_usage)
         terminal.show_sources(read, seen)
-        messages.append({"role": "assistant", "content": reply})
+        if reply.strip():
+            # An empty assistant turn is not history - it is the absence of
+            # one, and recording it sends the next request a turn where the
+            # model said nothing, as though it had.
+            messages.append({"role": "assistant", "content": reply})
         if last_usage is not None:
             running_usage = last_usage
         terminal.end_turn()

@@ -60,10 +60,15 @@ def offered(*, web: bool = True) -> list:
     line is printed at startup, before anything is streamed - so there is no
     payload to read.
 
-    Derived from `SKILL_TOOLS` and `WEB_TOOLS` rather than listed, so a tool
-    added to either follows automatically.
+    #89 adds the same kind of drop: the mail tools are held back unless the run
+    has Google credentials, and no run in this file has any. All of them go,
+    with no `write_skill` equivalent surviving - a catalogue can be filled from
+    inside axiom, a credential cannot.
+
+    Derived from `SKILL_TOOLS`, `WEB_TOOLS` and `MAIL_TOOLS` rather than listed,
+    so a tool added to any of them follows automatically.
     """
-    dropped = tools.SKILL_TOOLS - {"write_skill"}
+    dropped = (tools.SKILL_TOOLS - {"write_skill"}) | tools.MAIL_TOOLS
     if not web:
         dropped = dropped | tools.WEB_TOOLS
     return [d for d in tools.declarations() if d["function"]["name"] not in dropped]
@@ -140,9 +145,7 @@ def test_the_figure_is_the_one_the_size_checks_use(capsys, monkeypatch):
     """
     _, out = run(capsys, monkeypatch)
 
-    assert reported(out.out) == weighed(
-        offered(), tools.system_prompt(tools.Limits())
-    )
+    assert reported(out.out) == weighed(offered(), tools.system_prompt(tools.Limits()))
 
 
 def test_the_prompt_measured_is_the_prompt_actually_sent(capsys, monkeypatch):
@@ -254,9 +257,7 @@ def test_a_switch_to_a_capable_model_reports_its_cost(capsys, monkeypatch):
     )
 
     after = out.out[out.out.index("now small:1b") :]
-    assert reported(after) == weighed(
-        offered(), tools.system_prompt(tools.Limits())
-    )
+    assert reported(after) == weighed(offered(), tools.system_prompt(tools.Limits()))
 
 
 # --- Unchanged ----------------------------------------------------------

@@ -22,6 +22,19 @@ dependencies = [
     # alternate screen and would fight `Rendered`. One dependency of its own,
     # `wcwidth`, and BSD. The survey is in .claude/loop/80-multiline.
     "prompt_toolkit>=3.0.53",
+    # Gmail, read-only (#89). Three rather than one because Google splits the
+    # concerns: `google-api-python-client` builds the service and calls it,
+    # `google-auth-oauthlib` owns the browser flow, and `google-auth-httplib2`
+    # is the transport that joins them.
+    #
+    # `InstalledAppFlow.run_local_server()` is the reason this is a dependency
+    # rather than code here: it does discovery, the loopback listener, the
+    # browser open, catching the code and caching the token. Axiom writes none
+    # of it. There is no API key alternative - mail is private user data, and a
+    # Google API key reaches only public APIs.
+    "google-api-python-client>=2.100",
+    "google-auth-oauthlib>=1.2",
+    "google-auth-httplib2>=0.2",
 ]
 
 [project.scripts]

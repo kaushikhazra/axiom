@@ -388,6 +388,73 @@ def test_a_turn_that_runs_out_of_rounds_says_so(monkeypatch, capsys):
     assert "without an answer" in out
 
 
+def test_a_turn_the_model_ends_without_an_answer_says_so(monkeypatch, capsys):
+    """The other way to reach what AC 10 exists to prevent.
+
+    AC 10 guards the loud way - every round spent on tools. This is the quiet
+    one: the model stops asking for tools and streams no text, well inside the
+    budget, so the round notice never fires and the prompt returns bare. Found
+    driving #89's manual pass against real mail, where it followed six tool
+    calls that had all worked.
+    """
+    backend = StubBackend(
+        turns=[
+            [Call("run_command", {"command": "echo still going"})],
+            [""],
+        ]
+    )
+    feed(monkeypatch, ["do it", "/exit"])
+
+    axiom.main([], using=backend)
+    out = capsys.readouterr().out
+
+    assert "ended the turn without an answer" in out
+    # The budget was never spent, so the other notice would be a false reason.
+    assert "rounds" not in out
+
+
+def test_a_turn_with_no_tools_that_says_nothing_says_so(monkeypatch, capsys):
+    """The same silence without a tool call anywhere - a model that just stops."""
+    backend = StubBackend(turns=[[""]])
+    feed(monkeypatch, ["hello", "/exit"])
+
+    axiom.main([], using=backend)
+
+    assert "ended the turn without an answer" in capsys.readouterr().out
+
+
+def test_a_turn_that_said_nothing_is_not_recorded_as_having_spoken(monkeypatch, capsys):
+    """An empty assistant turn is the absence of one, not a turn.
+
+    Recorded, it tells the next request the model took its turn and said
+    nothing - which is a thing it never did.
+    """
+    backend = StubBackend(turns=[[""], ["a real answer"]])
+    feed(monkeypatch, ["hello", "again", "/exit"])
+
+    axiom.main([], using=backend)
+
+    second = history(backend.streamed[1])
+    assert all(
+        message["content"].strip()
+        for message in second
+        if message["role"] == "assistant"
+    )
+
+
+def test_running_out_of_rounds_says_only_that(monkeypatch, capsys):
+    """Both notices name the same silence, and two reasons for it is one lie."""
+    calls = Call("run_command", {"command": "echo still going"})
+    backend = StubBackend(turns=[[calls]] * (axiom.MAX_TOOL_ROUNDS + 2))
+    feed(monkeypatch, ["do something impossible", "/exit"])
+
+    axiom.main([], using=backend)
+    out = capsys.readouterr().out
+
+    assert f"stopped after {axiom.MAX_TOOL_ROUNDS} rounds" in out
+    assert "ended the turn without an answer" not in out
+
+
 def test_a_turn_that_answers_says_nothing_about_rounds(monkeypatch, capsys):
     """AC 12: no extra output when no limit was reached."""
     backend = StubBackend(turns=[["a plain answer"]])

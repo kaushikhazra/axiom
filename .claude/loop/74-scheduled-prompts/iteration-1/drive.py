@@ -60,6 +60,16 @@ CHILD_ENV = {
     "PYTHONIOENCODING": "utf-8",
 }
 
+# The same locale encoding, one process further out. The child is decoded as
+# utf-8 correctly and then *echoed*, and this script's own stdout is a pipe too,
+# so on Windows it is cp1252 - the first emoji in a real subject line raised
+# `UnicodeEncodeError` inside the reader thread, killed it, and cost every line
+# after second 28 of a five minute run. A transcript that stops mid-turn is
+# worse than a mangled character, and mail is full of characters cp1252 has no
+# byte for, so nothing here may raise on what a sender chose to type.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 
 class Log:
     """Everything the child said, each line stamped when its first byte arrived.

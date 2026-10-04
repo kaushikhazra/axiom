@@ -25,7 +25,16 @@ from axiom import backend, main, models, tools
 # three of the four skill tools are held back while the catalogue is empty, and
 # these runs have no skills - so `len(REGISTRY)` stopped being the number on the
 # startup line even though nothing about switching changed.
-ALL_TOOLS = len(tools.REGISTRY) - len(tools.SKILL_TOOLS - {"write_skill"})
+#
+# #89 adds the same kind of subtraction for a different reason: the mail tools
+# are held back unless this run has Google credentials, and these runs have
+# none. Unlike the skill tools none of them survives, because a catalogue can be
+# filled from inside axiom and a credential cannot.
+ALL_TOOLS = (
+    len(tools.REGISTRY)
+    - len(tools.SKILL_TOOLS - {"write_skill"})
+    - len(tools.MAIL_TOOLS)
+)
 from axiom.backend import Call
 from conftest import StubBackend, feed, listed, row_for
 
