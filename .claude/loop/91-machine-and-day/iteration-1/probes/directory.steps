@@ -1,0 +1,11 @@
+# AC 3 and AC 4 alone, because they are the two that varied.
+#
+# One question, so a slow thinking model can be asked the same thing without
+# sitting through three turns it has already answered. What is being read is
+# the `axiom: run_command(...)` line: whether there is one at all, what program
+# it names, and whether it exits 0 the first time.
+
+mark: AC 3 and AC 4 - the command has to work the first time
+send: list the files in the directory you are working in
+wait: 100
+send: /exit

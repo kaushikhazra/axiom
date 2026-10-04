@@ -699,10 +699,21 @@ def _chat(
     # forget the middle of the string rather than the front. Kept outside, none
     # of that is true and the model has its limits on every turn rather than
     # until the first compaction.
-    instructions = {
-        "role": "system",
-        "content": tools.system_prompt(limits, skills.catalogue_text(catalogue)),
-    }
+    def standing_prompt() -> str:
+        """The prompt as it stands right now.
+
+        One place, called from three, because two of the things in it move
+        while the session runs: the catalogue, when a skill is written or
+        deleted, and the date, at midnight. A second copy of this expression
+        would be a prompt that disagreed with itself depending on which line
+        last rebuilt it.
+        """
+        return tools.system_prompt(
+            limits,
+            skills.catalogue_text(library.catalogue if library else skills.Catalogue()),
+        )
+
+    instructions = {"role": "system", "content": standing_prompt()}
 
     def restate_skills() -> None:
         """Put the current catalogue back into the prompt, and into what is offered.
@@ -724,10 +735,7 @@ def _chat(
         of six in place is the failure it exists to prevent.
         """
         nonlocal run
-        instructions["content"] = tools.system_prompt(
-            limits,
-            skills.catalogue_text(library.catalogue if library else skills.Catalogue()),
-        )
+        instructions["content"] = standing_prompt()
         if run.declarations is None:
             return  # tools are off, or this model cannot call them
         offered = _prepare(
@@ -746,7 +754,20 @@ def _chat(
         )
 
     def to_send(history: list[dict[str, str]]) -> list[dict[str, str]]:
-        """What actually goes to the model - and what the size checks must weigh."""
+        """What actually goes to the model - and what the size checks must weigh.
+
+        The prompt is rebuilt here rather than reused, because one line of it -
+        the date - stops being true while the session is still open (#91 AC 9).
+        A session started before midnight and used after it would otherwise
+        spend the rest of the night telling the model it was yesterday, and no
+        request would go wrong in a way anyone could see.
+
+        Everything else it is built from is a value the session already holds,
+        so rebuilding costs one string and changes nothing until the day does.
+        `restate_skills` still writes into `instructions` for the same reason it
+        always did: it is the catalogue that changed, and this reads it back.
+        """
+        instructions["content"] = standing_prompt()
         return [instructions, *history]
 
     messages: list[dict[str, str]] = []
