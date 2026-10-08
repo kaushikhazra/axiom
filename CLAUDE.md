@@ -4,10 +4,6 @@ Minimal agent. v2 — rebuilt from scratch 2026-08-23. v1 is archived at tag `ar
 
 ## Development method — loop engineering
 
-**Not spec-driven.** This project **overrides** the "Spec-Driven Development" section of the global `~/.claude/CLAUDE.md`.
-
-Do not create `requirement.md` / `design.md` / `task.md`, and do not run the `/e-spec:*` or `/dryrun-*` skills here unless Kaushik asks for one by name.
-
 Work proceeds as loops. The pattern is Kaushik's; it is implemented in the `ai-engineering:auto-iterate` plugin. Apply it — don't redesign it.
 
 ```
