@@ -2192,6 +2192,21 @@ def show_mail(grant, problem: str) -> None:  # noqa: ANN001
     )
 
 
+def note_recalled(count: int) -> None:
+    """Memory put something in front of the model for this question (#95 AC 15).
+
+    Said, because the answer may now rest on something the user told axiom last week
+    and cannot see in this conversation. A user who is surprised by what axiom knows
+    is owed the source.
+    """
+    say(f"memory: {count} from earlier sessions")
+
+
+def note_memory_unavailable(reason: str) -> None:
+    """Recall failed this turn; the turn carries on without it (#95 AC 21)."""
+    say(f"memory: unavailable - {reason}")
+
+
 def note_mail_forgotten(had_one: bool) -> None:
     """AC 15, AC 16. What was given back, and what happens next.
 

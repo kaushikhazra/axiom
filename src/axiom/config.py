@@ -57,6 +57,10 @@ class Settings:
     # Named one by one rather than counted: a variable the user has not set is
     # fixed by setting that variable, and a count does not say which.
     mcp_problems: tuple[str, ...] = ()
+    # Whether this run keeps memory across sessions (#95). On unless the user
+    # said otherwise: memory comes with axiom, and there is no switch to turn it
+    # on. It needs tools and MCP to be reachable at all, so it follows both.
+    memory_enabled: bool = True
 
 
 DEFAULT_MCP_FILE = Path(".axiom") / "mcp.json"
@@ -96,6 +100,11 @@ class ServerSpec:
     # Where a server that axiom did not start is already listening. Empty means
     # this is a `command` entry.
     address: str = ""
+    # How long this server may take to start, when that is not the run's bound.
+    # 0 means the run's bound. Only memory sets it (#95): Synaptra loads an
+    # embedding model before it answers, which measured 19 to 25 s against a
+    # bound of 30, and a cold start is slower.
+    start_timeout: float = 0.0
 
 
 def _substituted(value: str, missing: list[str]) -> str:
@@ -346,6 +355,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        default=os.environ.get("AXIOM_MEMORY", "").lower() in OFF_VALUES,
+        help=(
+            "Chat without memory across sessions: nothing is set up, started, "
+            "recalled or stored. Overrides $AXIOM_MEMORY. Default: memory on"
+        ),
+    )
+    parser.add_argument(
         "--mcp-start-timeout",
         type=float,
         default=float(
@@ -421,6 +439,9 @@ def resolve(argv: list[str] | None = None) -> Settings:
         # answer, and someone who wants a session without tools has said
         # nothing about how they want to read it.
         render_enabled=not args.no_render,
+        # Memory is a tool the model calls, served over MCP, so switching off
+        # either takes it with them.
+        memory_enabled=not args.no_memory and not args.no_mcp and not args.no_tools,
         # --no-tools takes MCP with it, the same way it already takes the web:
         # switching off tools and leaving someone else's tools on would be the
         # clever answer, not the obvious one.

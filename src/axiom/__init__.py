@@ -10,6 +10,7 @@ from . import (
     config,
     context,
     mail,
+    memory,
     models,
     schedule,
     servers,
@@ -322,7 +323,9 @@ def _prepare(
         # and a silent pause reads as a hang. Only when something will actually
         # be started - `start()` is a no-op once they are already up.
         if not attached.started:
-            terminal.note_starting(len(settings.mcp_servers))
+            # What `attached` holds, not what the settings named: memory (#95) is
+            # added to it after the model is settled, so the settings undercount.
+            terminal.note_starting(len(attached.specs))
         attached.start()
         declarations = [*declarations, *attached.declarations]
 
@@ -622,6 +625,22 @@ def _chat(
         # unwind and nothing went wrong - status 0, like any other way out.
         return
 
+    # After the model is settled and before anything starts: a host that cannot be
+    # reached ends the run in `_settle_model`, and a first run must not download a
+    # gigabyte for a session that was never going to begin (#95 AC 1).
+    #
+    # Added to `attached` rather than to the settings, which are frozen and were
+    # built before any of this was known. A setup that cannot finish is a problem
+    # to report, not a reason to stop: the chat is still a chat (AC 3).
+    memory_problems: list[str] = []
+    if settings.memory_enabled:
+        found = memory.Memory()
+        failure = found.ensure(terminal.say)
+        if failure is None:
+            attached.specs = (*attached.specs, found.spec())
+        else:
+            memory_problems.append(f"memory: unavailable - {failure}")
+
     # Before `_prepare`, because what a model is offered now depends on whether
     # there is anything to read, delete or invoke.
     #
@@ -683,7 +702,11 @@ def _chat(
         web=settings.web_enabled,
         cost=_tool_cost(run, settings, catalogue),
         connected=attached.connected,
-        problems=[*settings.mcp_problems, *attached.failures],
+        problems=[
+            *settings.mcp_problems,
+            *(memory.described(failure) for failure in attached.failures),
+            *memory_problems,
+        ],
         bounds=(settings.mcp_start_timeout, settings.mcp_call_timeout),
         skills_loaded=len(catalogue),
         skill_problems=list(catalogue.problems),
@@ -708,10 +731,16 @@ def _chat(
         would be a prompt that disagreed with itself depending on which line
         last rebuilt it.
         """
-        return tools.system_prompt(
+        prompt = tools.system_prompt(
             limits,
             skills.catalogue_text(library.catalogue if library else skills.Catalogue()),
         )
+        # Only when memory actually answered at startup. A prompt that promises a
+        # memory the run does not have would send the model after a tool it cannot
+        # call, and it would say so to the user.
+        if memory.SERVER in attached.connected:
+            prompt = f"{prompt}\n\n{memory.PROMPT}"
+        return prompt
 
     instructions = {"role": "system", "content": standing_prompt()}
 
@@ -768,7 +797,14 @@ def _chat(
         always did: it is the catalogue that changed, and this reads it back.
         """
         instructions["content"] = standing_prompt()
-        return [instructions, *history]
+        # What memory recalled for this question, if anything. Held beside the
+        # history, not in it, so it weighs in every size check and every round of
+        # this turn and is gone the next (#95 AC 14, AC 15).
+        return [instructions, *recalled_now, *history]
+
+    # Replaced at the start of every turn. A list so `to_send` closes over the same
+    # object the loop rebinds in place.
+    recalled_now: list[dict] = []
 
     messages: list[dict[str, str]] = []
     running_usage: int | None = None  # real prompt_eval_count + eval_count, last turn
@@ -917,6 +953,22 @@ def _chat(
                 library.forgotten()
         if forgotten:
             terminal.note_facts_forgotten(forgotten)
+
+        # Memory is consulted by axiom, not left to the model: a small model does
+        # not reliably reach for a recall tool on its own (#95 AC 15). Before the
+        # user's line is appended, so a failed turn has nothing of it to unwind.
+        recalled_now.clear()
+        if memory.SERVER in attached.connected:
+            texts, why = memory.recall_for(
+                lambda arguments: attached.run(memory.RECALL_CALL, arguments),
+                line[:500],
+            )
+            if why:
+                terminal.note_memory_unavailable(why)
+            note = memory.note_for(texts)
+            if note is not None:
+                recalled_now.append(note)
+                terminal.note_recalled(len(texts))
 
         before = len(messages)
         messages.append({"role": "user", "content": line})
@@ -1105,7 +1157,13 @@ def _chat(
                         # A server's tool is called and shown exactly like a
                         # built-in. The prefix routes it; nothing else in the
                         # loop knows the difference.
-                        result = attached.run(call.name, arguments)
+                        result = memory.outcome(
+                            call.name,
+                            attached.run(
+                                call.name,
+                                memory.prepared(call.name, arguments, run.model),
+                            ),
+                        )
                     else:
                         result = tools.run(
                             call.name,
