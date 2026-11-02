@@ -32,7 +32,10 @@ def _load() -> list[dict]:
 
 @server.tool()
 def memory_store(
-    content: str, rater: str | None = None, memory_type: str | None = None
+    content: str,
+    rater: str | None = None,
+    memory_type: str | None = None,
+    source: str | None = None,
 ) -> str:
     """Store a memory. `rater` is required, as it is in the real server."""
     if not rater or os.environ.get("FAKE_SYNAPTRA_REFUSE"):
@@ -46,7 +49,7 @@ def memory_store(
             }
         )
     memories = _load()
-    memories.append({"content": content, "rater": rater})
+    memories.append({"content": content, "rater": rater, "source": source})
     STORE_FILE.write_text(json.dumps(memories), encoding="utf-8")
     return json.dumps(
         {"success": True, "data": {"id": str(len(memories)), "content": content}}

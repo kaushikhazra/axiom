@@ -64,6 +64,8 @@ MODEL_MB = 175
 # warm, more when the model has to be read from a cold disk.
 START_TIMEOUT = 120.0
 
+SOURCE_PREFIX = "axiom:"
+
 RECALL_LIMIT = 3
 PROGRESS_EVERY = 1.0  # seconds between progress lines of the same download
 
@@ -262,7 +264,12 @@ def prepared(name: str, arguments: dict, model: str) -> dict:
     # Always the model's own name, never what the model wrote: measured live on
     # 2026-11-02, gemma4:e2b filled `rater` with "axiom" when it could, which is not
     # a model and cannot be compared with any other score.
-    return {**arguments, "rater": model}
+    #
+    # And `source` as well, because the rater alone is not kept: measured live, a store
+    # with a rater and no importance is recorded as `auto:heuristic`, and the model's
+    # name appears nowhere in the memory. `source` is a field the server keeps as given,
+    # so it is where the model's name survives (#95 AC 11).
+    return {**arguments, "rater": model, "source": f"{SOURCE_PREFIX}{model}"}
 
 
 def outcome(name: str, result: str) -> str:

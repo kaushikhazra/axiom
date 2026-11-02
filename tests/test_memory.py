@@ -296,7 +296,11 @@ def test_a_step_that_is_killed_does_not_outlive_the_setup(monkeypatch):
 def test_a_store_gets_the_name_of_the_model_that_made_it():
     """AC 11. The model is not relied on to supply what the server insists on."""
     given = memory.prepared(memory.STORE_CALL, {"content": "x"}, "qwen2.5:7b")
-    assert given == {"content": "x", "rater": "qwen2.5:7b"}
+    assert given == {
+        "content": "x",
+        "rater": "qwen2.5:7b",
+        "source": "axiom:qwen2.5:7b",
+    }
 
     # Measured live: gemma4:e2b wrote rater="axiom" when it was free to, which is
     # not a model. Whatever the model supplies, the rater is the model's own name.
@@ -530,7 +534,13 @@ def test_a_fact_told_in_one_session_comes_back_in_the_next(live, capsys, monkeyp
     told = capsys.readouterr().out
     assert "stored: my cat is called Biscuit" in told
     saved = json.loads(live.read_text(encoding="utf-8"))
-    assert saved == [{"content": "my cat is called Biscuit", "rater": "qwen2.5:7b"}]
+    assert saved == [
+        {
+            "content": "my cat is called Biscuit",
+            "rater": "qwen2.5:7b",
+            "source": "axiom:qwen2.5:7b",
+        }
+    ]
 
     second = StubBackend(turns=[["Biscuit."]])
     feed(monkeypatch, ["what is my cat called?", "/exit"])
@@ -688,6 +698,32 @@ def test_a_failure_that_is_not_memorys_is_left_alone():
     assert memory.described("synaptra: Connection closed").startswith(
         "memory: unavailable"
     )
+
+
+class KillsTheServerAfterTheFirstTurnBegins(StubBackend):
+    """Ends the memory server's process between one turn's recall and the next's."""
+
+    def stream(self, model, messages, options=None, tools=None):  # noqa: ANN001
+        if not self.streamed:
+            import psutil
+
+            for child in psutil.Process().children(recursive=True):
+                child.kill()
+        return super().stream(model, messages, options, tools)
+
+
+def test_a_memory_server_that_dies_mid_session_is_said_and_the_chat_goes_on(
+    live, capsys, monkeypatch
+):
+    """AC 21: a real process, really killed, not a failure the server chose to report."""
+    stub = KillsTheServerAfterTheFirstTurnBegins(turns=[["first"], ["second"]])
+    feed(monkeypatch, ["hello", "hello again", "/exit"])
+
+    axiom.main([], using=stub)
+
+    out = capsys.readouterr().out
+    assert "first" in out and "second" in out, "the chat did not carry on"
+    assert "memory: unavailable - " in out, "the user was not told"
 
 
 def test_no_memory_server_outlives_axiom(live, monkeypatch):
