@@ -149,7 +149,13 @@ class Servers:
         self._thread.start()
         # The bound covers all of them together; a single slow server cannot
         # hold the prompt back indefinitely.
-        self._ready.wait(self.start_timeout * len(self.specs) + self.start_timeout)
+        self._ready.wait(
+            sum(self._bound(spec) for spec in self.specs) + self.start_timeout
+        )
+
+    def _bound(self, spec: ServerSpec) -> float:
+        """How long this server may take to start: its own, else the run's."""
+        return spec.start_timeout or self.start_timeout
 
     def stop(self) -> None:
         """Close every session, and with it every subprocess.
@@ -287,12 +293,13 @@ class Servers:
         returning failures rather than raising - a tool that cannot do its job
         is not a reason to end the session.
         """
+        bound = self._bound(spec)
         try:
             client = await asyncio.wait_for(
                 sessions.enter_async_context(Client(self._transport(spec, sessions))),
-                self.start_timeout,
+                bound,
             )
-            listed = await asyncio.wait_for(client.list_tools(), self.start_timeout)
+            listed = await asyncio.wait_for(client.list_tools(), bound)
         except Exception as failed:  # noqa: BLE001
             # Whatever a third-party server does on the way down, it costs that
             # server and nothing else.

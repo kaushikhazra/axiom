@@ -52,6 +52,22 @@ def isolate_remembered_choice(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolate_memory(monkeypatch, tmp_path):
+    """No test sets memory up, starts Synaptra, or touches this checkout's `.axiom/`.
+
+    Memory is on by default (#95) and its first run downloads about a gigabyte, so an
+    unguarded `main()` in any of the existing tests would try to. Off by environment,
+    which is what a user would use, and pointed at the test's own directory for the
+    tests that turn it back on - the same hazard as the remembered choice and the
+    skills directory above.
+    """
+    from axiom import memory
+
+    monkeypatch.setenv("AXIOM_MEMORY", "off")
+    monkeypatch.setattr(memory, "DEFAULT_DIRECTORY", tmp_path / ".axiom" / "memory")
+
+
+@pytest.fixture(autouse=True)
 def compose_reads_a_line(monkeypatch):
     """In tests, composing a message reads one line through `input` (#80).
 

@@ -14,6 +14,9 @@ write for it, schedule a prompt for later, and use tools from any MCP server you
 - **[Ollama](https://ollama.com/download)**, installed and running, with at least one model
   pulled.
 - Nothing else. The install below brings its own Python.
+- **A network connection, once per project**, for [memory](#memory): the first run in a
+  folder downloads about 1 GB (a Python environment holding the memory server, and an
+  embedding model) and says so before it starts. After that it runs offline.
 
 If you have not pulled a model yet:
 
@@ -119,6 +122,7 @@ flag wins.
 | `--no-web` | `AXIOM_WEB=off` | Keep the other tools, drop search and fetch. |
 | `--command-timeout` | `AXIOM_COMMAND_TIMEOUT` | Seconds a command may run before it is stopped. Default 30. |
 | `--no-render` | `AXIOM_RENDER=off` | Show replies as the model wrote them, markdown and all. |
+| `--no-memory` | `AXIOM_MEMORY=off` | No memory across sessions: nothing is downloaded, started, recalled or stored. `--no-tools` and `--no-mcp` take it too. |
 
 `axiom --help` lists the rest — search results, page size, fetch and MCP timeouts.
 
@@ -131,10 +135,39 @@ Everything is under `.axiom/` in the folder you start from.
 | `.axiom/model.json` | which model you picked, per host. Written by axiom. |
 | `.axiom/mcp.json` | MCP servers to start. Written by you. |
 | `.axiom/skills/` | one folder per skill, each holding a `SKILL.md`. |
+| `.axiom/memory/` | what axiom remembers here: `venv/` (the memory server), `data/` (the memories), and `ready`, written when setup finished. Written by axiom. |
 
 Because these are relative to the working directory, **a different folder is a different
 workspace** — its own model choice, its own servers, its own skills. That is deliberate, and
 it means starting axiom somewhere new will ask you the model question again.
+
+## Memory
+
+axiom remembers across sessions. Tell it a fact, quit, start it again in the same folder and
+ask: it answers from what it kept.
+
+It does this with [Synaptra](https://pypi.org/project/synaptra/), a memory server that runs
+on your machine. **The first run in a folder sets it up**, and says what it is fetching
+before it fetches it:
+
+- the memory server and its packages, about 875 MB, into `.axiom/memory/venv`
+- an embedding model, about 175 MB, into your Hugging Face cache
+
+That needs the network once, no account and no key; on the line it was measured on it took a
+little over two minutes. Later runs in the folder download nothing. If setup cannot finish,
+axiom starts as a plain chat, says why in one line, and tries again next time.
+
+- **It is per folder.** `.axiom/memory/data` holds this folder's memories, and another folder
+  has its own. The server lives in an environment of its own, apart from axiom's packages.
+- **The model decides what to remember.** When you ask it to, it stores the fact and axiom
+  shows `stored: ...` under the call. axiom never stores your conversation by itself.
+- **axiom decides what to recall.** Before each reply it looks up the words of your question
+  and, if something you stored shares one, puts it in front of the model and says
+  `memory: 1 from earlier sessions`. A question sharing no word with anything stored recalls
+  nothing, so a paraphrase can miss.
+- **If a store fails** axiom says `NOT stored`, and tells the model so.
+
+`--no-memory` turns all of it off. To forget everything in a folder, delete `.axiom/memory/data/`; the server stays installed.
 
 ## Skills
 
